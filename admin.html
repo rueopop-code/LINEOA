@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin — Maejai Shop</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --line: #06C755; --line-dark: #04a045;
+    --bg: #f5f5f7; --card: #fff;
+    --text: #1d1d1f; --sub: #6e6e73; --border: #d2d2d7;
+  }
+  body { font-family: 'Segoe UI', -apple-system, 'Noto Sans Thai', sans-serif;
+         background: var(--bg); color: var(--text); }
+
+  header {
+    background: #1d1d1f; color: #fff; padding: 0 24px;
+    display: flex; align-items: center; height: 56px;
+    justify-content: space-between;
+  }
+  .admin-logo { font-size: 17px; font-weight: 700; }
+  .admin-logo span { color: var(--line); }
+  .refresh-btn {
+    background: rgba(255,255,255,.12); color: #fff; border: 1px solid rgba(255,255,255,.2);
+    border-radius: 8px; padding: 6px 14px; font-size: 13px; cursor: pointer;
+    display: flex; align-items: center; gap: 6px; transition: background .15s;
+  }
+  .refresh-btn:hover { background: rgba(255,255,255,.2); }
+
+  .page { max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
+
+  /* Config bar */
+  .config-bar {
+    background: var(--card); border-radius: 12px; border: 1px solid var(--border);
+    padding: 16px 20px; margin-bottom: 20px; display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;
+  }
+  .config-field { display: flex; flex-direction: column; gap: 4px; }
+  .config-field label { font-size: 11px; font-weight: 600; color: var(--sub); letter-spacing: .3px; }
+  .config-field input {
+    padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px;
+    font-size: 13px; font-family: inherit; min-width: 260px; background: var(--bg);
+  }
+  .config-field input:focus { outline: none; border-color: var(--line); }
+  .load-btn {
+    padding: 8px 20px; background: var(--line); color: #fff; border: none;
+    border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; height: 34px;
+  }
+  .load-btn:hover { background: var(--line-dark); }
+
+  /* Stats */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); gap: 12px; margin-bottom: 20px; }
+  .stat-card { background: var(--card); border-radius: 12px; border: 1px solid var(--border); padding: 16px 18px; }
+  .stat-num { font-size: 28px; font-weight: 700; line-height: 1; }
+  .stat-label { font-size: 12px; color: var(--sub); margin-top: 4px; }
+  .stat-card.green .stat-num { color: var(--line); }
+  .stat-card.blue  .stat-num { color: #007aff; }
+  .stat-card.orange .stat-num { color: #ff9500; }
+
+  /* Orders table */
+  .orders-card { background: var(--card); border-radius: 12px; border: 1px solid var(--border); overflow: hidden; }
+  .orders-head { padding: 14px 20px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between; }
+  .orders-head h2 { font-size: 15px; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; }
+  th { padding: 10px 16px; text-align: left; font-size: 11px; font-weight: 600;
+       color: var(--sub); letter-spacing: .5px; text-transform: uppercase;
+       background: #fafafa; border-bottom: 1px solid var(--border); }
+  td { padding: 12px 16px; font-size: 13px; border-bottom: 1px solid #f0f0f5; vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #fafafa; }
+
+  .status-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 9px; border-radius: 20px; font-size: 11px; font-weight: 600;
+  }
+  .s-pending   { background: #fff3e0; color: #e65100; }
+  .s-sent      { background: #e8f5e9; color: #2e7d32; }
+  .s-confirmed { background: #e3f2fd; color: #1565c0; }
+  .s-shipped   { background: #f3e5f5; color: #6a1b9a; }
+  .s-done      { background: #e8f5e9; color: #1b5e20; }
+  .s-cancelled { background: #fce4ec; color: #880e4f; }
+  .s-failed    { background: #ffebee; color: #b71c1c; }
+
+  .status-select {
+    padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px;
+    font-size: 12px; font-family: inherit; background: var(--bg); cursor: pointer;
+  }
+  .items-list { font-size: 12px; color: var(--sub); line-height: 1.6; }
+
+  .empty-row td { text-align: center; padding: 48px; color: var(--sub); }
+
+  .spinner-sm {
+    width: 20px; height: 20px; border: 2px solid #e0e0e0;
+    border-top-color: var(--line); border-radius: 50%;
+    animation: spin .7s linear infinite; display: inline-block;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="admin-logo">Admin — Maejai<span>Shop</span></div>
+  <button class="refresh-btn" onclick="loadOrders()">
+    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+      <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+    </svg>
+    รีเฟรช
+  </button>
+</header>
+
+<div class="page">
+
+  <div class="config-bar">
+    <div class="config-field">
+      <label>Backend URL</label>
+      <input type="text" id="backend-url" placeholder="https://YOUR-APP.up.railway.app" value="">
+    </div>
+    <button class="load-btn" onclick="loadOrders()">โหลดออเดอร์</button>
+  </div>
+
+  <div class="stats" id="stats">
+    <div class="stat-card"><div class="stat-num">—</div><div class="stat-label">ออเดอร์ทั้งหมด</div></div>
+    <div class="stat-card green"><div class="stat-num">—</div><div class="stat-label">ส่งไป LINE แล้ว</div></div>
+    <div class="stat-card blue"><div class="stat-num">—</div><div class="stat-label">ยืนยันแล้ว</div></div>
+    <div class="stat-card orange"><div class="stat-num">—</div><div class="stat-label">รายได้รวม (฿)</div></div>
+  </div>
+
+  <div class="orders-card">
+    <div class="orders-head">
+      <h2>รายการออเดอร์</h2>
+      <span id="last-updated" style="font-size:12px;color:var(--sub);">—</span>
+    </div>
+    <div id="table-wrap" style="overflow-x:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>ออเดอร์</th>
+            <th>ลูกค้า</th>
+            <th>สินค้า</th>
+            <th>ยอด</th>
+            <th>สถานะ</th>
+            <th>เวลา</th>
+          </tr>
+        </thead>
+        <tbody id="orders-tbody">
+          <tr class="empty-row"><td colspan="6">กรอก Backend URL แล้วกด "โหลดออเดอร์"</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const STATUS_LABELS = {
+  pending  : '⏳ รอดำเนินการ',
+  sent     : '📬 ส่ง LINE แล้ว',
+  confirmed: '✅ ยืนยันแล้ว',
+  shipped  : '🚚 กำลังจัดส่ง',
+  done     : '🎉 เสร็จสิ้น',
+  cancelled: '❌ ยกเลิก',
+  failed   : '💥 ผิดพลาด',
+};
+
+let allOrders = [];
+
+async function loadOrders() {
+  const url = document.getElementById('backend-url').value.trim();
+  if (!url) { alert('กรุณากรอก Backend URL'); return; }
+  localStorage.setItem('admin_backend_url', url);
+
+  const tbody = document.getElementById('orders-tbody');
+  tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:32px;"><span class="spinner-sm"></span></td></tr>';
+
+  try {
+    const res = await fetch(`${url}/orders`);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const { orders } = await res.json();
+    allOrders = orders || [];
+    renderOrders(allOrders);
+    renderStats(allOrders);
+    document.getElementById('last-updated').textContent =
+      'อัปเดต: ' + new Date().toLocaleTimeString('th-TH');
+  } catch (e) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="6">⚠️ เชื่อมต่อไม่ได้: ${e.message}</td></tr>`;
+  }
+}
+
+function renderOrders(orders) {
+  const tbody = document.getElementById('orders-tbody');
+  if (!orders.length) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="6">ยังไม่มีออเดอร์</td></tr>';
+    return;
+  }
+  tbody.innerHTML = orders.map(o => {
+    const itemsText = (o.items || []).map(i => `${i.emoji||''} ${i.name} ×${i.qty}`).join(', ');
+    const date = new Date(o.created_at).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short' });
+    const st = o.status || 'pending';
+    return `
+      <tr>
+        <td><code style="font-size:12px;">#${o.order_id}</code></td>
+        <td><strong>${o.customer_name}</strong><br>
+            <span style="font-size:11px;color:var(--sub);">${(o.user_id||'').slice(0,12)}…</span></td>
+        <td><div class="items-list">${itemsText}</div></td>
+        <td><strong>฿${(o.total||0).toLocaleString()}</strong></td>
+        <td>
+          <select class="status-select" onchange="updateStatus('${o.order_id}', this.value)">
+            ${Object.entries(STATUS_LABELS).map(([val, label]) =>
+              `<option value="${val}" ${val===st?'selected':''}>${label}</option>`
+            ).join('')}
+          </select>
+        </td>
+        <td style="font-size:12px;color:var(--sub);">${date}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function renderStats(orders) {
+  const total     = orders.length;
+  const sent      = orders.filter(o => ['sent','confirmed','shipped','done'].includes(o.status)).length;
+  const confirmed = orders.filter(o => ['confirmed','shipped','done'].includes(o.status)).length;
+  const revenue   = orders.filter(o => o.status !== 'cancelled' && o.status !== 'failed')
+                          .reduce((s, o) => s + (o.total || 0), 0);
+  const nums = document.querySelectorAll('.stat-num');
+  nums[0].textContent = total;
+  nums[1].textContent = sent;
+  nums[2].textContent = confirmed;
+  nums[3].textContent = revenue.toLocaleString();
+}
+
+async function updateStatus(orderId, status) {
+  const url = document.getElementById('backend-url').value.trim();
+  if (!url) return;
+  try {
+    const res = await fetch(`${url}/orders/${orderId}/status`, {
+      method : 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body   : JSON.stringify({ status })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    // update local
+    const o = allOrders.find(x => x.order_id === orderId);
+    if (o) o.status = status;
+    renderStats(allOrders);
+  } catch (e) {
+    alert('อัปเดตสถานะไม่สำเร็จ: ' + e.message);
+  }
+}
+
+// Restore URL from localStorage
+const saved = localStorage.getItem('admin_backend_url');
+if (saved) document.getElementById('backend-url').value = saved;
+
+// Auto-refresh every 30 seconds if URL is set
+setInterval(() => { if (document.getElementById('backend-url').value) loadOrders(); }, 30000);
+</script>
+</body>
+</html>
