@@ -97,11 +97,17 @@ app.post('/send-order', async (req, res) => {
     // ถ้า DB ผิดพลาด ยังส่ง LINE ต่อได้
   }
 
-  // ส่งไป LINE
+  // ส่งแจ้งเตือนไปหาเจ้าของร้าน (ADMIN_LINE_UID)
+  const adminUid = process.env.ADMIN_LINE_UID;
+  if (!adminUid) {
+    console.error('❌ ADMIN_LINE_UID ไม่ได้ตั้งค่า');
+    return res.status(500).json({ error: 'ADMIN_LINE_UID not configured' });
+  }
+
   try {
-    await linePush(userId, [{ type: 'text', text: buildOrderMsg(order) }]);
+    await linePush(adminUid, [{ type: 'text', text: buildOrderMsg(order) }]);
     await supabase.from('orders').update({ status: 'sent' }).eq('order_id', order_id);
-    console.log(`✅ ${order_id} → ${userId}`);
+    console.log(`✅ ${order_id} → admin`);
     res.json({ success: true, orderId: order_id });
   } catch (e) {
     await supabase.from('orders').update({ status: 'failed' }).eq('order_id', order_id);
