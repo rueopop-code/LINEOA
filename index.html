@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>มนชิน ซัพพลาย</title>
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700;800&family=Prompt:wght@500;600;700;800;900&display=swap" rel="stylesheet">
-<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -139,6 +138,57 @@ textarea.fi{resize:none;height:70px}
 /* ── SUCCESS ── */
 #successOv{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:500;align-items:center;justify-content:center}
 #successOv.show{display:flex}
+
+/* ── MY ORDERS MODAL ── */
+.mo-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:480;align-items:flex-end;justify-content:center}
+.mo-bg.show{display:flex}
+.mo-box{background:#fff;width:100%;max-width:560px;max-height:92vh;border-radius:20px 20px 0 0;display:flex;flex-direction:column;animation:slideUp .3s ease}
+@keyframes slideUp{from{transform:translateY(40px);opacity:0}to{transform:translateY(0);opacity:1}}
+.mo-hdr{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:#fff;border-radius:20px 20px 0 0}
+.mo-hdr h3{font-family:'Prompt',sans-serif;font-size:17px;font-weight:700}
+.mo-hdr .x{width:34px;height:34px;border-radius:50%;border:none;background:var(--bg);font-size:18px;cursor:pointer}
+.mo-body{flex:1;overflow-y:auto;padding:14px 16px}
+.mo-empty{text-align:center;padding:40px 20px;color:var(--sub)}
+.mo-empty .em-icon{font-size:48px;margin-bottom:10px}
+.mo-card{background:#fff;border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:10px;cursor:pointer;transition:.15s}
+.mo-card:hover{border-color:var(--c1);box-shadow:0 2px 12px rgba(192,57,43,.1)}
+.mo-card-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;gap:8px}
+.mo-card-id{font-family:'Prompt',sans-serif;font-weight:700;font-size:14px;color:var(--c1)}
+.mo-card-date{font-size:11px;color:var(--sub)}
+.mo-status{display:inline-flex;align-items:center;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600}
+.s-pending{background:#fff3e0;color:#e65100}
+.s-sent{background:#e8f5e9;color:#2e7d32}
+.s-confirmed{background:#e3f2fd;color:#1565c0}
+.s-shipped{background:#f3e5f5;color:#6a1b9a}
+.s-done{background:#e8f5e9;color:#1b5e20}
+.s-cancelled{background:#fce4ec;color:#880e4f}
+.s-failed{background:#ffebee;color:#b71c1c}
+.mo-card-items{font-size:12px;color:var(--sub);line-height:1.6;margin-bottom:6px}
+.mo-card-bottom{display:flex;justify-content:space-between;align-items:center;border-top:1px dashed var(--border);padding-top:8px;margin-top:6px}
+.mo-card-total{font-family:'Prompt',sans-serif;font-weight:700;color:var(--c1);font-size:15px}
+.mo-card-cta{font-size:12px;color:var(--c1);font-weight:600}
+
+/* Detail view (chat + status) */
+.det-back{display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--c1);font-size:13px;font-weight:600;margin-bottom:10px}
+.det-status-bar{background:linear-gradient(120deg,var(--c2),var(--c1));color:#fff;border-radius:12px;padding:14px;margin-bottom:14px}
+.det-status-bar .ds-id{font-family:'Prompt',sans-serif;font-size:14px;opacity:.9}
+.det-status-bar .ds-st{font-family:'Prompt',sans-serif;font-size:18px;font-weight:700;margin:4px 0 8px}
+.det-status-bar .ds-total{font-size:13px;opacity:.95}
+.det-items{background:#fafafa;border-radius:10px;padding:12px;margin-bottom:14px;font-size:13px;line-height:1.7}
+.det-items .di-row{display:flex;justify-content:space-between;padding:3px 0}
+
+.chat-list{background:#fafafa;border-radius:12px;padding:12px;margin-bottom:12px;max-height:340px;overflow-y:auto;display:flex;flex-direction:column;gap:8px}
+.chat-empty-c{text-align:center;color:var(--sub);font-size:12px;padding:24px 0}
+.chat-bbl{max-width:78%;padding:8px 12px;border-radius:14px;font-size:13px;line-height:1.5;word-wrap:break-word;white-space:pre-wrap}
+.chat-bbl.from-customer{align-self:flex-end;background:var(--c1);color:#fff;border-bottom-right-radius:4px}
+.chat-bbl.from-admin{align-self:flex-start;background:#fff;border:1px solid var(--border);border-bottom-left-radius:4px}
+.chat-bbl.from-system{align-self:center;background:#fff8e1;color:#8d6e00;font-size:11.5px;border:1px dashed #ffd54f;max-width:88%;text-align:center}
+.chat-meta{font-size:10px;opacity:.7;margin-top:3px}
+.chat-input-row{display:flex;gap:8px}
+.chat-input-row textarea{flex:1;padding:9px 11px;border:1px solid var(--border);border-radius:10px;font-family:inherit;font-size:13px;resize:none;min-height:42px}
+.chat-input-row textarea:focus{outline:none;border-color:var(--c1)}
+.chat-send-btn{padding:0 18px;background:var(--c1);color:#fff;border:none;border-radius:10px;cursor:pointer;font-weight:600;font-size:13px;font-family:inherit}
+.chat-send-btn:disabled{background:#ccc}
 .sbox{background:#fff;border-radius:20px;padding:32px 24px;text-align:center;max-width:320px;width:90%;animation:pop .35s ease}
 @keyframes pop{from{transform:scale(.75);opacity:0}to{transform:scale(1);opacity:1}}
 .si{font-size:60px;margin-bottom:10px}
@@ -271,6 +321,7 @@ textarea.fi{resize:none;height:70px}
       <div><div class="shop-name" id="shopNameEl">มนชิน ซัพพลาย</div><div class="shop-tagline">สั่งง่าย ส่งไว ใจดี</div></div>
     </div>
     <div class="hdr-actions">
+      <button class="cart-pill" onclick="openMyOrders()" title="ออเดอร์ของฉัน">📋 <span class="badge" id="myOrdersBadge" style="display:none;">0</span></button>
       <button class="cart-pill" onclick="openCart()">🛒 <span class="badge" id="cartBadge">0</span></button>
     </div>
   </div>
@@ -371,7 +422,7 @@ textarea.fi{resize:none;height:70px}
         <input class="fi" id="cPickTime" placeholder="วัน/เวลารับสินค้า เช่น 25/12 10:00น." type="text">
         <textarea class="fi" id="cNote" placeholder="หมายเหตุ / คำขอพิเศษ (ถ้ามี)" rows="2"></textarea>
       </div>
-      <button class="big-btn" id="sendBtn" onclick="sendOrder()">📲 ส่งออเดอร์ไป LINE OA</button>
+      <button class="big-btn" id="sendBtn" onclick="sendOrder()">📲 ยืนยันสั่งซื้อ</button>
     </div>
   </div>
 </div>
@@ -382,7 +433,24 @@ textarea.fi{resize:none;height:70px}
     <div class="si">🎉</div>
     <div class="st">ส่งออเดอร์แล้ว!</div>
     <div class="ss" id="successMsg"></div>
+    <button class="sclose" onclick="closeSuccess(); openMyOrders()" style="background:linear-gradient(120deg,var(--c2),var(--c1));color:#fff;margin-bottom:8px;">📋 ดูออเดอร์ของฉัน</button>
     <button class="sclose" onclick="closeSuccess()">ตกลง</button>
+  </div>
+</div>
+
+<!-- ── MY ORDERS MODAL ── -->
+<div class="mo-bg" id="myOrdersOv">
+  <div class="mo-box">
+    <div class="mo-hdr">
+      <h3 id="moTitle">📋 ออเดอร์ของฉัน</h3>
+      <button class="x" onclick="closeMyOrders()">×</button>
+    </div>
+    <div class="mo-body" id="moBody">
+      <div class="mo-empty">
+        <div class="em-icon">📭</div>
+        <div>ยังไม่มีออเดอร์</div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -558,8 +626,23 @@ textarea.fi{resize:none;height:70px}
 //  CONFIG
 // ═══════════════════════════════════════════
 const BACKEND_URL = 'https://lineoa-production-a8e8.up.railway.app';
-const LIFF_ID     = 'YOUR_LIFF_ID';
 const ADMIN_PIN   = '140326';
+
+// ── CUSTOMER ID — สร้างอัตโนมัติ เก็บใน localStorage ──
+function getOrCreateCustomerId() {
+  let id = localStorage.getItem('ms_customer_id');
+  if (!id) {
+    // CUST + 8 hex chars (เพียงพอสำหรับร้านค้าทั่วไป)
+    const rand = (crypto.randomUUID
+      ? crypto.randomUUID().replace(/-/g, '').slice(0, 12)
+      : Math.random().toString(16).slice(2, 14)
+    );
+    id = 'CUST-' + rand;
+    localStorage.setItem('ms_customer_id', id);
+  }
+  return id;
+}
+const CUSTOMER_ID = getOrCreateCustomerId();
 
 // ── SUPABASE ──
 const SUPABASE_URL  = 'https://ckfzscprxighfxztmgct.supabase.co';   // เช่น https://xxxx.supabase.co
@@ -590,7 +673,6 @@ let products  = [];
 let cats      = ['ทั้งหมด','สินค้าใหม่'];
 let cart      = [];
 let activeCat = 'ทั้งหมด';
-let lineUID   = '';
 let curProd   = null, curSize = null, curOT = 'delivery', cartOT = 'delivery';
 let mQty      = 1;
 let pinBuf    = '';
@@ -625,19 +707,8 @@ window.onload = async () => {
     const logo = localStorage.getItem('ms_logo');
     if (logo) applyLogo(logo);
 
-    // LIFF (timeout 5s กันค้าง)
-    await Promise.race([
-      (async () => {
-        try {
-          await liff.init({ liffId: LIFF_ID });
-          if (liff.isLoggedIn()) {
-            const p = await liff.getProfile();
-            lineUID = p.userId;
-          } else if (liff.isInClient()) liff.login();
-        } catch(e) { console.log('LIFF:', e.message); }
-      })(),
-      new Promise(r => setTimeout(r, 5000))
-    ]);
+    // ✅ Auto-load orders ของ customer นี้ (ถ้ามี)
+    loadMyOrders();
   } catch(e) {
     console.error('Init error:', e);
   } finally {
@@ -1017,7 +1088,17 @@ function quickAdd(id){
 // ═══════════════════════════════════════════
 //  CART
 // ═══════════════════════════════════════════
-function openCart(){ renderCart(); document.getElementById('cartOv').classList.add('show'); }
+function openCart(){
+  // auto-fill จากข้อมูลที่เคยกรอก
+  const savedName = localStorage.getItem('ms_customer_name');
+  const savedPhone = localStorage.getItem('ms_customer_phone');
+  const cn = document.getElementById('cName');
+  const cp = document.getElementById('cPhone');
+  if (cn && savedName && !cn.value) cn.value = savedName;
+  if (cp && savedPhone && !cp.value) cp.value = savedPhone;
+  renderCart();
+  document.getElementById('cartOv').classList.add('show');
+}
 function closeCart(){ document.getElementById('cartOv').classList.remove('show'); }
 function updCart(){ document.getElementById('cartBadge').textContent=cart.reduce((s,i)=>s+i.qty,0); }
 function renderCart(){
@@ -1109,7 +1190,7 @@ async function sendOrder() {
   }
 
   try {
-    const payload = { userId:lineUID||'UNKNOWN', customerName:name, phone, orderType:cartOT, address:addr, extra, items, total };
+    const payload = { customerId: CUSTOMER_ID, customerName:name, phone, orderType:cartOT, address:addr, extra, items, total };
     console.log('📦 sending order:', JSON.stringify(payload));
 
     const res = await fetch(`${BACKEND_URL}/send-order`,{
@@ -1125,21 +1206,247 @@ async function sendOrder() {
       throw new Error(`HTTP ${res.status}${errBody ? ': '+errBody.slice(0,120) : ''}`);
     }
 
+    const result = await res.json().catch(() => ({}));
+    const orderId = result.orderId || '';
+
+    // เก็บชื่อลูกค้าไว้ครั้งหน้าจะได้ไม่ต้องกรอกใหม่
+    localStorage.setItem('ms_customer_name', name);
+    if (phone) localStorage.setItem('ms_customer_phone', phone);
+
     cart=[]; updCart(); closeCart();
     document.getElementById('successMsg').textContent = cartOT==='delivery'
-      ? `ส่งออเดอร์แล้ว!\nเจ้าหน้าที่จะยืนยันและแจ้งส่งให้ค่ะ`
-      : `จองสินค้าแล้ว!\nเจ้าหน้าที่จะยืนยันกลับในเร็วๆ นี้ค่ะ`;
+      ? `ออเดอร์ #${orderId} ส่งแล้ว!\nร้านจะยืนยันและแจ้งสถานะในแชทของคุณค่ะ`
+      : `ออเดอร์ #${orderId} จองแล้ว!\nร้านจะยืนยันและแจ้งสถานะในแชทของคุณค่ะ`;
     document.getElementById('successOv').classList.add('show');
     // reset
-    ['cName','cPhone','cAddr','cPickTime','cNote'].forEach(id=>document.getElementById(id).value='');
+    ['cAddr','cPickTime','cNote'].forEach(id=>document.getElementById(id).value='');
     mapLat=mapLng=null;
     document.getElementById('mapPreview').style.display='none';
     document.getElementById('pinInfo').style.display='none';
     document.getElementById('mapBtn').textContent='📍 ปักหมุดตำแหน่งจัดส่ง (ไม่บังคับ)';
   } catch(e) { console.error('sendOrder error:', e); toast('ส่งไม่สำเร็จ: '+e.message); }
-  finally { btn.disabled=false; btn.textContent='📲 ส่งออเดอร์ไป LINE OA'; }
+  finally { btn.disabled=false; btn.textContent='📲 ยืนยันสั่งซื้อ'; }
 }
 function closeSuccess(){ document.getElementById('successOv').classList.remove('show'); }
+
+// ═══════════════════════════════════════════
+//  MY ORDERS / CHAT
+// ═══════════════════════════════════════════
+let _myOrders = [];
+let _curViewOrder = null;
+let _chatPollTimer = null;
+let _chatRealtime = null;
+
+const STATUS_TH = {
+  pending  : '⏳ รอดำเนินการ',
+  sent     : '📬 ร้านได้รับแล้ว',
+  confirmed: '✅ ยืนยันแล้ว',
+  shipped  : '🚚 กำลังจัดส่ง',
+  done     : '🎉 เสร็จสิ้น',
+  cancelled: '❌ ยกเลิก',
+  failed   : '💥 ผิดพลาด'
+};
+
+function escapeShop(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function loadMyOrders() {
+  try {
+    const res = await fetch(`${BACKEND_URL}/my-orders/${encodeURIComponent(CUSTOMER_ID)}`);
+    if (!res.ok) return;
+    const { orders } = await res.json();
+    _myOrders = orders || [];
+    const badge = document.getElementById('myOrdersBadge');
+    const active = _myOrders.filter(o => !['done','cancelled','failed'].includes(o.status)).length;
+    if (active > 0) { badge.textContent = active; badge.style.display = 'inline-flex'; }
+    else { badge.style.display = 'none'; }
+  } catch(e) { console.warn('loadMyOrders:', e.message); }
+}
+
+async function openMyOrders() {
+  document.getElementById('moTitle').textContent = '📋 ออเดอร์ของฉัน';
+  document.getElementById('myOrdersOv').classList.add('show');
+  await renderMyOrdersList();
+}
+
+function closeMyOrders() {
+  document.getElementById('myOrdersOv').classList.remove('show');
+  _curViewOrder = null;
+  if (_chatPollTimer) { clearInterval(_chatPollTimer); _chatPollTimer = null; }
+  if (_chatRealtime) {
+    try { getSB()?.removeChannel(_chatRealtime); } catch(e) {}
+    _chatRealtime = null;
+  }
+}
+
+async function renderMyOrdersList() {
+  const body = document.getElementById('moBody');
+  body.innerHTML = '<div class="mo-empty"><div class="em-icon">⏳</div><div>กำลังโหลด...</div></div>';
+  try {
+    const res = await fetch(`${BACKEND_URL}/my-orders/${encodeURIComponent(CUSTOMER_ID)}`);
+    if (!res.ok) throw new Error('โหลดไม่ได้');
+    const { orders } = await res.json();
+    _myOrders = orders || [];
+
+    if (!_myOrders.length) {
+      body.innerHTML = `
+        <div class="mo-empty">
+          <div class="em-icon">📭</div>
+          <div>ยังไม่มีออเดอร์</div>
+          <div style="font-size:12px;margin-top:6px;">ลองเลือกสินค้าและสั่งซื้อดูค่ะ</div>
+        </div>`;
+      return;
+    }
+
+    body.innerHTML = _myOrders.map(o => {
+      const items = (o.items || []).map(i => `${i.emoji||''} ${escapeShop(i.name)} ×${i.qty}`).join(', ');
+      const date = new Date(o.created_at).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short' });
+      const st = o.status || 'pending';
+      return `
+        <div class="mo-card" onclick="openOrderDetail('${o.order_id}')">
+          <div class="mo-card-top">
+            <div>
+              <div class="mo-card-id">#${escapeShop(o.order_id)}</div>
+              <div class="mo-card-date">${date}</div>
+            </div>
+            <span class="mo-status s-${st}">${STATUS_TH[st] || st}</span>
+          </div>
+          <div class="mo-card-items">${items || '—'}</div>
+          <div class="mo-card-bottom">
+            <span class="mo-card-total">฿${(o.total||0).toLocaleString()}</span>
+            <span class="mo-card-cta">ดูรายละเอียด / แชท ›</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch(e) {
+    body.innerHTML = `<div class="mo-empty"><div class="em-icon">⚠️</div><div>โหลดไม่สำเร็จ</div><div style="font-size:12px;margin-top:6px;">${escapeShop(e.message)}</div></div>`;
+  }
+}
+
+async function openOrderDetail(orderId) {
+  const o = _myOrders.find(x => x.order_id === orderId);
+  if (!o) return;
+  _curViewOrder = o;
+  document.getElementById('moTitle').textContent = '#' + orderId;
+  const body = document.getElementById('moBody');
+  const st = o.status || 'pending';
+  const itemsHtml = (o.items || []).map(i =>
+    `<div class="di-row"><span>${i.emoji||''} ${escapeShop(i.name)} ×${i.qty}</span><span>฿${(i.qty*i.price).toLocaleString()}</span></div>`
+  ).join('');
+
+  body.innerHTML = `
+    <div class="det-back" onclick="renderMyOrdersList(); document.getElementById('moTitle').textContent='📋 ออเดอร์ของฉัน'; if(_chatPollTimer){clearInterval(_chatPollTimer);_chatPollTimer=null;} if(_chatRealtime){try{getSB()?.removeChannel(_chatRealtime);}catch(e){} _chatRealtime=null;}">‹ กลับ</div>
+    <div class="det-status-bar">
+      <div class="ds-id">ออเดอร์ #${escapeShop(o.order_id)}</div>
+      <div class="ds-st">${STATUS_TH[st] || st}</div>
+      <div class="ds-total">ยอดรวม ฿${(o.total||0).toLocaleString()}</div>
+    </div>
+    <div class="det-items">${itemsHtml}</div>
+
+    <div style="font-family:'Prompt',sans-serif;font-weight:700;margin-bottom:8px;">💬 แชทกับร้าน</div>
+    <div class="chat-list" id="shopChatList">
+      <div class="chat-empty-c">กำลังโหลด...</div>
+    </div>
+    <div class="chat-input-row">
+      <textarea id="shopChatInput" placeholder="พิมพ์ข้อความ..." rows="2"></textarea>
+      <button class="chat-send-btn" id="shopChatSendBtn" onclick="sendShopChatMsg()">ส่ง</button>
+    </div>
+  `;
+
+  await loadOrderChat(orderId);
+  setupShopChatRealtime(orderId);
+}
+
+async function loadOrderChat(orderId) {
+  const list = document.getElementById('shopChatList');
+  if (!list) return;
+  try {
+    const res = await fetch(`${BACKEND_URL}/messages/${encodeURIComponent(orderId)}`);
+    if (!res.ok) throw new Error('โหลดไม่ได้');
+    const { messages } = await res.json();
+    if (!messages || !messages.length) {
+      list.innerHTML = '<div class="chat-empty-c">ยังไม่มีข้อความ — ทักร้านได้เลย</div>';
+      return;
+    }
+    list.innerHTML = messages.map(m => {
+      const time = new Date(m.created_at).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short' });
+      const cls = m.sender === 'admin' ? 'from-admin'
+                : m.sender === 'system' ? 'from-system' : 'from-customer';
+      const who = m.sender === 'admin' ? 'ร้าน' : m.sender === 'system' ? '' : 'คุณ';
+      return `<div class="chat-bbl ${cls}">${escapeShop(m.text)}<div class="chat-meta">${who ? who+' • ' : ''}${time}</div></div>`;
+    }).join('');
+    list.scrollTop = list.scrollHeight;
+  } catch(e) {
+    list.innerHTML = `<div class="chat-empty-c">⚠️ ${escapeShop(e.message)}</div>`;
+  }
+}
+
+function setupShopChatRealtime(orderId) {
+  // ใช้ Supabase Realtime ถ้าได้
+  const sb = getSB();
+  if (!sb) {
+    // fallback: poll ทุก 4 วิ
+    if (_chatPollTimer) clearInterval(_chatPollTimer);
+    _chatPollTimer = setInterval(() => {
+      if (_curViewOrder?.order_id === orderId) loadOrderChat(orderId);
+    }, 4000);
+    return;
+  }
+  if (_chatRealtime) { try { sb.removeChannel(_chatRealtime); } catch(e) {} }
+  _chatRealtime = sb.channel('shop-chat-' + orderId)
+    .on('postgres_changes',
+      { event:'INSERT', schema:'public', table:'messages', filter:`order_id=eq.${orderId}` },
+      () => { if (_curViewOrder?.order_id === orderId) loadOrderChat(orderId); }
+    )
+    .on('postgres_changes',
+      { event:'UPDATE', schema:'public', table:'orders', filter:`order_id=eq.${orderId}` },
+      payload => {
+        if (_curViewOrder?.order_id === orderId && payload.new) {
+          // อัปเดตสถานะใน UI
+          _curViewOrder.status = payload.new.status;
+          const idx = _myOrders.findIndex(x => x.order_id === orderId);
+          if (idx >= 0) _myOrders[idx].status = payload.new.status;
+          openOrderDetail(orderId);
+        }
+      }
+    )
+    .subscribe();
+}
+
+async function sendShopChatMsg() {
+  const input = document.getElementById('shopChatInput');
+  const text = input.value.trim();
+  if (!text || !_curViewOrder) return;
+  const btn = document.getElementById('shopChatSendBtn');
+  btn.disabled = true; btn.textContent = '...';
+  try {
+    const res = await fetch(`${BACKEND_URL}/messages`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        order_id   : _curViewOrder.order_id,
+        customer_id: CUSTOMER_ID,
+        sender     : 'customer',
+        text
+      })
+    });
+    if (!res.ok) throw new Error('ส่งไม่ได้');
+    input.value = '';
+    await loadOrderChat(_curViewOrder.order_id);
+  } catch(e) { toast('ส่งไม่สำเร็จ: ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = 'ส่ง'; }
+}
+
+// Enter ส่ง / Shift+Enter ขึ้นบรรทัด
+document.addEventListener('keydown', e => {
+  if (e.target && e.target.id === 'shopChatInput' && e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendShopChatMsg();
+  }
+});
 
 // ═══════════════════════════════════════════
 //  PIN
