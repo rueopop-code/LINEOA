@@ -54,6 +54,27 @@ async function notifyAllAdmins(messages) {
   return { sent, failed };
 }
 
+// ตอบกลับใน LINE webhook (ใช้ replyToken)
+async function lineReply(replyToken, messages) {
+  const res = await fetch(`${LINE_API}/reply`, {
+    method : 'POST',
+    headers: {
+      'Content-Type' : 'application/json',
+      'Authorization': `Bearer ${process.env.LINE_TOKEN}`
+    },
+    body: JSON.stringify({ replyToken, messages })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    console.warn('LINE reply failed:', err.message || res.status);
+  }
+}
+
+// normalize เบอร์โทร — เอาเฉพาะตัวเลข
+function normalizePhone(p) {
+  return String(p || '').replace(/\D/g, '');
+}
+
 // ─── Helpers ──────────────────────────────────────────────
 function genOrderId() {
   return 'ORD' + Date.now().toString().slice(-6);
@@ -201,28 +222,191 @@ app.post('/messages', async (req, res) => {
 
   if (error) return res.status(500).json({ error: error.message });
 
+  // โหลด order มาดู line_user_id และ customer_name
+  const { data: order } = await supabase.from('orders')
+    .select('customer_name, order_id, line_user_id')
+    .eq('order_id', order_id).maybeSingle();
+
   // ลูกค้าทัก → แจ้งแอดมินทุกคนผ่าน LINE
   if (sender === 'customer' && process.env.LINE_TOKEN) {
-    const { data: order } = await supabase.from('orders')
-      .select('customer_name, order_id').eq('order_id', order_id).maybeSingle();
     const name = order?.customer_name || 'ลูกค้า';
     const notifyText = `💬 ${name} ส่งข้อความ (#${order_id}):\n\n${text.slice(0,500)}\n\n📲 เปิด Admin Panel เพื่อตอบกลับ`;
     notifyAllAdmins([{ type:'text', text: notifyText }]).catch(console.error);
+  }
+
+  // แอดมินตอบ → ส่ง LINE หาลูกค้า (ถ้าผูก line_user_id)
+  if (sender === 'admin' && order?.line_user_id && process.env.LINE_TOKEN) {
+    const customerMsg = `💬 ข้อความจากร้าน (#${order_id}):\n\n${text.slice(0,4500)}`;
+    linePush(order.line_user_id, [{ type:'text', text: customerMsg }])
+      .then(() => console.log(`📤 admin reply → ${order.line_user_id.slice(0,12)}…`))
+      .catch(e => console.warn('LINE push to customer failed:', e.message));
   }
 
   res.json({ success: true, message: data });
 });
 
 // ── POST /webhook ─────────────────────────────────────────
+// LINE bot — ลูกค้าทักมา → ตอบสถานะออเดอร์
 app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
   const events = req.body?.events || [];
+
   for (const ev of events) {
-    if (ev.type === 'message' && ev.message?.type === 'text') {
-      console.log('💬 LINE event:', ev.source?.userId, '→', ev.message.text.slice(0, 50));
+    const userId = ev.source?.userId;
+    if (!userId) continue;
+
+    if (ev.type !== 'message' || ev.message?.type !== 'text') continue;
+    const rawText = ev.message.text || '';
+    const text = rawText.trim().toLowerCase();
+    const replyToken = ev.replyToken;
+
+    // อัปเดต LINE user_id ในออเดอร์ทั้งหมดที่มีเบอร์ตรงกัน (ผูกอัตโนมัติเมื่อพิมพ์เบอร์)
+    // ตรวจว่า text เป็นเบอร์โทรไหม (8-12 หลัก)
+    const phoneOnly = normalizePhone(rawText);
+    if (phoneOnly.length >= 8 && phoneOnly.length <= 12 && /^\d+$/.test(phoneOnly)) {
+      // จับคู่ออเดอร์ที่มีเบอร์นี้ → set line_user_id
+      const { data: matched } = await supabase.from('orders')
+        .select('order_id, phone, customer_name, status, total, customer_id')
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      const matches = (matched || []).filter(o => normalizePhone(o.phone) === phoneOnly);
+
+      if (matches.length) {
+        // อัปเดต line_user_id ให้ทุกออเดอร์ที่เบอร์ตรงกัน
+        await supabase.from('orders')
+          .update({ line_user_id: userId })
+          .in('order_id', matches.map(o => o.order_id))
+          .then(({ error }) => { if (error) console.warn('link line_user_id:', error.message); });
+
+        const lines = matches.slice(0, 5).map(o =>
+          `${getStatusEmoji(o.status)} #${o.order_id}\n   ${STATUS_LABELS_TH[o.status] || o.status} • ฿${(o.total||0).toLocaleString()}`
+        ).join('\n\n');
+
+        await lineReply(replyToken, [{
+          type: 'text',
+          text: `✅ ผูกบัญชีสำเร็จ คุณ ${matches[0].customer_name || ''}\n\n` +
+                `พบออเดอร์ ${matches.length} รายการ:\n\n${lines}\n\n` +
+                `📲 ครั้งหน้าพิมพ์ "ออเดอร์" เพื่อเช็คสถานะได้เลย`
+        }]);
+        continue;
+      } else {
+        await lineReply(replyToken, [{
+          type: 'text',
+          text: `🔍 ไม่พบออเดอร์ที่ใช้เบอร์ ${rawText}\n\nกรุณาตรวจสอบเบอร์ที่กรอกตอนสั่ง หรือสั่งสินค้าใหม่ที่:\nhttps://lineoa-production-a8e8.up.railway.app/`
+        }]);
+        continue;
+      }
+    }
+
+    // คำสั่ง: ออเดอร์ / order / สถานะ → ดูออเดอร์ของตัวเอง
+    if (text.includes('ออเดอร์') || text.includes('order') || text.includes('สถานะ') || text.includes('status')) {
+      // หาออเดอร์ที่ผูกกับ LINE user นี้
+      const { data: myOrders } = await supabase.from('orders')
+        .select('order_id, status, total, customer_name, created_at, items')
+        .eq('line_user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      if (!myOrders?.length) {
+        await lineReply(replyToken, [{
+          type: 'text',
+          text: `📭 ยังไม่พบออเดอร์ของคุณในระบบ\n\n` +
+                `🔗 วิธีผูกบัญชี: พิมพ์เบอร์โทรที่ใช้ตอนสั่งซื้อมาครับ\n` +
+                `เช่น: 0812345678\n\n` +
+                `หรือสั่งสินค้าได้ที่:\nhttps://lineoa-production-a8e8.up.railway.app/`
+        }]);
+        continue;
+      }
+
+      const lines = myOrders.map(o => {
+        const date = new Date(o.created_at).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short' });
+        const itemsBrief = (o.items || []).slice(0, 2).map(i => `${i.emoji||''} ${i.name} ×${i.qty}`).join(', ');
+        const moreItems = (o.items || []).length > 2 ? ` +${(o.items||[]).length - 2} รายการ` : '';
+        return `${getStatusEmoji(o.status)} #${o.order_id}\n` +
+               `   ${STATUS_LABELS_TH[o.status] || o.status}\n` +
+               `   💰 ฿${(o.total||0).toLocaleString()} • ${date}\n` +
+               `   ${itemsBrief}${moreItems}`;
+      }).join('\n\n');
+
+      await lineReply(replyToken, [{
+        type: 'text',
+        text: `📋 ออเดอร์ของคุณ ${myOrders[0].customer_name || ''} (${myOrders.length} รายการล่าสุด):\n\n${lines}\n\n` +
+              `📲 ดูรายละเอียดเพิ่ม + แชทกับร้านได้ที่:\nhttps://lineoa-production-a8e8.up.railway.app/`
+      }]);
+      continue;
+    }
+
+    // คำสั่ง: help / ช่วยเหลือ / เริ่มต้น
+    if (text.includes('help') || text.includes('ช่วย') || text === 'เริ่ม' || text === 'start' || text === 'menu' || text === 'เมนู') {
+      await lineReply(replyToken, [{
+        type: 'text',
+        text: `🛍 สวัสดีค่ะ! ใช้งานได้ดังนี้:\n\n` +
+              `📦 พิมพ์ "ออเดอร์" → ดูสถานะออเดอร์ของคุณ\n` +
+              `🔗 พิมพ์เบอร์โทร → ผูกบัญชีกับออเดอร์ที่เคยสั่ง\n` +
+              `🛒 สั่งสินค้า → https://lineoa-production-a8e8.up.railway.app/\n\n` +
+              `ถ้ามีคำถาม พิมพ์มาได้เลย — ร้านจะตอบในแชทค่ะ 💬`
+      }]);
+      continue;
+    }
+
+    // ข้อความอื่นๆ: forward ไปแอดมิน + บันทึกในแชท (ถ้าผูกบัญชีแล้ว)
+    const { data: linkedOrders } = await supabase.from('orders')
+      .select('order_id, customer_id, customer_name')
+      .eq('line_user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    const latest = linkedOrders?.[0];
+
+    if (latest) {
+      // บันทึกข้อความลูกค้าในแชทออเดอร์ล่าสุด
+      await supabase.from('messages').insert([{
+        order_id   : latest.order_id,
+        customer_id: latest.customer_id,
+        sender     : 'customer',
+        text       : rawText,
+        created_at : new Date().toISOString()
+      }]).then(({ error }) => { if (error) console.warn('insert msg:', error.message); });
+
+      // แจ้งแอดมิน
+      const notifyText = `💬 ${latest.customer_name || 'ลูกค้า'} ส่งข้อความใน LINE (#${latest.order_id}):\n\n${rawText.slice(0,500)}`;
+      notifyAllAdmins([{ type:'text', text: notifyText }]).catch(console.error);
+
+      // ตอบลูกค้าแบบสั้นๆ ว่ารับเรื่องแล้ว
+      await lineReply(replyToken, [{
+        type: 'text',
+        text: `✅ ได้รับข้อความแล้วค่ะ ร้านจะตอบกลับเร็วๆ นี้\n\nหรือพิมพ์ "ออเดอร์" เพื่อดูสถานะ`
+      }]);
+    } else {
+      // ยังไม่ผูกบัญชี
+      await lineReply(replyToken, [{
+        type: 'text',
+        text: `สวัสดีค่ะ 👋\n\n` +
+              `📦 พิมพ์ "ออเดอร์" → ดูสถานะ\n` +
+              `🔗 พิมพ์เบอร์โทรที่ใช้สั่งซื้อ → ผูกบัญชี\n` +
+              `🛒 สั่งสินค้า → https://lineoa-production-a8e8.up.railway.app/`
+      }]);
     }
   }
 });
+
+// helper สำหรับ webhook
+const STATUS_LABELS_TH = {
+  pending  : '⏳ รอดำเนินการ',
+  sent     : '📬 ร้านได้รับแล้ว',
+  confirmed: '✅ ยืนยันแล้ว',
+  shipped  : '🚚 กำลังจัดส่ง',
+  done     : '🎉 เสร็จสิ้น',
+  cancelled: '❌ ยกเลิก',
+  failed   : '💥 ผิดพลาด'
+};
+function getStatusEmoji(s) {
+  return ({
+    pending:'⏳', sent:'📬', confirmed:'✅',
+    shipped:'🚚', done:'🎉', cancelled:'❌', failed:'💥'
+  })[s] || '📦';
+}
 
 // ── GET /orders (admin) ──────────────────────────────────
 app.get('/orders', async (req, res) => {
@@ -250,6 +434,7 @@ app.patch('/orders/:orderId/status', async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
 
   if (data) {
+    // 1) บันทึก system message ในแชทเว็บ
     await supabase.from('messages').insert([{
       order_id   : data.order_id,
       customer_id: data.customer_id,
@@ -257,6 +442,18 @@ app.patch('/orders/:orderId/status', async (req, res) => {
       text       : `📦 ออเดอร์ #${data.order_id} อัปเดตสถานะ: ${statusLabel(status)}`,
       created_at : new Date().toISOString()
     }]).catch(console.error);
+
+    // 2) ส่ง LINE หาลูกค้า (ถ้าผูก line_user_id แล้ว)
+    if (data.line_user_id && process.env.LINE_TOKEN) {
+      const customerMsg =
+        `📦 อัปเดตออเดอร์ #${data.order_id}\n\n` +
+        `${statusLabel(status)}\n\n` +
+        `💰 ยอดรวม: ฿${(data.total||0).toLocaleString()}\n\n` +
+        `ดูรายละเอียดเพิ่ม:\nhttps://lineoa-production-a8e8.up.railway.app/`;
+      linePush(data.line_user_id, [{ type:'text', text: customerMsg }])
+        .then(() => console.log(`📤 status update → ${data.line_user_id.slice(0,12)}…`))
+        .catch(e => console.warn('LINE push to customer failed:', e.message));
+    }
   }
 
   res.json({ success: true, order: data });
