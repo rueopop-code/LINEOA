@@ -314,7 +314,7 @@ app.post('/webhook', async (req, res) => {
           text: `📭 ยังไม่พบออเดอร์ของคุณในระบบ\n\n` +
                 `🔗 วิธีผูกบัญชี: พิมพ์เบอร์โทรที่ใช้ตอนสั่งซื้อมาครับ\n` +
                 `เช่น: 0812345678\n\n` +
-                `หรือสั่งสินค้าได้ที่:\nhttps://lineoa-production-a8e8.up.railway.app/`
+                `หรือสั่งสินค้าได้ที่:\nhttps://rueopop-code.github.io/LINEOA/`
         }]);
         continue;
       }
@@ -332,7 +332,7 @@ app.post('/webhook', async (req, res) => {
       await lineReply(replyToken, [{
         type: 'text',
         text: `📋 ออเดอร์ของคุณ ${myOrders[0].customer_name || ''} (${myOrders.length} รายการล่าสุด):\n\n${lines}\n\n` +
-              `📲 ดูรายละเอียดเพิ่ม + แชทกับร้านได้ที่:\nhttps://lineoa-production-a8e8.up.railway.app/`
+              `📲 ดูรายละเอียดเพิ่ม + แชทกับร้านได้ที่:\nhttps://rueopop-code.github.io/LINEOA/`
       }]);
       continue;
     }
@@ -344,7 +344,7 @@ app.post('/webhook', async (req, res) => {
         text: `🛍 สวัสดีค่ะ! ใช้งานได้ดังนี้:\n\n` +
               `📦 พิมพ์ "ออเดอร์" → ดูสถานะออเดอร์ของคุณ\n` +
               `🔗 พิมพ์เบอร์โทร → ผูกบัญชีกับออเดอร์ที่เคยสั่ง\n` +
-              `🛒 สั่งสินค้า → https://lineoa-production-a8e8.up.railway.app/\n\n` +
+              `🛒 สั่งสินค้า →https://rueopop-code.github.io/LINEOA/\n\n` +
               `ถ้ามีคำถาม พิมพ์มาได้เลย — ร้านจะตอบในแชทค่ะ 💬`
       }]);
       continue;
@@ -385,7 +385,7 @@ app.post('/webhook', async (req, res) => {
         text: `สวัสดีค่ะ 👋\n\n` +
               `📦 พิมพ์ "ออเดอร์" → ดูสถานะ\n` +
               `🔗 พิมพ์เบอร์โทรที่ใช้สั่งซื้อ → ผูกบัญชี\n` +
-              `🛒 สั่งสินค้า → https://lineoa-production-a8e8.up.railway.app/`
+              `🛒 สั่งสินค้า → https://rueopop-code.github.io/LINEOA/`
       }]);
     }
   }
@@ -449,7 +449,7 @@ app.patch('/orders/:orderId/status', async (req, res) => {
         `📦 อัปเดตออเดอร์ #${data.order_id}\n\n` +
         `${statusLabel(status)}\n\n` +
         `💰 ยอดรวม: ฿${(data.total||0).toLocaleString()}\n\n` +
-        `ดูรายละเอียดเพิ่ม:\nhttps://lineoa-production-a8e8.up.railway.app/`;
+        `ดูรายละเอียดเพิ่ม:\nhttps://rueopop-code.github.io/LINEOA/`;
       linePush(data.line_user_id, [{ type:'text', text: customerMsg }])
         .then(() => console.log(`📤 status update → ${data.line_user_id.slice(0,12)}…`))
         .catch(e => console.warn('LINE push to customer failed:', e.message));
