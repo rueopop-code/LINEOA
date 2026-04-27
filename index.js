@@ -27,7 +27,7 @@ async function linePush(userId, messages) {
     body: JSON.stringify({ to: userId, messages })
   });
   if (!res.ok) {
-    const err = await res.json();
+    const err = await res.json().catch(() => ({}));
     throw new Error(err.message || 'LINE push failed');
   }
 }
@@ -41,6 +41,29 @@ async function lineReply(replyToken, messages) {
     },
     body: JSON.stringify({ replyToken, messages })
   }).catch(console.error);
+}
+
+// บันทึกข้อความลง messages table (ใช้ในแชท)
+async function saveMessage({ order_id, user_id, sender, text }) {
+  if (!order_id || !text) return;
+  await supabase.from('messages').insert([{
+    order_id, user_id, sender, text,
+    created_at: new Date().toISOString()
+  }]).then(({ error }) => {
+    if (error) console.error('saveMessage error:', error.message);
+  }).catch(console.error);
+}
+
+// หา order_id ล่าสุดของ user นี้ (สำหรับผูกข้อความเข้ากับออเดอร์ล่าสุด)
+async function getLatestOrderId(userId) {
+  const { data } = await supabase
+    .from('orders')
+    .select('order_id')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data?.order_id || null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────
@@ -94,7 +117,6 @@ app.post('/send-order', async (req, res) => {
   const { error: dbErr } = await supabase.from('orders').insert([order]);
   if (dbErr) {
     console.error('DB insert error:', dbErr.message);
-    // ถ้า DB ผิดพลาด ยังส่ง LINE ต่อได้
   }
 
   // ส่งแจ้งเตือนไปหาเจ้าของร้าน (ADMIN_LINE_UID)
@@ -116,8 +138,33 @@ app.post('/send-order', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════
+// ── POST /notify ──────────────────────────────────────────
+// Admin → ส่งข้อความหาลูกค้าทาง LINE (เรียกจาก admin.html)
+// Body: { user_id, order_id?, text }
+// admin.html จัดการ insert ลง messages table เองอยู่แล้ว
+// (ป้องกัน duplicate) endpoint นี้แค่ทำหน้าที่ push LINE อย่างเดียว
+// ═══════════════════════════════════════════════════════════
+app.post('/notify', async (req, res) => {
+  const { user_id, order_id, text } = req.body;
+  if (!user_id || !text)
+    return res.status(400).json({ error: 'missing user_id or text' });
+
+  try {
+    await linePush(user_id, [{
+      type: 'text',
+      text: String(text).slice(0, 5000)   // LINE limit 5000 chars
+    }]);
+    console.log(`📤 notify → ${user_id.slice(0,12)}… (order ${order_id || '-'})`);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('/notify error:', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
 // ── POST /webhook ─────────────────────────────────────────
-// LINE Platform → เก็บ userId + ตอบกลับลูกค้า
+// LINE Platform → เก็บ userId, บันทึกข้อความลูกค้าลง messages, ตอบกลับ
 app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
 
@@ -134,7 +181,21 @@ app.post('/webhook', async (req, res) => {
 
     if (ev.type !== 'message' || ev.message?.type !== 'text') continue;
 
-    const text = ev.message.text.trim().toLowerCase();
+    const incomingText = ev.message.text;
+    const text = incomingText.trim().toLowerCase();
+
+    // ★ บันทึกข้อความลูกค้าลง messages (ผูกกับออเดอร์ล่าสุดของ user)
+    //   — ทำให้แอดมินเห็นข้อความในช่องแชทแบบเรียลไทม์
+    const latestOrderId = await getLatestOrderId(userId);
+    if (latestOrderId) {
+      await saveMessage({
+        order_id: latestOrderId,
+        user_id : userId,
+        sender  : 'customer',
+        text    : incomingText
+      });
+    }
+
     let reply = '';
 
     if (text.includes('id') || text === 'uid') {
@@ -161,11 +222,20 @@ app.post('/webhook', async (req, res) => {
     }
 
     await lineReply(ev.replyToken, [{ type: 'text', text: reply }]);
+
+    // บันทึก auto-reply ของบอทลง messages ด้วย (sender=system)
+    if (latestOrderId) {
+      await saveMessage({
+        order_id: latestOrderId,
+        user_id : userId,
+        sender  : 'system',
+        text    : reply
+      });
+    }
   }
 });
 
 // ── GET /orders ───────────────────────────────────────────
-// Admin: ดูออเดอร์ทั้งหมด (เรียงใหม่ → เก่า)
 app.get('/orders', async (req, res) => {
   const limit  = parseInt(req.query.limit)  || 50;
   const offset = parseInt(req.query.offset) || 0;
@@ -182,9 +252,12 @@ app.get('/orders', async (req, res) => {
 
 // ── PATCH /orders/:orderId/status ─────────────────────────
 // Admin: อัปเดตสถานะออเดอร์
+//   ⚠️ admin.html ตอนนี้อัปเดต Supabase ตรงๆ และส่งข้อความผ่าน /notify เอง
+//   จึงไม่ได้เรียก endpoint นี้แล้ว — แต่เก็บไว้เผื่อเรียกจากที่อื่น
+//   ใส่ ?silent=1 จะไม่ส่ง LINE auto-message
 app.patch('/orders/:orderId/status', async (req, res) => {
   const { status } = req.body;
-  const allowed = ['pending', 'confirmed', 'shipped', 'done', 'cancelled'];
+  const allowed = ['pending', 'sent', 'confirmed', 'shipped', 'done', 'cancelled', 'failed'];
   if (!allowed.includes(status))
     return res.status(400).json({ error: `status ต้องเป็น: ${allowed.join(', ')}` });
 
@@ -197,8 +270,9 @@ app.patch('/orders/:orderId/status', async (req, res) => {
 
   if (error) return res.status(500).json({ error: error.message });
 
-  // แจ้งลูกค้าผ่าน LINE
-  if (data?.user_id) {
+  // แจ้งลูกค้าผ่าน LINE (เฉพาะถ้าไม่ได้ใส่ ?silent=1)
+  const silent = req.query.silent === '1';
+  if (!silent && data?.user_id) {
     const statusTh = {
       confirmed : '✅ ร้านค้ายืนยันออเดอร์แล้ว',
       shipped   : '🚚 สินค้าอยู่ระหว่างจัดส่ง',
@@ -206,10 +280,14 @@ app.patch('/orders/:orderId/status', async (req, res) => {
       cancelled : '❌ ออเดอร์ถูกยกเลิก กรุณาติดต่อร้านค้า'
     }[status];
     if (statusTh) {
-      await linePush(data.user_id, [{
-        type: 'text',
-        text: `📦 อัปเดตออเดอร์ #${data.order_id}\n${statusTh}`
-      }]).catch(console.error);
+      const msgText = `📦 อัปเดตออเดอร์ #${data.order_id}\n${statusTh}`;
+      await linePush(data.user_id, [{ type: 'text', text: msgText }]).catch(console.error);
+      await saveMessage({
+        order_id: data.order_id,
+        user_id : data.user_id,
+        sender  : 'system',
+        text    : msgText
+      });
     }
   }
 
