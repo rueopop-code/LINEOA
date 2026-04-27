@@ -265,18 +265,19 @@ app.patch('/orders/:orderId/status', async (req, res) => {
 // ═══════════════════════════════════════════════════════════
 //  STATIC FILES
 // ═══════════════════════════════════════════════════════════
-app.get('/shop', (req, res) => {
-  res.sendFile(path.join(__dirname, 'shop_v4.html'));
-});
+//  หน้าร้านลูกค้า อยู่ที่ index.html (อยู่บน Railway/GitHub)
+//  หน้าแอดมิน admin.html เก็บไว้ในเครื่องเจ้าของร้าน — เปิดจาก browser ตรงๆ
+//  (admin.html จะเรียก API ของ backend ที่นี่ผ่าน CORS)
 
-app.get('/admin', (req, res) => {
-  res.sendFile(path.join(__dirname, 'admin.html'));
-});
-
+// fallback: ทุก URL ที่ไม่ match route ข้างบน → ส่งหน้าร้าน
 app.use(express.static(__dirname));
 
+app.get('/shop', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
+
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'shop_v4.html'));
+  res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 // ─── Start ─────────────────────────────────────────────────
