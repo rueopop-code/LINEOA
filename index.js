@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors    = require('cors');
 const fetch   = require('node-fetch');
+const path    = require('path');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
@@ -14,8 +15,15 @@ const supabase = createClient(
   process.env.SUPABASE_KEY
 );
 
-// ─── LINE ──────────────────────────────────────────────────
+// ─── LINE (ใช้แค่แจ้งเตือนแอดมิน) ───────────────────────────
 const LINE_API = 'https://api.line.me/v2/bot/message';
+
+// อ่าน admin UIDs จาก env — รองรับหลายคนคั่นด้วย comma
+// รองรับทั้งชื่อเก่า ADMIN_LINE_UID และชื่อใหม่ ADMIN_LINE_UIDS
+function getAdminUids() {
+  const raw = process.env.ADMIN_LINE_UIDS || process.env.ADMIN_LINE_UID || '';
+  return raw.split(',').map(s => s.trim()).filter(Boolean);
+}
 
 async function linePush(userId, messages) {
   const res = await fetch(`${LINE_API}/push`, {
@@ -32,38 +40,18 @@ async function linePush(userId, messages) {
   }
 }
 
-async function lineReply(replyToken, messages) {
-  await fetch(`${LINE_API}/reply`, {
-    method : 'POST',
-    headers: {
-      'Content-Type' : 'application/json',
-      'Authorization': `Bearer ${process.env.LINE_TOKEN}`
-    },
-    body: JSON.stringify({ replyToken, messages })
-  }).catch(console.error);
-}
-
-// บันทึกข้อความลง messages table (ใช้ในแชท)
-async function saveMessage({ order_id, user_id, sender, text }) {
-  if (!order_id || !text) return;
-  await supabase.from('messages').insert([{
-    order_id, user_id, sender, text,
-    created_at: new Date().toISOString()
-  }]).then(({ error }) => {
-    if (error) console.error('saveMessage error:', error.message);
-  }).catch(console.error);
-}
-
-// หา order_id ล่าสุดของ user นี้ (สำหรับผูกข้อความเข้ากับออเดอร์ล่าสุด)
-async function getLatestOrderId(userId) {
-  const { data } = await supabase
-    .from('orders')
-    .select('order_id')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  return data?.order_id || null;
+// ส่งให้แอดมินทุกคนพร้อมกัน (ไม่ fail ถ้ามีบางคนล้มเหลว)
+async function notifyAllAdmins(messages) {
+  const uids = getAdminUids();
+  if (!uids.length) {
+    console.warn('⚠️ ไม่มี ADMIN_LINE_UIDS / ADMIN_LINE_UID ตั้งไว้');
+    return { sent: 0, failed: 0 };
+  }
+  const results = await Promise.allSettled(uids.map(uid => linePush(uid, messages)));
+  const sent   = results.filter(r => r.status === 'fulfilled').length;
+  const failed = results.filter(r => r.status === 'rejected').length;
+  if (failed) console.warn(`⚠️ ส่งแอดมิน ${sent}/${uids.length} สำเร็จ`);
+  return { sent, failed };
 }
 
 // ─── Helpers ──────────────────────────────────────────────
@@ -71,243 +59,233 @@ function genOrderId() {
   return 'ORD' + Date.now().toString().slice(-6);
 }
 
-function buildOrderMsg(order) {
-  const { customer_name, items, total, order_id, created_at } = order;
-  const date = new Date(created_at).toLocaleString('th-TH', {
-    dateStyle: 'short', timeStyle: 'short'
-  });
+function statusLabel(s) {
+  return ({
+    pending  : '⏳ รอดำเนินการ',
+    sent     : '📬 ร้านได้รับออเดอร์แล้ว',
+    confirmed: '✅ ยืนยันแล้ว',
+    shipped  : '🚚 กำลังจัดส่ง',
+    done     : '🎉 เสร็จสิ้น',
+    cancelled: '❌ ยกเลิก',
+    failed   : '💥 ผิดพลาด'
+  })[s] || s;
+}
+
+function buildAdminMsg(order) {
+  const { customer_name, items, total, order_id, created_at, phone, address, note } = order;
+  const date = new Date(created_at).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short' });
   let msg = `🛒 ออเดอร์ใหม่! #${order_id}\n`;
   msg += `${'─'.repeat(24)}\n`;
-  msg += `👤 ลูกค้า: ${customer_name}\n`;
+  msg += `👤 ${customer_name}\n`;
+  if (phone)   msg += `📞 ${phone}\n`;
+  if (address) msg += `📍 ${address}\n`;
   msg += `📅 ${date}\n`;
   msg += `${'─'.repeat(24)}\n`;
-  items.forEach(i => {
+  (items || []).forEach(i => {
     msg += `${i.emoji || '•'} ${i.name}\n`;
     msg += `   ${i.qty} × ฿${i.price.toLocaleString()} = ฿${(i.qty * i.price).toLocaleString()}\n`;
   });
   msg += `${'─'.repeat(24)}\n`;
   msg += `💰 ยอดรวม: ฿${total.toLocaleString()}\n`;
-  msg += `\n📲 กรุณาติดต่อลูกค้ากลับด้วยนะคะ 🙏`;
+  if (note) msg += `\n📝 ${note}\n`;
+  msg += `\n📲 ติดต่อลูกค้าผ่านหน้า Admin Panel ได้เลยค่ะ`;
   return msg;
 }
 
-// ─── Routes ───────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════
+//  ROUTES
+// ═══════════════════════════════════════════════════════════
 
-app.get('/', (req, res) => res.json({
-  status: 'ok',
-  service: 'LINE Shop Backend v2',
-  supabase: process.env.SUPABASE_URL ? '✅' : '❌',
+app.get('/api', (req, res) => res.json({
+  status   : 'ok',
+  service  : 'Maejai Shop Backend v3',
+  supabase : process.env.SUPABASE_URL ? '✅' : '❌',
   lineToken: process.env.LINE_TOKEN  ? '✅' : '❌'
 }));
 
 // ── POST /send-order ──────────────────────────────────────
-// Body: { userId, customerName, items:[{name,emoji,price,qty}], total }
 app.post('/send-order', async (req, res) => {
-  const { userId, customerName, items, total } = req.body;
+  const {
+    customerId, customerName, phone, address, note,
+    items, total, orderType, extra
+  } = req.body;
 
-  if (!userId || !customerName || !items?.length || total == null)
-    return res.status(400).json({ error: 'ข้อมูลไม่ครบ' });
+  if (!customerId || !customerName || !items?.length || total == null)
+    return res.status(400).json({ error: 'ข้อมูลไม่ครบ (customerId/customerName/items/total)' });
 
   const order_id   = genOrderId();
   const created_at = new Date().toISOString();
-  const order      = { order_id, user_id: userId, customer_name: customerName,
-                       items, total, status: 'pending', created_at };
+  const order      = {
+    order_id, customer_id: customerId, customer_name: customerName,
+    phone: phone || null, address: address || null, note: note || extra || null,
+    items, total, status: 'pending', created_at,
+    order_type: orderType || 'pickup'
+  };
 
-  // บันทึกลง Supabase
   const { error: dbErr } = await supabase.from('orders').insert([order]);
   if (dbErr) {
     console.error('DB insert error:', dbErr.message);
+    return res.status(500).json({ error: 'บันทึกออเดอร์ไม่ได้: ' + dbErr.message });
   }
 
-  // ส่งแจ้งเตือนไปหาเจ้าของร้าน (ADMIN_LINE_UID)
-  const adminUid = process.env.ADMIN_LINE_UID;
-  if (!adminUid) {
-    console.error('❌ ADMIN_LINE_UID ไม่ได้ตั้งค่า');
-    return res.status(500).json({ error: 'ADMIN_LINE_UID not configured' });
+  // บันทึก system message ในแชทลูกค้า — สรุปออเดอร์
+  const summaryMsg =
+    `🎉 ขอบคุณสำหรับการสั่งซื้อ คุณ ${customerName}\n\n` +
+    `📦 ออเดอร์ #${order_id}\n` +
+    items.map(i => `• ${i.emoji||''} ${i.name} ×${i.qty} = ฿${(i.qty*i.price).toLocaleString()}`).join('\n') +
+    `\n\n💰 ยอดรวม: ฿${total.toLocaleString()}\n` +
+    `\nร้านจะยืนยันและแจ้งสถานะให้ทราบเร็วๆ นี้ค่ะ 🙏`;
+
+  await supabase.from('messages').insert([{
+    order_id, customer_id: customerId,
+    sender: 'system', text: summaryMsg,
+    created_at: new Date().toISOString()
+  }]).then(({ error }) => {
+    if (error) console.warn('insert summary msg:', error.message);
+  });
+
+  // แจ้งแอดมินทุกคนผ่าน LINE OA
+  if (process.env.LINE_TOKEN) {
+    try {
+      const { sent } = await notifyAllAdmins([{ type: 'text', text: buildAdminMsg(order) }]);
+      if (sent > 0) {
+        await supabase.from('orders').update({ status: 'sent' }).eq('order_id', order_id);
+        console.log(`✅ ${order_id} → admin LINE (${sent} คน)`);
+      }
+    } catch (e) {
+      console.error(`⚠️ ${order_id} LINE notify failed:`, e.message);
+    }
   }
 
-  try {
-    await linePush(adminUid, [{ type: 'text', text: buildOrderMsg(order) }]);
-    await supabase.from('orders').update({ status: 'sent' }).eq('order_id', order_id);
-    console.log(`✅ ${order_id} → admin`);
-    res.json({ success: true, orderId: order_id });
-  } catch (e) {
-    await supabase.from('orders').update({ status: 'failed' }).eq('order_id', order_id);
-    console.error(`❌ ${order_id}:`, e.message);
-    res.status(500).json({ error: e.message });
-  }
+  res.json({ success: true, orderId: order_id });
 });
 
-// ═══════════════════════════════════════════════════════════
-// ── POST /notify ──────────────────────────────────────────
-// Admin → ส่งข้อความหาลูกค้าทาง LINE (เรียกจาก admin.html)
-// Body: { user_id, order_id?, text }
-// admin.html จัดการ insert ลง messages table เองอยู่แล้ว
-// (ป้องกัน duplicate) endpoint นี้แค่ทำหน้าที่ push LINE อย่างเดียว
-// ═══════════════════════════════════════════════════════════
-app.post('/notify', async (req, res) => {
-  const { user_id, order_id, text } = req.body;
-  if (!user_id || !text)
-    return res.status(400).json({ error: 'missing user_id or text' });
+// ── GET /my-orders/:customerId ────────────────────────────
+app.get('/my-orders/:customerId', async (req, res) => {
+  const { customerId } = req.params;
+  if (!customerId) return res.status(400).json({ error: 'missing customerId' });
 
-  try {
-    await linePush(user_id, [{
-      type: 'text',
-      text: String(text).slice(0, 5000)   // LINE limit 5000 chars
-    }]);
-    console.log(`📤 notify → ${user_id.slice(0,12)}… (order ${order_id || '-'})`);
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('/notify error:', e.message);
-    res.status(502).json({ error: e.message });
+  const { data, error } = await supabase
+    .from('orders')
+    .select('*')
+    .eq('customer_id', customerId)
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ orders: data || [] });
+});
+
+// ── GET /messages/:orderId ────────────────────────────────
+app.get('/messages/:orderId', async (req, res) => {
+  const { orderId } = req.params;
+  const { data, error } = await supabase
+    .from('messages')
+    .select('*')
+    .eq('order_id', orderId)
+    .order('created_at', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ messages: data || [] });
+});
+
+// ── POST /messages ────────────────────────────────────────
+app.post('/messages', async (req, res) => {
+  const { order_id, customer_id, sender, text } = req.body;
+  if (!order_id || !sender || !text)
+    return res.status(400).json({ error: 'missing fields' });
+
+  const { data, error } = await supabase.from('messages').insert([{
+    order_id, customer_id, sender, text,
+    created_at: new Date().toISOString()
+  }]).select().single();
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  // ลูกค้าทัก → แจ้งแอดมินทุกคนผ่าน LINE
+  if (sender === 'customer' && process.env.LINE_TOKEN) {
+    const { data: order } = await supabase.from('orders')
+      .select('customer_name, order_id').eq('order_id', order_id).maybeSingle();
+    const name = order?.customer_name || 'ลูกค้า';
+    const notifyText = `💬 ${name} ส่งข้อความ (#${order_id}):\n\n${text.slice(0,500)}\n\n📲 เปิด Admin Panel เพื่อตอบกลับ`;
+    notifyAllAdmins([{ type:'text', text: notifyText }]).catch(console.error);
   }
+
+  res.json({ success: true, message: data });
 });
 
 // ── POST /webhook ─────────────────────────────────────────
-// LINE Platform → เก็บ userId, บันทึกข้อความลูกค้าลง messages, ตอบกลับ
 app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
-
   const events = req.body?.events || [];
   for (const ev of events) {
-    const userId = ev.source?.userId;
-    if (!userId) continue;
-
-    // upsert user ลง Supabase
-    await supabase.from('line_users').upsert(
-      [{ user_id: userId, last_seen: new Date().toISOString() }],
-      { onConflict: 'user_id' }
-    );
-
-    if (ev.type !== 'message' || ev.message?.type !== 'text') continue;
-
-    const incomingText = ev.message.text;
-    const text = incomingText.trim().toLowerCase();
-
-    // ★ บันทึกข้อความลูกค้าลง messages (ผูกกับออเดอร์ล่าสุดของ user)
-    //   — ทำให้แอดมินเห็นข้อความในช่องแชทแบบเรียลไทม์
-    const latestOrderId = await getLatestOrderId(userId);
-    if (latestOrderId) {
-      await saveMessage({
-        order_id: latestOrderId,
-        user_id : userId,
-        sender  : 'customer',
-        text    : incomingText
-      });
-    }
-
-    let reply = '';
-
-    if (text.includes('id') || text === 'uid') {
-      reply = `📋 LINE User ID ของคุณ:\n\n${userId}\n\nนำ ID นี้ไปใส่ในหน้าเว็บร้านค้าตอนสั่งซื้อค่ะ`;
-
-    } else if (text.includes('ออเดอร์') || text.includes('order')) {
-      const { data: myOrders } = await supabase
-        .from('orders')
-        .select('order_id, total, status, created_at')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(5);
-
-      reply = !myOrders?.length
-        ? '📭 ยังไม่มีออเดอร์ในระบบค่ะ'
-        : '📋 ออเดอร์ล่าสุดของคุณ:\n\n' +
-          myOrders.map(o => {
-            const icon = o.status === 'sent' ? '✅' : o.status === 'failed' ? '❌' : '⏳';
-            return `${icon} #${o.order_id}\n฿${o.total.toLocaleString()}`;
-          }).join('\n\n');
-
-    } else {
-      reply = `สวัสดีค่ะ! 👋\nยินดีต้อนรับสู่ร้านของเรา\n\nพิมพ์ว่า:\n• "id" → ดู User ID ของคุณ\n• "ออเดอร์" → ดูสถานะสั่งซื้อ`;
-    }
-
-    await lineReply(ev.replyToken, [{ type: 'text', text: reply }]);
-
-    // บันทึก auto-reply ของบอทลง messages ด้วย (sender=system)
-    if (latestOrderId) {
-      await saveMessage({
-        order_id: latestOrderId,
-        user_id : userId,
-        sender  : 'system',
-        text    : reply
-      });
+    if (ev.type === 'message' && ev.message?.type === 'text') {
+      console.log('💬 LINE event:', ev.source?.userId, '→', ev.message.text.slice(0, 50));
     }
   }
 });
 
-// ── GET /orders ───────────────────────────────────────────
+// ── GET /orders (admin) ──────────────────────────────────
 app.get('/orders', async (req, res) => {
-  const limit  = parseInt(req.query.limit)  || 50;
+  const limit  = parseInt(req.query.limit)  || 100;
   const offset = parseInt(req.query.offset) || 0;
-
   const { data, error, count } = await supabase
     .from('orders')
     .select('*', { count: 'exact' })
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
-
   if (error) return res.status(500).json({ error: error.message });
   res.json({ total: count, orders: data });
 });
 
 // ── PATCH /orders/:orderId/status ─────────────────────────
-// Admin: อัปเดตสถานะออเดอร์
-//   ⚠️ admin.html ตอนนี้อัปเดต Supabase ตรงๆ และส่งข้อความผ่าน /notify เอง
-//   จึงไม่ได้เรียก endpoint นี้แล้ว — แต่เก็บไว้เผื่อเรียกจากที่อื่น
-//   ใส่ ?silent=1 จะไม่ส่ง LINE auto-message
 app.patch('/orders/:orderId/status', async (req, res) => {
   const { status } = req.body;
   const allowed = ['pending', 'sent', 'confirmed', 'shipped', 'done', 'cancelled', 'failed'];
   if (!allowed.includes(status))
-    return res.status(400).json({ error: `status ต้องเป็น: ${allowed.join(', ')}` });
+    return res.status(400).json({ error: `status must be: ${allowed.join(', ')}` });
 
   const { data, error } = await supabase
-    .from('orders')
-    .update({ status })
-    .eq('order_id', req.params.orderId)
-    .select()
-    .single();
-
+    .from('orders').update({ status }).eq('order_id', req.params.orderId)
+    .select().single();
   if (error) return res.status(500).json({ error: error.message });
 
-  // แจ้งลูกค้าผ่าน LINE (เฉพาะถ้าไม่ได้ใส่ ?silent=1)
-  const silent = req.query.silent === '1';
-  if (!silent && data?.user_id) {
-    const statusTh = {
-      confirmed : '✅ ร้านค้ายืนยันออเดอร์แล้ว',
-      shipped   : '🚚 สินค้าอยู่ระหว่างจัดส่ง',
-      done      : '🎉 จัดส่งเสร็จสมบูรณ์ ขอบคุณค่ะ',
-      cancelled : '❌ ออเดอร์ถูกยกเลิก กรุณาติดต่อร้านค้า'
-    }[status];
-    if (statusTh) {
-      const msgText = `📦 อัปเดตออเดอร์ #${data.order_id}\n${statusTh}`;
-      await linePush(data.user_id, [{ type: 'text', text: msgText }]).catch(console.error);
-      await saveMessage({
-        order_id: data.order_id,
-        user_id : data.user_id,
-        sender  : 'system',
-        text    : msgText
-      });
-    }
+  if (data) {
+    await supabase.from('messages').insert([{
+      order_id   : data.order_id,
+      customer_id: data.customer_id,
+      sender     : 'system',
+      text       : `📦 ออเดอร์ #${data.order_id} อัปเดตสถานะ: ${statusLabel(status)}`,
+      created_at : new Date().toISOString()
+    }]).catch(console.error);
   }
 
   res.json({ success: true, order: data });
 });
 
-// ── GET /users ────────────────────────────────────────────
-app.get('/users', async (req, res) => {
-  const { data, error } = await supabase
-    .from('line_users')
-    .select('*')
-    .order('last_seen', { ascending: false });
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ total: data.length, users: data });
+// ═══════════════════════════════════════════════════════════
+//  STATIC FILES
+// ═══════════════════════════════════════════════════════════
+app.get('/shop', (req, res) => {
+  res.sendFile(path.join(__dirname, 'shop_v4.html'));
+});
+
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin.html'));
+});
+
+app.use(express.static(__dirname));
+
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'shop_v4.html'));
 });
 
 // ─── Start ─────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`\n🚀 LINE Shop Backend v2 — port ${PORT}`);
-  console.log(`🗄  Supabase : ${process.env.SUPABASE_URL  ? '✅' : '❌'}`);
-  console.log(`💬 LINE     : ${process.env.LINE_TOKEN     ? '✅' : '❌'}\n`);
+  const adminCount = getAdminUids().length;
+  console.log(`\n🚀 Maejai Shop Backend v3 — port ${PORT}`);
+  console.log(`🗄  Supabase  : ${process.env.SUPABASE_URL  ? '✅' : '❌'}`);
+  console.log(`💬 LINE      : ${process.env.LINE_TOKEN     ? '✅' : '❌'}`);
+  console.log(`👥 Admins    : ${adminCount} คน`);
+  console.log(`📍 Routes    : /shop, /admin, /api`);
 });
