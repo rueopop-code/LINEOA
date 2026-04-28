@@ -113,6 +113,189 @@ function buildAdminMsg(order) {
   return msg;
 }
 
+// ─── LINE Flex Message Builders ───────────────────────────
+const SHOP_URL = 'https://lineoa-production-a8e8.up.railway.app/';
+
+// สีตามสถานะ
+function statusColor(s) {
+  return ({
+    pending  : '#F39C12',
+    sent     : '#3498DB',
+    confirmed: '#27AE60',
+    shipped  : '#8E44AD',
+    done     : '#16A085',
+    cancelled: '#95A5A6',
+    failed   : '#E74C3C'
+  })[s] || '#7F8C8D';
+}
+
+// Flex: สรุปออเดอร์ใหม่ (ส่งหาลูกค้าหลังสั่ง)
+function buildOrderSummaryFlex(order) {
+  const itemRows = (order.items || []).slice(0, 6).map(i => ({
+    type: 'box', layout: 'horizontal', margin: 'sm',
+    contents: [
+      { type:'text', text:`${i.emoji||'•'} ${i.name}`, size:'sm', color:'#333333', flex:5, wrap:true },
+      { type:'text', text:`×${i.qty}`, size:'sm', color:'#888888', flex:1, align:'end' },
+      { type:'text', text:`฿${(i.qty*i.price).toLocaleString()}`, size:'sm', color:'#C0392B', weight:'bold', flex:2, align:'end' }
+    ]
+  }));
+  const moreItems = (order.items || []).length > 6
+    ? [{ type:'text', text:`+${order.items.length - 6} รายการ`, size:'xs', color:'#888888', margin:'sm' }]
+    : [];
+
+  return {
+    type: 'flex',
+    altText: `ออเดอร์ #${order.order_id} ของคุณ ฿${(order.total||0).toLocaleString()}`,
+    contents: {
+      type: 'bubble',
+      header: {
+        type: 'box', layout: 'vertical',
+        backgroundColor: '#C0392B',
+        paddingAll: 'lg',
+        contents: [
+          { type:'text', text:'🎉 ขอบคุณสำหรับการสั่งซื้อ', color:'#ffffff', size:'sm', weight:'regular' },
+          { type:'text', text:`#${order.order_id}`, color:'#ffffff', size:'xl', weight:'bold', margin:'sm' },
+          { type:'text', text:`คุณ ${order.customer_name||'-'}`, color:'#ffffff', size:'sm', margin:'xs' }
+        ]
+      },
+      body: {
+        type:'box', layout:'vertical', spacing:'md', paddingAll:'lg',
+        contents: [
+          { type:'text', text:'📦 รายการสินค้า', size:'sm', color:'#888888', weight:'bold' },
+          ...itemRows,
+          ...moreItems,
+          { type:'separator', margin:'lg' },
+          { type:'box', layout:'horizontal', margin:'md',
+            contents:[
+              { type:'text', text:'ยอดรวม', size:'md', color:'#333333', flex:1 },
+              { type:'text', text:`฿${(order.total||0).toLocaleString()}`, size:'lg', color:'#C0392B', weight:'bold', align:'end' }
+            ]
+          },
+          { type:'text', text:'⏳ ร้านกำลังตรวจสอบและจะแจ้งให้ทราบเร็วๆ นี้', size:'xs', color:'#888888', wrap:true, margin:'lg', align:'center' }
+        ]
+      },
+      footer: {
+        type:'box', layout:'vertical', spacing:'sm', paddingAll:'lg', paddingTop:'none',
+        contents: [
+          { type:'button', style:'primary', color:'#C0392B', height:'sm',
+            action: { type:'uri', label:'📋 ดูสถานะออเดอร์', uri: SHOP_URL }
+          },
+          { type:'button', style:'secondary', height:'sm',
+            action: { type:'uri', label:'🛒 สั่งซื้อเพิ่ม', uri: SHOP_URL }
+          }
+        ]
+      }
+    }
+  };
+}
+
+// Flex: อัปเดตสถานะออเดอร์
+function buildStatusUpdateFlex(order, status) {
+  const labels = {
+    pending  : { emoji:'⏳', text:'รอดำเนินการ', desc:'ร้านกำลังตรวจสอบออเดอร์ของคุณ' },
+    sent     : { emoji:'📬', text:'ร้านได้รับแล้ว', desc:'ร้านได้รับออเดอร์ของคุณเรียบร้อยแล้ว' },
+    confirmed: { emoji:'✅', text:'ยืนยันแล้ว', desc:'ร้านยืนยันออเดอร์เรียบร้อย กำลังจัดเตรียม' },
+    shipped  : { emoji:'🚚', text:'กำลังจัดส่ง', desc:'สินค้าออกจากร้านแล้ว รอรับได้เลย' },
+    done     : { emoji:'🎉', text:'เสร็จสิ้น', desc:'ขอบคุณที่อุดหนุนร้านเรา ❤️' },
+    cancelled: { emoji:'❌', text:'ยกเลิก', desc:'ออเดอร์ถูกยกเลิก ติดต่อร้านหากมีข้อสงสัย' },
+    failed   : { emoji:'💥', text:'ผิดพลาด', desc:'มีข้อผิดพลาดเกิดขึ้น กรุณาติดต่อร้าน' }
+  };
+  const lbl = labels[status] || { emoji:'📦', text:status, desc:'' };
+
+  return {
+    type:'flex',
+    altText: `${lbl.emoji} ออเดอร์ #${order.order_id} — ${lbl.text}`,
+    contents: {
+      type:'bubble',
+      header: {
+        type:'box', layout:'vertical',
+        backgroundColor: statusColor(status),
+        paddingAll:'lg',
+        contents: [
+          { type:'text', text:`${lbl.emoji} อัปเดตสถานะ`, color:'#ffffff', size:'sm' },
+          { type:'text', text: lbl.text, color:'#ffffff', size:'xl', weight:'bold', margin:'sm' }
+        ]
+      },
+      body: {
+        type:'box', layout:'vertical', spacing:'md', paddingAll:'lg',
+        contents: [
+          { type:'box', layout:'horizontal',
+            contents: [
+              { type:'text', text:'ออเดอร์', size:'sm', color:'#888888', flex:1 },
+              { type:'text', text:`#${order.order_id}`, size:'sm', color:'#333333', weight:'bold', align:'end', flex:2 }
+            ]
+          },
+          { type:'box', layout:'horizontal',
+            contents: [
+              { type:'text', text:'ยอดรวม', size:'sm', color:'#888888', flex:1 },
+              { type:'text', text:`฿${(order.total||0).toLocaleString()}`, size:'sm', color:'#C0392B', weight:'bold', align:'end', flex:2 }
+            ]
+          },
+          { type:'separator', margin:'md' },
+          { type:'text', text: lbl.desc, size:'sm', color:'#555555', wrap:true, margin:'md' }
+        ]
+      },
+      footer: {
+        type:'box', layout:'vertical', paddingAll:'lg', paddingTop:'none',
+        contents: [
+          { type:'button', style:'primary', color:'#C0392B', height:'sm',
+            action:{ type:'uri', label:'📋 ดูรายละเอียด', uri: SHOP_URL }
+          }
+        ]
+      }
+    }
+  };
+}
+
+// Flex: ข้อความจากร้าน (chat)
+function buildChatFlex(order, text) {
+  return {
+    type:'flex',
+    altText: `💬 ข้อความจากร้าน: ${text.slice(0,80)}`,
+    contents: {
+      type:'bubble',
+      header: {
+        type:'box', layout:'vertical',
+        backgroundColor:'#C0392B',
+        paddingAll:'md',
+        contents:[
+          { type:'text', text:'💬 ข้อความจากร้าน', color:'#ffffff', size:'sm', weight:'bold' },
+          ...(order?.order_id && !String(order.order_id).startsWith('LINE-')
+              ? [{ type:'text', text:`#${order.order_id}`, color:'#ffffff', size:'xs', margin:'xs' }]
+              : [])
+        ]
+      },
+      body: {
+        type:'box', layout:'vertical', paddingAll:'lg',
+        contents: [
+          { type:'text', text: text.slice(0, 1500), size:'sm', color:'#333333', wrap:true }
+        ]
+      },
+      footer: {
+        type:'box', layout:'vertical', paddingAll:'lg', paddingTop:'none',
+        contents: [
+          { type:'button', style:'primary', color:'#C0392B', height:'sm',
+            action:{ type:'uri', label:'💬 ตอบในเว็บ', uri: SHOP_URL }
+          }
+        ]
+      }
+    }
+  };
+}
+
+// หา line_user_id ของ customer (จากออเดอร์ใดๆ ของเขาที่ผูกบัญชีแล้ว)
+async function findLineUserIdByCustomer(customerId) {
+  if (!customerId) return null;
+  const { data } = await supabase.from('orders')
+    .select('line_user_id')
+    .eq('customer_id', customerId)
+    .not('line_user_id', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data?.line_user_id || null;
+}
+
 // ═══════════════════════════════════════════════════════════
 //  ROUTES
 // ═══════════════════════════════════════════════════════════
@@ -178,6 +361,19 @@ app.post('/send-order', async (req, res) => {
     }
   }
 
+  // ✨ ส่ง Flex Message ออเดอร์สรุปหาลูกค้า (ถ้าเคยผูกบัญชีไว้)
+  if (process.env.LINE_TOKEN) {
+    const customerLineUid = await findLineUserIdByCustomer(customerId);
+    if (customerLineUid) {
+      const flex = buildOrderSummaryFlex({ ...order, status: 'sent' });
+      linePush(customerLineUid, [flex])
+        .then(() => console.log(`📤 order summary → ${customerLineUid.slice(0,12)}…`))
+        .catch(e => console.warn('LINE flex to customer failed:', e.message));
+    } else {
+      console.log(`ℹ️ ${order_id} ลูกค้ายังไม่ได้ผูกบัญชี LINE — จะส่ง flex หลังผูกบัญชี`);
+    }
+  }
+
   res.json({ success: true, orderId: order_id });
 });
 
@@ -234,12 +430,28 @@ app.post('/messages', async (req, res) => {
     notifyAllAdmins([{ type:'text', text: notifyText }]).catch(console.error);
   }
 
-  // แอดมินตอบ → ส่ง LINE หาลูกค้า (ถ้าผูก line_user_id)
-  if (sender === 'admin' && order?.line_user_id && process.env.LINE_TOKEN) {
-    const customerMsg = `💬 ข้อความจากร้าน (#${order_id}):\n\n${text.slice(0,4500)}`;
-    linePush(order.line_user_id, [{ type:'text', text: customerMsg }])
-      .then(() => console.log(`📤 admin reply → ${order.line_user_id.slice(0,12)}…`))
-      .catch(e => console.warn('LINE push to customer failed:', e.message));
+  // แอดมินตอบ → ส่ง Flex Message LINE หาลูกค้า
+  if (sender === 'admin' && process.env.LINE_TOKEN) {
+    let targetUserId = order?.line_user_id;
+
+    // ถ้า order_id มาในรูปแบบ "LINE-..." แต่ไม่มี line_user_id (กรณี ghost order)
+    if (!targetUserId && order_id.startsWith('LINE-')) {
+      const { data: ghostOrder } = await supabase.from('orders')
+        .select('line_user_id').eq('order_id', order_id).maybeSingle();
+      if (ghostOrder?.line_user_id) targetUserId = ghostOrder.line_user_id;
+    }
+
+    // fallback: หาจาก customer_id
+    if (!targetUserId && customer_id) {
+      targetUserId = await findLineUserIdByCustomer(customer_id);
+    }
+
+    if (targetUserId) {
+      const flex = buildChatFlex(order, text);
+      linePush(targetUserId, [flex])
+        .then(() => console.log(`📤 admin reply → ${targetUserId.slice(0,12)}…`))
+        .catch(e => console.warn('LINE push to customer failed:', e.message));
+    }
   }
 
   res.json({ success: true, message: data });
@@ -279,16 +491,26 @@ app.post('/webhook', async (req, res) => {
           .in('order_id', matches.map(o => o.order_id))
           .then(({ error }) => { if (error) console.warn('link line_user_id:', error.message); });
 
-        const lines = matches.slice(0, 5).map(o =>
-          `${getStatusEmoji(o.status)} #${o.order_id}\n   ${STATUS_LABELS_TH[o.status] || o.status} • ฿${(o.total||0).toLocaleString()}`
-        ).join('\n\n');
+        // ดึงออเดอร์ล่าสุดเต็มข้อมูล (มี items) เพื่อส่ง Flex summary
+        const { data: fullLatest } = await supabase.from('orders')
+          .select('*')
+          .eq('order_id', matches[0].order_id)
+          .maybeSingle();
 
-        await lineReply(replyToken, [{
-          type: 'text',
-          text: `✅ ผูกบัญชีสำเร็จ คุณ ${matches[0].customer_name || ''}\n\n` +
-                `พบออเดอร์ ${matches.length} รายการ:\n\n${lines}\n\n` +
-                `📲 ครั้งหน้าพิมพ์ "ออเดอร์" เพื่อเช็คสถานะได้เลย`
-        }]);
+        // ตอบลูกค้าด้วย text+flex รวมกัน
+        const replyMessages = [
+          {
+            type: 'text',
+            text: `✅ ผูกบัญชีสำเร็จ คุณ ${matches[0].customer_name || ''}\n\n` +
+                  `พบออเดอร์ทั้งหมด ${matches.length} รายการ\n\n` +
+                  `📲 พิมพ์ "ออเดอร์" เพื่อดูทั้งหมด หรือดูออเดอร์ล่าสุดด้านล่าง 👇`
+          }
+        ];
+        if (fullLatest && fullLatest.items?.length) {
+          replyMessages.push(buildOrderSummaryFlex(fullLatest));
+        }
+
+        await lineReply(replyToken, replyMessages);
         continue;
       } else {
         await lineReply(replyToken, [{
@@ -303,37 +525,80 @@ app.post('/webhook', async (req, res) => {
     if (text.includes('ออเดอร์') || text.includes('order') || text.includes('สถานะ') || text.includes('status')) {
       // หาออเดอร์ที่ผูกกับ LINE user นี้
       const { data: myOrders } = await supabase.from('orders')
-        .select('order_id, status, total, customer_name, created_at, items')
+        .select('*')
         .eq('line_user_id', userId)
+        .not('items', 'is', null)
         .order('created_at', { ascending: false })
-        .limit(5);
+        .limit(10);
 
-      if (!myOrders?.length) {
+      // กรอง ghost orders ออก (ที่ items เป็น array ว่าง)
+      const realOrders = (myOrders || []).filter(o =>
+        Array.isArray(o.items) && o.items.length > 0
+      );
+
+      if (!realOrders.length) {
         await lineReply(replyToken, [{
           type: 'text',
           text: `📭 ยังไม่พบออเดอร์ของคุณในระบบ\n\n` +
                 `🔗 วิธีผูกบัญชี: พิมพ์เบอร์โทรที่ใช้ตอนสั่งซื้อมาครับ\n` +
                 `เช่น: 0812345678\n\n` +
-                `หรือสั่งสินค้าได้ที่:\nhttps://rueopop-code.github.io/LINEOA/`
+                `หรือสั่งสินค้าได้ที่:\n${SHOP_URL}`
         }]);
         continue;
       }
 
-      const lines = myOrders.map(o => {
-        const date = new Date(o.created_at).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short' });
-        const itemsBrief = (o.items || []).slice(0, 2).map(i => `${i.emoji||''} ${i.name} ×${i.qty}`).join(', ');
-        const moreItems = (o.items || []).length > 2 ? ` +${(o.items||[]).length - 2} รายการ` : '';
-        return `${getStatusEmoji(o.status)} #${o.order_id}\n` +
-               `   ${STATUS_LABELS_TH[o.status] || o.status}\n` +
-               `   💰 ฿${(o.total||0).toLocaleString()} • ${date}\n` +
-               `   ${itemsBrief}${moreItems}`;
-      }).join('\n\n');
+      // ส่ง Flex carousel (สูงสุด 10 bubble ใน carousel)
+      const bubbles = realOrders.slice(0, 10).map(o => ({
+        type:'bubble', size:'kilo',
+        header: {
+          type:'box', layout:'vertical',
+          backgroundColor: statusColor(o.status),
+          paddingAll:'md',
+          contents:[
+            { type:'text', text:`${getStatusEmoji(o.status)} ${STATUS_LABELS_TH[o.status]||o.status}`, color:'#ffffff', size:'sm', weight:'bold' },
+            { type:'text', text:`#${o.order_id}`, color:'#ffffff', size:'xs', margin:'xs' }
+          ]
+        },
+        body: {
+          type:'box', layout:'vertical', spacing:'sm', paddingAll:'md',
+          contents: [
+            ...((o.items||[]).slice(0,3).map(i => ({
+              type:'text',
+              text:`${i.emoji||'•'} ${i.name} ×${i.qty}`,
+              size:'xs', color:'#555555', wrap:true
+            }))),
+            ...((o.items||[]).length > 3 ? [{ type:'text', text:`+${o.items.length-3} รายการ`, size:'xxs', color:'#888888' }] : []),
+            { type:'separator', margin:'md' },
+            { type:'box', layout:'horizontal', margin:'md',
+              contents:[
+                { type:'text', text:'รวม', size:'xs', color:'#888888', flex:1 },
+                { type:'text', text:`฿${(o.total||0).toLocaleString()}`, size:'sm', color:'#C0392B', weight:'bold', align:'end', flex:2 }
+              ]
+            },
+            { type:'text', text: new Date(o.created_at).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short' }), size:'xxs', color:'#aaaaaa', margin:'xs' }
+          ]
+        },
+        footer: {
+          type:'box', layout:'vertical', paddingAll:'md', paddingTop:'none',
+          contents:[
+            { type:'button', style:'primary', color:'#C0392B', height:'sm',
+              action:{ type:'uri', label:'📋 ดูรายละเอียด', uri: SHOP_URL }
+            }
+          ]
+        }
+      }));
 
-      await lineReply(replyToken, [{
-        type: 'text',
-        text: `📋 ออเดอร์ของคุณ ${myOrders[0].customer_name || ''} (${myOrders.length} รายการล่าสุด):\n\n${lines}\n\n` +
-              `📲 ดูรายละเอียดเพิ่ม + แชทกับร้านได้ที่:\nhttps://rueopop-code.github.io/LINEOA/`
-      }]);
+      await lineReply(replyToken, [
+        {
+          type:'text',
+          text: `📋 ออเดอร์ของคุณ ${realOrders[0].customer_name || ''} (${realOrders.length} รายการล่าสุด)`
+        },
+        {
+          type:'flex',
+          altText:`ออเดอร์ของคุณ ${realOrders.length} รายการ`,
+          contents:{ type:'carousel', contents: bubbles }
+        }
+      ]);
       continue;
     }
 
@@ -344,7 +609,7 @@ app.post('/webhook', async (req, res) => {
         text: `🛍 สวัสดีค่ะ! ใช้งานได้ดังนี้:\n\n` +
               `📦 พิมพ์ "ออเดอร์" → ดูสถานะออเดอร์ของคุณ\n` +
               `🔗 พิมพ์เบอร์โทร → ผูกบัญชีกับออเดอร์ที่เคยสั่ง\n` +
-              `🛒 สั่งสินค้า →https://rueopop-code.github.io/LINEOA/\n\n` +
+              `🛒 สั่งสินค้า → https://lineoa-production-a8e8.up.railway.app/\n\n` +
               `ถ้ามีคำถาม พิมพ์มาได้เลย — ร้านจะตอบในแชทค่ะ 💬`
       }]);
       continue;
@@ -359,33 +624,69 @@ app.post('/webhook', async (req, res) => {
 
     const latest = linkedOrders?.[0];
 
+    // ดึงโปรไฟล์ LINE มาดูชื่อ (ถ้าไม่ได้ผูกบัญชี)
+    let displayName = latest?.customer_name || 'ลูกค้า LINE';
+    if (!latest) {
+      try {
+        const profRes = await fetch(`https://api.line.me/v2/bot/profile/${userId}`, {
+          headers: { 'Authorization': `Bearer ${process.env.LINE_TOKEN}` }
+        });
+        if (profRes.ok) {
+          const profile = await profRes.json();
+          if (profile.displayName) displayName = profile.displayName;
+        }
+      } catch(e) { /* ignore */ }
+    }
+
+    // บันทึกข้อความลูกค้าลง messages
+    // - ถ้ามีออเดอร์: ผูกกับ order_id ล่าสุด
+    // - ถ้าไม่มี: ใช้ thread_id แบบ LINE-{userId} เพื่อให้ admin ยังเห็นได้
+    const threadOrderId = latest?.order_id || `LINE-${userId.slice(0,16)}`;
+    const threadCustomerId = latest?.customer_id || `LINE-${userId.slice(0,16)}`;
+
+    await supabase.from('messages').insert([{
+      order_id   : threadOrderId,
+      customer_id: threadCustomerId,
+      sender     : 'customer',
+      text       : rawText,
+      created_at : new Date().toISOString()
+    }]).then(({ error }) => { if (error) console.warn('insert msg:', error.message); });
+
+    // ถ้ายังไม่มีออเดอร์ → สร้าง "ghost order" เพื่อให้แสดงในแอดมิน panel
+    if (!latest) {
+      await supabase.from('orders').upsert([{
+        order_id     : threadOrderId,
+        customer_id  : threadCustomerId,
+        customer_name: displayName,
+        line_user_id : userId,
+        items        : [],
+        total        : 0,
+        status       : 'pending',
+        created_at   : new Date().toISOString(),
+        note         : '💬 แชทเข้ามาทาง LINE OA (ยังไม่มีออเดอร์)'
+      }], { onConflict: 'order_id' }).then(({ error }) => {
+        if (error) console.warn('upsert ghost order:', error.message);
+      });
+    }
+
+    // แจ้งแอดมินทุกคน
+    const notifyText = latest
+      ? `💬 ${displayName} ส่งข้อความใน LINE (#${latest.order_id}):\n\n${rawText.slice(0,500)}`
+      : `💬 ${displayName} ทักเข้ามาใน LINE (ยังไม่มีออเดอร์):\n\n${rawText.slice(0,500)}`;
+    notifyAllAdmins([{ type:'text', text: notifyText }]).catch(console.error);
+
+    // ตอบลูกค้าแบบสั้นๆ ว่ารับเรื่องแล้ว
     if (latest) {
-      // บันทึกข้อความลูกค้าในแชทออเดอร์ล่าสุด
-      await supabase.from('messages').insert([{
-        order_id   : latest.order_id,
-        customer_id: latest.customer_id,
-        sender     : 'customer',
-        text       : rawText,
-        created_at : new Date().toISOString()
-      }]).then(({ error }) => { if (error) console.warn('insert msg:', error.message); });
-
-      // แจ้งแอดมิน
-      const notifyText = `💬 ${latest.customer_name || 'ลูกค้า'} ส่งข้อความใน LINE (#${latest.order_id}):\n\n${rawText.slice(0,500)}`;
-      notifyAllAdmins([{ type:'text', text: notifyText }]).catch(console.error);
-
-      // ตอบลูกค้าแบบสั้นๆ ว่ารับเรื่องแล้ว
       await lineReply(replyToken, [{
         type: 'text',
         text: `✅ ได้รับข้อความแล้วค่ะ ร้านจะตอบกลับเร็วๆ นี้\n\nหรือพิมพ์ "ออเดอร์" เพื่อดูสถานะ`
       }]);
     } else {
-      // ยังไม่ผูกบัญชี
       await lineReply(replyToken, [{
         type: 'text',
-        text: `สวัสดีค่ะ 👋\n\n` +
-              `📦 พิมพ์ "ออเดอร์" → ดูสถานะ\n` +
-              `🔗 พิมพ์เบอร์โทรที่ใช้สั่งซื้อ → ผูกบัญชี\n` +
-              `🛒 สั่งสินค้า → https://rueopop-code.github.io/LINEOA/`
+        text: `✅ ได้รับข้อความแล้วค่ะ ร้านจะตอบกลับเร็วๆ นี้\n\n` +
+              `📦 พิมพ์ "ออเดอร์" หรือ "เบอร์โทร" → ผูกบัญชี\n` +
+              `🛒 สั่งสินค้า → https://lineoa-production-a8e8.up.railway.app/`
       }]);
     }
   }
@@ -443,16 +744,19 @@ app.patch('/orders/:orderId/status', async (req, res) => {
       created_at : new Date().toISOString()
     }]).catch(console.error);
 
-    // 2) ส่ง LINE หาลูกค้า (ถ้าผูก line_user_id แล้ว)
-    if (data.line_user_id && process.env.LINE_TOKEN) {
-      const customerMsg =
-        `📦 อัปเดตออเดอร์ #${data.order_id}\n\n` +
-        `${statusLabel(status)}\n\n` +
-        `💰 ยอดรวม: ฿${(data.total||0).toLocaleString()}\n\n` +
-        `ดูรายละเอียดเพิ่ม:\nhttps://rueopop-code.github.io/LINEOA/`;
-      linePush(data.line_user_id, [{ type:'text', text: customerMsg }])
-        .then(() => console.log(`📤 status update → ${data.line_user_id.slice(0,12)}…`))
-        .catch(e => console.warn('LINE push to customer failed:', e.message));
+    // 2) ส่ง LINE Flex Message หาลูกค้า
+    if (process.env.LINE_TOKEN) {
+      // ใช้ line_user_id โดยตรงจาก order ก่อน — fallback ไปหาจาก customer_id
+      let targetUid = data.line_user_id;
+      if (!targetUid) {
+        targetUid = await findLineUserIdByCustomer(data.customer_id);
+      }
+      if (targetUid) {
+        const flex = buildStatusUpdateFlex(data, status);
+        linePush(targetUid, [flex])
+          .then(() => console.log(`📤 status flex → ${targetUid.slice(0,12)}…`))
+          .catch(e => console.warn('LINE flex push failed:', e.message));
+      }
     }
   }
 

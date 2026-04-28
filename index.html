@@ -111,7 +111,11 @@ header{background:linear-gradient(120deg,var(--c2) 0%,var(--c1) 55%,var(--c3) 10
 .ci-info{flex:1;min-width:0}
 .ci-name{font-size:13px;font-weight:600;line-height:1.3}
 .ci-meta{font-size:11px;color:var(--sub);margin-top:2px}
-.ci-price{font-size:14px;font-weight:800;color:var(--c1);margin-top:4px}
+.ci-price{font-size:14px;font-weight:800;color:var(--c1);margin-left:auto}
+.ci-qty-row{display:flex;align-items:center;gap:8px;margin-top:6px}
+.ci-qbtn{width:26px;height:26px;border:1.5px solid var(--c1);background:#fff;color:var(--c1);border-radius:6px;cursor:pointer;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;font-family:inherit;line-height:1;padding:0}
+.ci-qbtn:hover{background:var(--c1);color:#fff}
+.ci-qty{font-size:13px;font-weight:700;min-width:32px;text-align:center;color:var(--c1)}
 .ci-rm{background:none;border:none;font-size:20px;cursor:pointer;color:#bbb;padding:4px}
 .cart-empty{text-align:center;padding:40px;color:var(--sub)}
 .cart-foot{border-top:1px solid var(--border);padding-top:14px}
@@ -368,11 +372,6 @@ textarea.fi{resize:none;height:70px}
     <span class="lbl">ขนาด / ตัวเลือก</span>
     <div class="sizes" id="pdSizes"></div>
     <div class="price-display" id="pdPrice"></div>
-    <span class="lbl">ประเภทการสั่ง</span>
-    <div class="otype-row">
-      <div class="otype active" id="ot-d" onclick="selOT('delivery')"><span class="oi">🚚</span>จัดส่ง</div>
-      <div class="otype" id="ot-p" onclick="selOT('pickup')"><span class="oi">📦</span>จอง/รับเอง</div>
-    </div>
     <div class="qty-row">
       <span class="qty-lbl">จำนวน</span>
       <div class="qc">
@@ -673,7 +672,7 @@ let products  = [];
 let cats      = ['ทั้งหมด','สินค้าใหม่'];
 let cart      = [];
 let activeCat = 'ทั้งหมด';
-let curProd   = null, curSize = null, curOT = 'delivery', cartOT = 'delivery';
+let curProd   = null, curSize = null, cartOT = 'delivery';
 let mQty      = 1;
 let pinBuf    = '';
 let editingId = null;
@@ -1063,7 +1062,8 @@ function openPD(id) {
   ).join('');
   curSize=curProd.sizes[0];
   document.getElementById('pdPrice').textContent=`฿${curSize.p.toLocaleString()}`;
-  selOT('delivery');
+  mQty = 1;
+  document.getElementById('qnum').textContent = mQty;
   document.getElementById('pdOv').classList.add('show');
 }
 function closePD(){document.getElementById('pdOv').classList.remove('show')}
@@ -1072,16 +1072,28 @@ function selSz(btn,n,p){
   btn.classList.add('active'); curSize={n,p};
   document.getElementById('pdPrice').textContent=`฿${p.toLocaleString()}`;
 }
-function selOT(t){ curOT=t; document.getElementById('ot-d').classList.toggle('active',t==='delivery'); document.getElementById('ot-p').classList.toggle('active',t==='pickup'); }
 function chgQ(d){ mQty=Math.max(1,mQty+d); document.getElementById('qnum').textContent=mQty; }
 function addCart(){
   if(!curProd||!curSize) return;
-  cart.push({prod:curProd,size:curSize,qty:mQty,ot:curOT});
+  // หาสินค้าเดิมในตะกร้าที่ name + size ตรงกัน → เพิ่ม qty
+  const existing = cart.find(c => c.prod.id === curProd.id && c.size.n === curSize.n);
+  if (existing) {
+    existing.qty += mQty;
+  } else {
+    cart.push({prod:curProd, size:curSize, qty:mQty});
+  }
   updCart(); closePD(); toast('เพิ่มลงตะกร้าแล้ว ✓');
 }
 function quickAdd(id){
   const p=products.find(x=>x.id===id); if(!p) return;
-  cart.push({prod:p,size:p.sizes[0],qty:1,ot:'delivery'});
+  const sz = p.sizes[0];
+  // หาสินค้าเดิมในตะกร้าที่ name + size ตรงกัน → เพิ่ม qty
+  const existing = cart.find(c => c.prod.id === p.id && c.size.n === sz.n);
+  if (existing) {
+    existing.qty += 1;
+  } else {
+    cart.push({prod:p, size:sz, qty:1});
+  }
   updCart(); toast('เพิ่มลงตะกร้าแล้ว ✓');
 }
 
@@ -1110,8 +1122,13 @@ function renderCart(){
       <div class="ci-img">${imgH}</div>
       <div class="ci-info">
         <div class="ci-name">${item.prod.name}</div>
-        <div class="ci-meta">${item.size.n} · ${item.ot==='delivery'?'🚚 จัดส่ง':'📦 จอง'} · ×${item.qty}</div>
-        <div class="ci-price">฿${(item.size.p*item.qty).toLocaleString()}</div>
+        <div class="ci-meta">${item.size.n}</div>
+        <div class="ci-qty-row">
+          <button class="ci-qbtn" onclick="chgCartQty(${i},-1)">−</button>
+          <span class="ci-qty">×${item.qty}</span>
+          <button class="ci-qbtn" onclick="chgCartQty(${i},1)">+</button>
+          <span class="ci-price">฿${(item.size.p*item.qty).toLocaleString()}</span>
+        </div>
       </div>
       <button class="ci-rm" onclick="rmCI(${i})">🗑️</button>
     </div>`;
@@ -1120,6 +1137,11 @@ function renderCart(){
   document.getElementById('cartTotal').textContent=`฿${tot.toLocaleString()}`;
 }
 function rmCI(i){ cart.splice(i,1); updCart(); renderCart(); }
+function chgCartQty(i, d) {
+  if (!cart[i]) return;
+  cart[i].qty = Math.max(1, cart[i].qty + d);
+  updCart(); renderCart();
+}
 function selCOT(t){
   cartOT=t;
   document.getElementById('cot-d').classList.toggle('active',t==='delivery');
