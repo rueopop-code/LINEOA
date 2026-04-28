@@ -643,6 +643,56 @@ function getOrCreateCustomerId() {
 }
 const CUSTOMER_ID = getOrCreateCustomerId();
 
+// ── LINE Auto-Link ──
+// ถ้า URL มี ?lid=TOKEN แสดงว่าลูกค้ากดมาจาก LINE OA
+// → call /link-line เพื่อผูก customer_id ↔ line_user_id อัตโนมัติ
+(async function tryAutoLinkLine() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const linkToken = params.get('lid');
+    if (!linkToken) return;
+
+    // ตรวจว่า token นี้เคยใช้ไปแล้วหรือยัง (กัน double-call ถ้า refresh)
+    const usedKey = 'ms_line_token_used:' + linkToken;
+    if (localStorage.getItem(usedKey)) {
+      // ลบ ?lid ออกจาก URL ให้สะอาด
+      const cleanUrl = window.location.pathname + window.location.hash;
+      history.replaceState(null, '', cleanUrl);
+      return;
+    }
+
+    const res = await fetch(`${BACKEND_URL}/link-line`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customer_id: CUSTOMER_ID, link_token: linkToken })
+    });
+    const result = await res.json().catch(() => ({}));
+
+    if (res.ok && result.success) {
+      localStorage.setItem(usedKey, '1');
+      localStorage.setItem('ms_line_linked', '1');
+      if (result.displayName) {
+        localStorage.setItem('ms_line_name', result.displayName);
+        // auto-fill ชื่อถ้ายังไม่มี
+        if (!localStorage.getItem('ms_customer_name')) {
+          localStorage.setItem('ms_customer_name', result.displayName);
+        }
+      }
+      console.log('✅ LINE linked');
+    } else {
+      console.warn('Link failed:', result.error);
+    }
+  } catch(e) {
+    console.warn('Auto-link error:', e.message);
+  } finally {
+    // ลบ ?lid ออกจาก URL ให้สะอาด (ทำเสมอ)
+    if (new URLSearchParams(window.location.search).has('lid')) {
+      const cleanUrl = window.location.pathname + window.location.hash;
+      history.replaceState(null, '', cleanUrl);
+    }
+  }
+})();
+
 // ── SUPABASE ──
 const SUPABASE_URL  = 'https://ckfzscprxighfxztmgct.supabase.co';   // เช่น https://xxxx.supabase.co
 const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNrZnpzY3ByeGlnaGZ4enRtZ2N0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcwNTU0NDIsImV4cCI6MjA5MjYzMTQ0Mn0.nQ_LhPz9GsehqRSNx67G5cqxCKHD-cM1gbs2edTqUpw';

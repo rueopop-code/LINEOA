@@ -114,7 +114,7 @@ function buildAdminMsg(order) {
 }
 
 // ─── LINE Flex Message Builders ───────────────────────────
-const SHOP_URL = 'https://lineoa-production-a8e8.up.railway.app/';
+const SHOP_URL = 'https://rueopop-code.github.io/LINEOA/';
 
 // สีตามสถานะ
 function statusColor(s) {
@@ -300,6 +300,44 @@ async function findLineUserIdByCustomer(customerId) {
   return data?.line_user_id || null;
 }
 
+// ─── LINE Auto-Link System ─────────────────────────────────
+// เก็บ token แบบ in-memory (อายุสั้น 30 นาที — กันคนแอบใช้ของคนอื่น)
+const linkTokens = new Map(); // token → { lineUserId, expiresAt }
+
+function genLinkToken() {
+  // 24-char random string
+  return 'L' + Math.random().toString(36).slice(2, 12) +
+         Math.random().toString(36).slice(2, 14);
+}
+
+function createLinkToken(lineUserId) {
+  const token = genLinkToken();
+  linkTokens.set(token, {
+    lineUserId,
+    expiresAt: Date.now() + 30 * 60 * 1000  // 30 นาที
+  });
+  // cleanup expired tokens (เก็บ map ไม่ให้บวม)
+  if (linkTokens.size > 1000) {
+    const now = Date.now();
+    for (const [k, v] of linkTokens) {
+      if (v.expiresAt < now) linkTokens.delete(k);
+    }
+  }
+  return token;
+}
+
+function consumeLinkToken(token) {
+  const entry = linkTokens.get(token);
+  if (!entry) return null;
+  if (entry.expiresAt < Date.now()) {
+    linkTokens.delete(token);
+    return null;
+  }
+  // ใช้ครั้งเดียวแล้วลบ (one-time use)
+  linkTokens.delete(token);
+  return entry.lineUserId;
+}
+
 // ═══════════════════════════════════════════════════════════
 //  ROUTES
 // ═══════════════════════════════════════════════════════════
@@ -409,6 +447,40 @@ app.get('/messages/:orderId', async (req, res) => {
   res.json({ messages: data || [] });
 });
 
+// ── POST /link-line ───────────────────────────────────────
+// ผูก customer_id (จาก shop browser) ↔ line_user_id อัตโนมัติ
+// shop เรียกตอนลูกค้าเปิดด้วย ?lid=TOKEN
+app.post('/link-line', async (req, res) => {
+  const { customer_id, link_token } = req.body;
+  if (!customer_id || !link_token)
+    return res.status(400).json({ error: 'missing customer_id or link_token' });
+
+  const lineUserId = consumeLinkToken(link_token);
+  if (!lineUserId)
+    return res.status(400).json({ error: 'token invalid or expired' });
+
+  // อัปเดต line_user_id ในออเดอร์ของ customer นี้
+  const { error } = await supabase.from('orders')
+    .update({ line_user_id: lineUserId })
+    .eq('customer_id', customer_id);
+  if (error) console.warn('link orders failed:', error.message);
+
+  // ดึงโปรไฟล์ LINE มาเพิ่ม customer_name (ถ้าออเดอร์ยังไม่มีชื่อ)
+  let displayName = null;
+  try {
+    const profRes = await fetch(`https://api.line.me/v2/bot/profile/${lineUserId}`, {
+      headers: { 'Authorization': `Bearer ${process.env.LINE_TOKEN}` }
+    });
+    if (profRes.ok) {
+      const profile = await profRes.json();
+      displayName = profile.displayName || null;
+    }
+  } catch(e) { /* ignore */ }
+
+  console.log(`🔗 linked customer ${customer_id} ↔ LINE ${lineUserId.slice(0,12)}…`);
+  res.json({ success: true, lineUserId: lineUserId.slice(0,12) + '…', displayName });
+});
+
 // ── POST /messages ────────────────────────────────────────
 app.post('/messages', async (req, res) => {
   const { order_id, customer_id, sender, text } = req.body;
@@ -470,6 +542,24 @@ app.post('/webhook', async (req, res) => {
   for (const ev of events) {
     const userId = ev.source?.userId;
     if (!userId) continue;
+
+    // ── FOLLOW EVENT (ลูกค้าเพิ่ม bot เป็นเพื่อน / unblock) ──
+    if (ev.type === 'follow') {
+      const replyToken = ev.replyToken;
+      const token = createLinkToken(userId);
+      const shopLink = `${SHOP_URL}?lid=${token}`;
+
+      await lineReply(replyToken, [
+        {
+          type: 'text',
+          text: `🛍 สวัสดีค่ะ! ยินดีต้อนรับสู่ มนชิน ซัพพลาย\n\n` +
+                `กดลิงก์ด้านล่างเพื่อเริ่มสั่งซื้อ ระบบจะจดจำคุณอัตโนมัติ ไม่ต้องลงทะเบียน 🚀\n\n` +
+                `${shopLink}\n\n` +
+                `ครั้งหน้าพิมพ์ "เปิดร้าน" เพื่อรับลิงก์ใหม่ได้ตลอดค่ะ`
+        }
+      ]);
+      continue;
+    }
 
     // ── POSTBACK EVENTS (กดปุ่มใน Flex Message) ──
     if (ev.type === 'postback') {
@@ -572,7 +662,7 @@ app.post('/webhook', async (req, res) => {
       } else {
         await lineReply(replyToken, [{
           type: 'text',
-          text: `🔍 ไม่พบออเดอร์ที่ใช้เบอร์ ${rawText}\n\nกรุณาตรวจสอบเบอร์ที่กรอกตอนสั่ง หรือสั่งสินค้าใหม่ที่:\nhttps://lineoa-production-a8e8.up.railway.app/`
+          text: `🔍 ไม่พบออเดอร์ที่ใช้เบอร์ ${rawText}\n\nกรุณาตรวจสอบเบอร์ที่กรอกตอนสั่ง หรือสั่งสินค้าใหม่ที่:\nhttps://rueopop-code.github.io/LINEOA/`
         }]);
         continue;
       }
@@ -661,14 +751,28 @@ app.post('/webhook', async (req, res) => {
       continue;
     }
 
+    // คำสั่ง: เปิดร้าน / shop / สั่ง / ซื้อ → ส่งลิงก์ shop พร้อม token
+    if (text === 'เปิดร้าน' || text === 'shop' || text === 'สั่ง' || text === 'ซื้อ' || text === 'สั่งซื้อ' || text === 'เปิด' || text === 'ร้าน') {
+      const token = createLinkToken(userId);
+      const shopLink = `${SHOP_URL}?lid=${token}`;
+      await lineReply(replyToken, [{
+        type: 'text',
+        text: `🛍 กดลิงก์ด้านล่างเพื่อเปิดร้านค้า ระบบจะจดจำคุณอัตโนมัติ\n\n${shopLink}\n\n⏰ ลิงก์มีอายุ 30 นาที`
+      }]);
+      continue;
+    }
+
     // คำสั่ง: help / ช่วยเหลือ / เริ่มต้น
     if (text.includes('help') || text.includes('ช่วย') || text === 'เริ่ม' || text === 'start' || text === 'menu' || text === 'เมนู') {
+      const token = createLinkToken(userId);
+      const shopLink = `${SHOP_URL}?lid=${token}`;
       await lineReply(replyToken, [{
         type: 'text',
         text: `🛍 สวัสดีค่ะ! ใช้งานได้ดังนี้:\n\n` +
-              `📦 พิมพ์ "ออเดอร์" → ดูสถานะออเดอร์ของคุณ\n` +
-              `🔗 พิมพ์เบอร์โทร → ผูกบัญชีกับออเดอร์ที่เคยสั่ง\n` +
-              `🛒 สั่งสินค้า → https://lineoa-production-a8e8.up.railway.app/\n\n` +
+              `🛒 สั่งสินค้า → ${shopLink}\n` +
+              `📦 พิมพ์ "ออเดอร์" → ดูสถานะออเดอร์\n` +
+              `🔗 พิมพ์เบอร์โทร → ผูกออเดอร์เก่า\n` +
+              `📲 พิมพ์ "เปิดร้าน" → รับลิงก์ใหม่\n\n` +
               `ถ้ามีคำถาม พิมพ์มาได้เลย — ร้านจะตอบในแชทค่ะ 💬`
       }]);
       continue;
@@ -741,11 +845,13 @@ app.post('/webhook', async (req, res) => {
         text: `✅ ได้รับข้อความแล้วค่ะ ร้านจะตอบกลับเร็วๆ นี้\n\nหรือพิมพ์ "ออเดอร์" เพื่อดูสถานะ`
       }]);
     } else {
+      const token = createLinkToken(userId);
+      const shopLink = `${SHOP_URL}?lid=${token}`;
       await lineReply(replyToken, [{
         type: 'text',
         text: `✅ ได้รับข้อความแล้วค่ะ ร้านจะตอบกลับเร็วๆ นี้\n\n` +
-              `📦 พิมพ์ "ออเดอร์" หรือ "เบอร์โทร" → ผูกบัญชี\n` +
-              `🛒 สั่งสินค้า → https://lineoa-production-a8e8.up.railway.app/`
+              `🛒 สั่งสินค้า → ${shopLink}\n` +
+              `📦 หรือพิมพ์เบอร์โทร เพื่อผูกออเดอร์เก่า`
       }]);
     }
   }
