@@ -114,7 +114,7 @@ function buildAdminMsg(order) {
 }
 
 // ─── LINE Flex Message Builders ───────────────────────────
-const SHOP_URL = 'https://rueopop-code.github.io/LINEOA/';
+const SHOP_URL = ' https://rueopop-code.github.io/LINEOA/';
 
 // สีตามสถานะ
 function statusColor(s) {
@@ -390,6 +390,40 @@ app.post('/send-order', async (req, res) => {
     if (error) console.warn('insert summary msg:', error.message);
   });
 
+  // ✨ Auto-link: หา ghost LINE chat ที่ลูกค้าเคยทักไว้ → ผูก line_user_id ให้ออเดอร์ใหม่
+  // ใช้เบอร์โทรเป็น matching key ก่อน (แม่นกว่า) — fallback ใช้ customer_name
+  let autoLinkedLineUid = null;
+  try {
+    // หา ghost orders ที่อาจจะเป็นลูกค้าคนเดียวกัน
+    const { data: ghostOrders } = await supabase.from('orders')
+      .select('order_id, line_user_id, customer_name, phone')
+      .like('order_id', 'LINE-%')
+      .not('line_user_id', 'is', null);
+
+    if (ghostOrders?.length) {
+      // matching: phone หรือ ชื่อ
+      const normPhone = (p) => String(p || '').replace(/\D/g, '');
+      const myPhone = normPhone(phone);
+      const myName  = (customerName || '').trim().toLowerCase();
+
+      const matched = ghostOrders.find(g =>
+        (myPhone && normPhone(g.phone) === myPhone) ||
+        (myName && (g.customer_name || '').trim().toLowerCase() === myName)
+      );
+
+      if (matched?.line_user_id) {
+        autoLinkedLineUid = matched.line_user_id;
+        // อัปเดตออเดอร์ใหม่ + ทุกออเดอร์ของ customer_id ให้มี line_user_id
+        await supabase.from('orders')
+          .update({ line_user_id: autoLinkedLineUid })
+          .eq('customer_id', customerId)
+          .then(({ error }) => { if (!error) console.log(`🔗 auto-linked ${customerId} ↔ LINE`); });
+      }
+    }
+  } catch (e) {
+    console.warn('auto-link failed:', e.message);
+  }
+
   // แจ้งแอดมินทุกคนผ่าน LINE OA
   if (process.env.LINE_TOKEN) {
     try {
@@ -403,9 +437,9 @@ app.post('/send-order', async (req, res) => {
     }
   }
 
-  // ✨ ส่ง Flex Message ออเดอร์สรุปหาลูกค้า (ถ้าเคยผูกบัญชีไว้)
+  // ✨ ส่ง Flex Message ออเดอร์สรุปหาลูกค้า (ถ้าเคยผูกบัญชีไว้ หรือเพิ่ง auto-link)
   if (process.env.LINE_TOKEN) {
-    const customerLineUid = await findLineUserIdByCustomer(customerId);
+    const customerLineUid = autoLinkedLineUid || await findLineUserIdByCustomer(customerId);
     if (customerLineUid) {
       const flex = buildOrderSummaryFlex({ ...order, status: 'sent' });
       linePush(customerLineUid, [flex])
@@ -479,6 +513,135 @@ app.post('/link-line', async (req, res) => {
 
   console.log(`🔗 linked customer ${customer_id} ↔ LINE ${lineUserId.slice(0,12)}…`);
   res.json({ success: true, lineUserId: lineUserId.slice(0,12) + '…', displayName });
+});
+
+// ── POST /backfill-line-links ─────────────────────────────
+// แก้ครั้งเดียวสำหรับออเดอร์เก่าที่ยังไม่ผูก line_user_id
+// จับคู่ ghost orders (LINE-) กับ ออเดอร์จริง โดยใช้ phone เป็น matching key
+app.post('/backfill-line-links', async (req, res) => {
+  const { data: ghosts } = await supabase.from('orders')
+    .select('line_user_id, customer_name, phone')
+    .like('order_id', 'LINE-%')
+    .not('line_user_id', 'is', null);
+
+  if (!ghosts?.length) return res.json({ updated: 0, message: 'no ghost orders' });
+
+  const normPhone = (p) => String(p || '').replace(/\D/g, '');
+
+  let totalUpdated = 0;
+  const linked = [];
+  for (const g of ghosts) {
+    const phone = normPhone(g.phone);
+    const name  = (g.customer_name || '').trim().toLowerCase();
+
+    // หาออเดอร์จริงที่ phone หรือ name ตรงกัน แต่ยังไม่มี line_user_id
+    const { data: realOrders } = await supabase.from('orders')
+      .select('order_id, customer_id, customer_name, phone')
+      .not('order_id', 'like', 'LINE-%')
+      .is('line_user_id', null);
+
+    const matches = (realOrders || []).filter(o =>
+      (phone && normPhone(o.phone) === phone) ||
+      (name && (o.customer_name || '').trim().toLowerCase() === name)
+    );
+
+    if (matches.length) {
+      // get all customer_ids
+      const customerIds = [...new Set(matches.map(m => m.customer_id).filter(Boolean))];
+      if (customerIds.length) {
+        const { count } = await supabase.from('orders')
+          .update({ line_user_id: g.line_user_id }, { count: 'exact' })
+          .in('customer_id', customerIds);
+        totalUpdated += count || 0;
+        linked.push({ name: g.customer_name, lineUid: g.line_user_id.slice(0,12)+'…', count });
+      }
+    }
+  }
+  res.json({ updated: totalUpdated, linked });
+});
+
+// ── POST /resend-order/:orderId ───────────────────────────
+// แอดมิน trigger ส่ง Flex สรุปออเดอร์ไปหาลูกค้าใน LINE
+// ถ้าลูกค้ายังไม่ผูก → ลอง auto-link ด้วย phone/name ก่อน
+app.post('/resend-order/:orderId', async (req, res) => {
+  const { orderId } = req.params;
+  if (!process.env.LINE_TOKEN)
+    return res.status(500).json({ error: 'LINE_TOKEN not set' });
+
+  // โหลดข้อมูลออเดอร์
+  const { data: order, error: orderErr } = await supabase
+    .from('orders').select('*').eq('order_id', orderId).maybeSingle();
+
+  if (orderErr) return res.status(500).json({ error: orderErr.message });
+  if (!order)   return res.status(404).json({ error: 'order not found' });
+  if (String(order.order_id).startsWith('LINE-'))
+    return res.status(400).json({ error: 'cannot resend ghost chat thread' });
+
+  // หา line_user_id หลายทาง
+  let targetUid = order.line_user_id;
+  let linkedHow = targetUid ? 'direct' : null;
+
+  // fallback 1: หาจาก customer_id
+  if (!targetUid && order.customer_id) {
+    targetUid = await findLineUserIdByCustomer(order.customer_id);
+    if (targetUid) linkedHow = 'customer_id';
+  }
+
+  // fallback 2: หาจาก phone/name match กับ ghost orders
+  if (!targetUid) {
+    const normPhone = (p) => String(p || '').replace(/\D/g, '');
+    const myPhone = normPhone(order.phone);
+    const myName  = (order.customer_name || '').trim().toLowerCase();
+
+    if (myPhone || myName) {
+      const { data: ghosts } = await supabase.from('orders')
+        .select('line_user_id, customer_name, phone')
+        .like('order_id', 'LINE-%')
+        .not('line_user_id', 'is', null);
+
+      const matched = (ghosts || []).find(g =>
+        (myPhone && normPhone(g.phone) === myPhone) ||
+        (myName && (g.customer_name || '').trim().toLowerCase() === myName)
+      );
+
+      if (matched?.line_user_id) {
+        targetUid = matched.line_user_id;
+        linkedHow = matched.phone === order.phone ? 'phone' : 'name';
+
+        // backfill ให้ออเดอร์ของ customer คนนี้ทุกตัว
+        if (order.customer_id) {
+          await supabase.from('orders')
+            .update({ line_user_id: targetUid })
+            .eq('customer_id', order.customer_id);
+        } else {
+          await supabase.from('orders')
+            .update({ line_user_id: targetUid })
+            .eq('order_id', order.order_id);
+        }
+      }
+    }
+  }
+
+  if (!targetUid) {
+    return res.status(404).json({
+      error: 'no LINE user linked',
+      hint: 'ลูกค้ายังไม่ผูกบัญชี LINE — กดปุ่ม 🔗 ที่ ghost chat row เพื่อใส่เบอร์/ชื่อให้ตรงกัน'
+    });
+  }
+
+  try {
+    const flex = buildOrderSummaryFlex(order);
+    await linePush(targetUid, [flex]);
+    console.log(`📤 resend order ${orderId} → ${targetUid.slice(0,12)}… (via ${linkedHow})`);
+    res.json({
+      success: true,
+      sentTo: targetUid.slice(0, 12) + '…',
+      linkedVia: linkedHow
+    });
+  } catch (e) {
+    console.warn(`❌ resend failed: ${e.message}`);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── POST /messages ────────────────────────────────────────
@@ -692,7 +855,7 @@ app.post('/webhook', async (req, res) => {
       } else {
         await lineReply(replyToken, [{
           type: 'text',
-          text: `🔍 ไม่พบออเดอร์ที่ใช้เบอร์ ${rawText}\n\nกรุณาตรวจสอบเบอร์ที่กรอกตอนสั่ง หรือสั่งสินค้าใหม่ที่:\nhttps://rueopop-code.github.io/LINEOA/`
+          text: `🔍 ไม่พบออเดอร์ที่ใช้เบอร์ ${rawText}\n\nกรุณาตรวจสอบเบอร์ที่กรอกตอนสั่ง หรือสั่งสินค้าใหม่ที่:\n https://rueopop-code.github.io/LINEOA/`
         }]);
         continue;
       }
