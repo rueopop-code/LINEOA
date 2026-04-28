@@ -114,7 +114,7 @@ function buildAdminMsg(order) {
 }
 
 // ─── LINE Flex Message Builders ───────────────────────────
-const SHOP_URL = 'https://lineoa-production-a8e8.up.railway.app/';
+const SHOP_URL = 'https://rueopop-code.github.io/LINEOA/';
 
 // สีตามสถานะ
 function statusColor(s) {
@@ -515,7 +515,7 @@ app.post('/webhook', async (req, res) => {
       } else {
         await lineReply(replyToken, [{
           type: 'text',
-          text: `🔍 ไม่พบออเดอร์ที่ใช้เบอร์ ${rawText}\n\nกรุณาตรวจสอบเบอร์ที่กรอกตอนสั่ง หรือสั่งสินค้าใหม่ที่:\nhttps://lineoa-production-a8e8.up.railway.app/`
+          text: `🔍 ไม่พบออเดอร์ที่ใช้เบอร์ ${rawText}\n\nกรุณาตรวจสอบเบอร์ที่กรอกตอนสั่ง หรือสั่งสินค้าใหม่ที่:\nhttps://rueopop-code.github.io/LINEOA/`
         }]);
         continue;
       }
@@ -609,7 +609,7 @@ app.post('/webhook', async (req, res) => {
         text: `🛍 สวัสดีค่ะ! ใช้งานได้ดังนี้:\n\n` +
               `📦 พิมพ์ "ออเดอร์" → ดูสถานะออเดอร์ของคุณ\n` +
               `🔗 พิมพ์เบอร์โทร → ผูกบัญชีกับออเดอร์ที่เคยสั่ง\n` +
-              `🛒 สั่งสินค้า → https://lineoa-production-a8e8.up.railway.app/\n\n` +
+              `🛒 สั่งสินค้า → https://rueopop-code.github.io/LINEOA/\n\n` +
               `ถ้ามีคำถาม พิมพ์มาได้เลย — ร้านจะตอบในแชทค่ะ 💬`
       }]);
       continue;
@@ -686,7 +686,7 @@ app.post('/webhook', async (req, res) => {
         type: 'text',
         text: `✅ ได้รับข้อความแล้วค่ะ ร้านจะตอบกลับเร็วๆ นี้\n\n` +
               `📦 พิมพ์ "ออเดอร์" หรือ "เบอร์โทร" → ผูกบัญชี\n` +
-              `🛒 สั่งสินค้า → https://lineoa-production-a8e8.up.railway.app/`
+              `🛒 สั่งสินค้า → https://rueopop-code.github.io/LINEOA/`
       }]);
     }
   }
