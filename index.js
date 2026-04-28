@@ -114,7 +114,7 @@ function buildAdminMsg(order) {
 }
 
 // ─── LINE Flex Message Builders ───────────────────────────
-const SHOP_URL = 'https://lineoa-production-a8e8.up.railway.app/';
+const SHOP_URL = 'https://rueopop-code.github.io/LINEOA/;
 
 // สีตามสถานะ
 function statusColor(s) {
