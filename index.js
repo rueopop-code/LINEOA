@@ -114,7 +114,7 @@ function buildAdminMsg(order) {
 }
 
 // ─── LINE Flex Message Builders ───────────────────────────
-const SHOP_URL = 'https://rueopop-code.github.io/LINEOA/';
+const SHOP_URL = 'https://lineoa-production-a8e8.up.railway.app/';
 
 // สีตามสถานะ
 function statusColor(s) {
@@ -509,24 +509,54 @@ app.post('/messages', async (req, res) => {
   // แอดมินตอบ → ส่ง Flex Message LINE หาลูกค้า
   if (sender === 'admin' && process.env.LINE_TOKEN) {
     let targetUserId = order?.line_user_id;
+    console.log(`[admin reply] order_id=${order_id}, order.line_user_id=${targetUserId || 'null'}`);
 
-    // ถ้า order_id มาในรูปแบบ "LINE-..." แต่ไม่มี line_user_id (กรณี ghost order)
+    // ถ้า order_id มาในรูปแบบ "LINE-..." แต่ไม่มี line_user_id
     if (!targetUserId && order_id.startsWith('LINE-')) {
       const { data: ghostOrder } = await supabase.from('orders')
         .select('line_user_id').eq('order_id', order_id).maybeSingle();
-      if (ghostOrder?.line_user_id) targetUserId = ghostOrder.line_user_id;
+      if (ghostOrder?.line_user_id) {
+        targetUserId = ghostOrder.line_user_id;
+        console.log(`[admin reply] found via ghost lookup: ${targetUserId.slice(0,12)}…`);
+      }
     }
 
-    // fallback: หาจาก customer_id
+    // fallback 1: หาจาก customer_id
     if (!targetUserId && customer_id) {
       targetUserId = await findLineUserIdByCustomer(customer_id);
+      if (targetUserId) console.log(`[admin reply] found via customer_id: ${targetUserId.slice(0,12)}…`);
+    }
+
+    // fallback 2: ถ้า order_id แบบ "LINE-{prefix16}" — scan หา full userId ใน DB ที่ขึ้นต้นด้วย prefix นี้
+    if (!targetUserId && order_id.startsWith('LINE-')) {
+      const prefix = order_id.slice(5); // เอาส่วนหลัง "LINE-"
+      const { data: scanRows } = await supabase.from('orders')
+        .select('line_user_id')
+        .not('line_user_id', 'is', null)
+        .like('line_user_id', `${prefix}%`)
+        .limit(1);
+      if (scanRows?.[0]?.line_user_id) {
+        targetUserId = scanRows[0].line_user_id;
+        console.log(`[admin reply] found via prefix scan: ${targetUserId.slice(0,12)}…`);
+
+        // backfill ghost order ให้มี line_user_id
+        await supabase.from('orders')
+          .update({ line_user_id: targetUserId })
+          .eq('order_id', order_id)
+          .then(({ error }) => { if (!error) console.log('[admin reply] backfilled ghost order'); });
+      }
     }
 
     if (targetUserId) {
-      const flex = buildChatFlex(order, text);
-      linePush(targetUserId, [flex])
-        .then(() => console.log(`📤 admin reply → ${targetUserId.slice(0,12)}…`))
-        .catch(e => console.warn('LINE push to customer failed:', e.message));
+      try {
+        const flex = buildChatFlex(order, text);
+        await linePush(targetUserId, [flex]);
+        console.log(`📤 admin reply → ${targetUserId.slice(0,12)}…`);
+      } catch (e) {
+        console.warn(`❌ LINE push failed for ${targetUserId.slice(0,12)}…: ${e.message}`);
+      }
+    } else {
+      console.warn(`❌ no target LINE user found for order ${order_id}`);
     }
   }
 
@@ -662,7 +692,7 @@ app.post('/webhook', async (req, res) => {
       } else {
         await lineReply(replyToken, [{
           type: 'text',
-          text: `🔍 ไม่พบออเดอร์ที่ใช้เบอร์ ${rawText}\n\nกรุณาตรวจสอบเบอร์ที่กรอกตอนสั่ง หรือสั่งสินค้าใหม่ที่:\nhttps://rueopop-code.github.io/LINEOA/`
+          text: `🔍 ไม่พบออเดอร์ที่ใช้เบอร์ ${rawText}\n\nกรุณาตรวจสอบเบอร์ที่กรอกตอนสั่ง หรือสั่งสินค้าใหม่ที่:\nhttps://lineoa-production-a8e8.up.railway.app/`
         }]);
         continue;
       }
