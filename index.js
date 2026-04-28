@@ -114,7 +114,7 @@ function buildAdminMsg(order) {
 }
 
 // ─── LINE Flex Message Builders ───────────────────────────
-const SHOP_URL = ' https://rueopop-code.github.io/LINEOA/';
+const SHOP_URL = 'https://lineoa-production-a8e8.up.railway.app/';
 
 // สีตามสถานะ
 function statusColor(s) {
@@ -131,21 +131,49 @@ function statusColor(s) {
 
 // Flex: สรุปออเดอร์ใหม่ (ส่งหาลูกค้าหลังสั่ง)
 function buildOrderSummaryFlex(order) {
-  const itemRows = (order.items || []).slice(0, 6).map(i => ({
-    type: 'box', layout: 'horizontal', margin: 'sm',
-    contents: [
-      { type:'text', text:`${i.emoji||'•'} ${i.name}`, size:'sm', color:'#333333', flex:5, wrap:true },
-      { type:'text', text:`×${i.qty}`, size:'sm', color:'#888888', flex:1, align:'end' },
-      { type:'text', text:`฿${(i.qty*i.price).toLocaleString()}`, size:'sm', color:'#C0392B', weight:'bold', flex:2, align:'end' }
-    ]
-  }));
-  const moreItems = (order.items || []).length > 6
-    ? [{ type:'text', text:`+${order.items.length - 6} รายการ`, size:'xs', color:'#888888', margin:'sm' }]
+  // ป้องกันค่า undefined/NaN
+  const safe = (v, fallback = '') => (v === undefined || v === null ? fallback : v);
+  const safeNum = (v) => {
+    const n = Number(v);
+    return isNaN(n) ? 0 : n;
+  };
+
+  const items = Array.isArray(order.items) ? order.items : [];
+  const itemRows = items.slice(0, 6).map(i => {
+    const qty   = safeNum(i.qty) || 1;
+    const price = safeNum(i.price);
+    const lineTotal = qty * price;
+    const emoji = String(safe(i.emoji, '•')).trim() || '•';
+    const name  = String(safe(i.name, 'สินค้า')).trim() || 'สินค้า';
+    return {
+      type: 'box', layout: 'horizontal', margin: 'sm',
+      contents: [
+        { type:'text', text:`${emoji} ${name}`, size:'sm', color:'#333333', flex:5, wrap:true },
+        { type:'text', text:`×${qty}`, size:'sm', color:'#888888', flex:1, align:'end' },
+        { type:'text', text:`฿${lineTotal.toLocaleString()}`, size:'sm', color:'#C0392B', weight:'bold', flex:2, align:'end' }
+      ]
+    };
+  });
+
+  // ถ้าไม่มี items เลย → ใส่ placeholder
+  if (!itemRows.length) {
+    itemRows.push({
+      type: 'text', text: '— ไม่มีรายการสินค้า —',
+      size: 'sm', color: '#888888', align: 'center', margin: 'sm'
+    });
+  }
+
+  const moreItems = items.length > 6
+    ? [{ type:'text', text:`+${items.length - 6} รายการ`, size:'xs', color:'#888888', margin:'sm' }]
     : [];
+
+  const total = safeNum(order.total);
+  const orderId = String(safe(order.order_id, '-'));
+  const customerName = String(safe(order.customer_name, '-')).trim() || '-';
 
   return {
     type: 'flex',
-    altText: `ออเดอร์ #${order.order_id} ของคุณ ฿${(order.total||0).toLocaleString()}`,
+    altText: `ออเดอร์ #${orderId} ของคุณ ฿${total.toLocaleString()}`,
     contents: {
       type: 'bubble',
       header: {
@@ -154,8 +182,8 @@ function buildOrderSummaryFlex(order) {
         paddingAll: 'lg',
         contents: [
           { type:'text', text:'🎉 ขอบคุณสำหรับการสั่งซื้อ', color:'#ffffff', size:'sm', weight:'regular' },
-          { type:'text', text:`#${order.order_id}`, color:'#ffffff', size:'xl', weight:'bold', margin:'sm' },
-          { type:'text', text:`คุณ ${order.customer_name||'-'}`, color:'#ffffff', size:'sm', margin:'xs' }
+          { type:'text', text:`#${orderId}`, color:'#ffffff', size:'xl', weight:'bold', margin:'sm' },
+          { type:'text', text:`คุณ ${customerName}`, color:'#ffffff', size:'sm', margin:'xs' }
         ]
       },
       body: {
@@ -168,7 +196,7 @@ function buildOrderSummaryFlex(order) {
           { type:'box', layout:'horizontal', margin:'md',
             contents:[
               { type:'text', text:'ยอดรวม', size:'md', color:'#333333', flex:1 },
-              { type:'text', text:`฿${(order.total||0).toLocaleString()}`, size:'lg', color:'#C0392B', weight:'bold', align:'end' }
+              { type:'text', text:`฿${total.toLocaleString()}`, size:'lg', color:'#C0392B', weight:'bold', align:'end' }
             ]
           },
           { type:'text', text:'⏳ ร้านกำลังตรวจสอบและจะแจ้งให้ทราบเร็วๆ นี้', size:'xs', color:'#888888', wrap:true, margin:'lg', align:'center' }
@@ -179,8 +207,8 @@ function buildOrderSummaryFlex(order) {
         contents: [
           { type:'button', style:'primary', color:'#C0392B', height:'sm',
             action: { type:'postback', label:'📋 ดูสถานะออเดอร์',
-                      data:`action=view_order&id=${order.order_id}`,
-                      displayText:`📋 ดูสถานะ #${order.order_id}` }
+                      data:`action=view_order&id=${orderId}`,
+                      displayText:`📋 ดูสถานะ #${orderId}` }
           },
           { type:'button', style:'secondary', height:'sm',
             action: { type:'uri', label:'🛒 สั่งซื้อเพิ่ม', uri: SHOP_URL }
@@ -855,7 +883,7 @@ app.post('/webhook', async (req, res) => {
       } else {
         await lineReply(replyToken, [{
           type: 'text',
-          text: `🔍 ไม่พบออเดอร์ที่ใช้เบอร์ ${rawText}\n\nกรุณาตรวจสอบเบอร์ที่กรอกตอนสั่ง หรือสั่งสินค้าใหม่ที่:\n https://rueopop-code.github.io/LINEOA/`
+          text: `🔍 ไม่พบออเดอร์ที่ใช้เบอร์ ${rawText}\n\nกรุณาตรวจสอบเบอร์ที่กรอกตอนสั่ง หรือสั่งสินค้าใหม่ที่:\nhttps://lineoa-production-a8e8.up.railway.app/`
         }]);
         continue;
       }
