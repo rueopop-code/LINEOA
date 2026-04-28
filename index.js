@@ -114,7 +114,7 @@ function buildAdminMsg(order) {
 }
 
 // ─── LINE Flex Message Builders ───────────────────────────
-const SHOP_URL = 'https://rueopop-code.github.io/LINEOA/';
+const SHOP_URL = 'https://lineoa-production-a8e8.up.railway.app/';
 
 // สีตามสถานะ
 function statusColor(s) {
@@ -883,7 +883,7 @@ app.post('/webhook', async (req, res) => {
       } else {
         await lineReply(replyToken, [{
           type: 'text',
-          text: `🔍 ไม่พบออเดอร์ที่ใช้เบอร์ ${rawText}\n\nกรุณาตรวจสอบเบอร์ที่กรอกตอนสั่ง หรือสั่งสินค้าใหม่ที่:\nhttps://rueopop-code.github.io/LINEOA/`
+          text: `🔍 ไม่พบออเดอร์ที่ใช้เบอร์ ${rawText}\n\nกรุณาตรวจสอบเบอร์ที่กรอกตอนสั่ง หรือสั่งสินค้าใหม่ที่:\nhttps://lineoa-production-a8e8.up.railway.app/`
         }]);
         continue;
       }
