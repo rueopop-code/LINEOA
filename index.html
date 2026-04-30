@@ -2090,16 +2090,32 @@ function exportProductsToExcel() {
   if (!products.length) { toast('ไม่มีสินค้าให้ export'); return; }
 
   const rows = productsToExcelRows();
+  // บังคับ id เป็น string เพื่อไม่ให้ Excel แปลงเป็น scientific notation (2E+12)
+  rows.forEach(r => { if (r.id !== '' && r.id !== undefined && r.id !== null) r.id = String(r.id); });
+
   const ws = XLSX.utils.json_to_sheet(rows, {
     header: ['id','name','cat','emoji','description','size','price','stock','tier1_qty','tier1_price','tier2_qty','tier2_price','tier3_qty','tier3_price']
   });
 
   // ตั้งความกว้าง column
   ws['!cols'] = [
-    {wch:6}, {wch:30}, {wch:15}, {wch:6}, {wch:25},
+    {wch:16}, {wch:30}, {wch:15}, {wch:6}, {wch:25},
     {wch:14}, {wch:10}, {wch:8},
     {wch:10}, {wch:11}, {wch:10}, {wch:11}, {wch:10}, {wch:11}
   ];
+
+  // ✨ บังคับ format ของ column id (column A) เป็น text ทุก row
+  // Loop ทุก cell ใน column A → set type 's' (string) + format '@'
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  for (let R = range.s.r + 1; R <= range.e.r; R++) {  // skip header
+    const cellAddr = XLSX.utils.encode_cell({r: R, c: 0});  // column A
+    const cell = ws[cellAddr];
+    if (cell && cell.v !== undefined && cell.v !== null && cell.v !== '') {
+      cell.t = 's';                  // string type
+      cell.v = String(cell.v);
+      cell.z = '@';                  // text format
+    }
+  }
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Products');
@@ -2112,9 +2128,10 @@ function exportProductsToExcel() {
     {คำอธิบาย:'2. ใส่ราคาส่ง: tier1_qty=10, tier1_price=22 (ซื้อ 10+ ฿22/ชิ้น)'},
     {คำอธิบาย:'3. มี 3 ขั้นราคาส่ง: tier1, tier2, tier3 (ขั้น 2 ต้องมาก > ขั้น 1)'},
     {คำอธิบาย:'4. ลบสต๊อก = ปล่อยว่าง (ไม่จำกัด)'},
-    {คำอธิบาย:'5. id, size = key สำหรับ matching → ห้ามเปลี่ยน'},
-    {คำอธิบาย:'6. ถ้าจะเพิ่มขนาดใหม่ของสินค้าเดิม: copy บรรทัด ใช้ id เดิม เปลี่ยน size + price'},
-    {คำอธิบาย:'7. ถ้าจะเพิ่มสินค้าใหม่: ใช้ id ใหม่ (ไม่ซ้ำ)'},
+    {คำอธิบาย:'5. ⚠️ id เป็นเลขยาวๆ (เช่น 1777523076333) — ห้ามแก้ ห้ามเปลี่ยน format!'},
+    {คำอธิบาย:'   ถ้าใน Excel เห็นเป็น 2E+12 = format ผิด ให้คลิกขวา column → Format Cells → Text'},
+    {คำอธิบาย:'6. size = key สำหรับ matching → ห้ามเปลี่ยน (ยกเว้นจะเพิ่มขนาดใหม่)'},
+    {คำอธิบาย:'7. ถ้าจะเพิ่มสินค้าใหม่: เว้น id ว่าง ระบบจะสร้างให้อัตโนมัติ'},
     {คำอธิบาย:'8. บันทึกเป็น .xlsx แล้ว Import กลับ'},
     {คำอธิบาย:''},
     {คำอธิบาย:'⚠️ ระบบจะ preview ก่อน import — ตรวจสอบก่อนยืนยันได้'}
@@ -2132,15 +2149,17 @@ function exportProductsToExcel() {
 function downloadExcelTemplate() {
   const sample = [
     {
-      id: 999, name: 'ตัวอย่างสินค้า', cat: 'หมวดหมู่', emoji: '📦',
-      description: 'รายละเอียดสินค้า', size: 'S', price: 25, stock: 100,
+      id: '', name: 'สินค้าตัวอย่าง 1', cat: 'หมวดหมู่', emoji: '📦',
+      description: 'เว้น id ว่าง = สินค้าใหม่ ระบบสร้าง id ให้อัตโนมัติ',
+      size: 'S', price: 25, stock: 100,
       tier1_qty: 10, tier1_price: 22,
       tier2_qty: 50, tier2_price: 20,
       tier3_qty: 100, tier3_price: 18
     },
     {
-      id: 999, name: 'ตัวอย่างสินค้า', cat: 'หมวดหมู่', emoji: '📦',
-      description: 'รายละเอียดสินค้า', size: 'M', price: 35, stock: 80,
+      id: '', name: 'สินค้าตัวอย่าง 1', cat: 'หมวดหมู่', emoji: '📦',
+      description: '(เว้น id ว่างต่อจากแถวบน + name/cat เดียวกัน = ขนาดที่ 2 ของสินค้านี้)',
+      size: 'M', price: 35, stock: 80,
       tier1_qty: 10, tier1_price: 32, tier2_qty: '', tier2_price: '',
       tier3_qty: '', tier3_price: ''
     }
@@ -2148,7 +2167,16 @@ function downloadExcelTemplate() {
   const ws = XLSX.utils.json_to_sheet(sample, {
     header: ['id','name','cat','emoji','description','size','price','stock','tier1_qty','tier1_price','tier2_qty','tier2_price','tier3_qty','tier3_price']
   });
-  ws['!cols'] = [{wch:6},{wch:30},{wch:15},{wch:6},{wch:25},{wch:14},{wch:10},{wch:8},{wch:10},{wch:11},{wch:10},{wch:11},{wch:10},{wch:11}];
+  ws['!cols'] = [{wch:16},{wch:30},{wch:15},{wch:6},{wch:25},{wch:14},{wch:10},{wch:8},{wch:10},{wch:11},{wch:10},{wch:11},{wch:10},{wch:11}];
+
+  // บังคับ id เป็น text format
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  for (let R = range.s.r + 1; R <= range.e.r; R++) {
+    const cellAddr = XLSX.utils.encode_cell({r: R, c: 0});
+    const cell = ws[cellAddr];
+    if (cell) { cell.t = 's'; cell.z = '@'; }
+  }
+
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Products');
   XLSX.writeFile(wb, 'products_template.xlsx');
@@ -2175,14 +2203,60 @@ async function handleExcelImport(input) {
     // จัด rows เป็น products (group by id)
     const productMap = new Map();
     const errors = [];
+
+    // helper: parse id ที่อาจมาจาก scientific notation หรือ string
+    function parseProductId(rawId) {
+      if (rawId === '' || rawId === null || rawId === undefined) return null;
+      // ถ้าเป็น string ที่มี "E" → ต้อง parseFloat แล้ว Math.round
+      const str = String(rawId).trim();
+      if (!str) return null;
+      // ถ้ามี E (scientific) → ใช้ parseFloat → round
+      if (/[eE]/.test(str)) {
+        const f = parseFloat(str);
+        if (isNaN(f)) return null;
+        return Math.round(f);
+      }
+      // ปกติ — ลองเป็น integer ตรงๆ
+      const n = parseInt(str, 10);
+      return isNaN(n) ? null : n;
+    }
+
+    // เก็บ id ที่ใช้ไปแล้ว (สำหรับ generate ใหม่ ไม่ให้ชน)
+    const existingIds = new Set(products.map(p => p.id));
+    let nextNewId = Date.now();
+    function generateNewId() {
+      while (existingIds.has(nextNewId) || productMap.has(nextNewId)) nextNewId++;
+      const id = nextNewId++;
+      existingIds.add(id);
+      return id;
+    }
+
+    // map: tempIdKey → realId (กรณี id ว่าง — รวมแถวใน Excel ที่ติดกันสำหรับสินค้าใหม่ตัวเดียวกัน)
+    let lastNewId = null;
+    let lastNewSignature = null;
+
     rows.forEach((r, lineIdx) => {
-      const id = parseInt(r.id);
-      if (isNaN(id)) { errors.push(`บรรทัด ${lineIdx+2}: id ไม่ถูกต้อง`); return; }
+      let id = parseProductId(r.id);
+
       const sizeName = String(r.size || '').trim();
       const price = parseFloat(r.price);
 
       if (!sizeName) { errors.push(`บรรทัด ${lineIdx+2}: size ว่าง`); return; }
       if (isNaN(price)) { errors.push(`บรรทัด ${lineIdx+2}: price ไม่ใช่ตัวเลข`); return; }
+
+      // ถ้า id ว่าง → ลอง group กับแถวก่อนหน้าที่ name+cat เดียวกัน (ของใหม่)
+      if (id === null) {
+        const sig = `${String(r.name||'').trim()}|${String(r.cat||'').trim()}`;
+        if (lastNewId !== null && lastNewSignature === sig) {
+          id = lastNewId;
+        } else {
+          id = generateNewId();
+          lastNewId = id;
+          lastNewSignature = sig;
+        }
+      } else {
+        lastNewId = null; // reset
+      }
 
       if (!productMap.has(id)) {
         productMap.set(id, {
