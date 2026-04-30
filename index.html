@@ -390,7 +390,7 @@ textarea.fi{resize:none;height:70px}
         <button class="qbtn" onclick="chgQ(1)">+</button>
       </div>
     </div>
-    <button class="big-btn" onclick="addCart()">➕ เพิ่มลงตะกร้า</button>
+    <button class="big-btn" id="pdAddBtn" onclick="addCart()">➕ เพิ่มลงตะกร้า</button>
   </div>
 </div>
 
@@ -1246,25 +1246,34 @@ function renderGrid(list) {
     const imgH = p.img?`<img src="${p.img}" alt="${p.name}">`:`<span>${p.emoji||'📦'}</span>`;
     const stock = totalStock(p);
     let stockBadge = '';
+    let cardOpacity = '';
+    let cardClick = `onclick="openPD(${p.id})"`;
     let addBtnDisabled = false;
+
     if (stock !== null) {
       if (stock === 0) {
-        stockBadge = `<div style="position:absolute;top:8px;right:8px;background:#e53935;color:#fff;font-size:10px;font-weight:700;padding:3px 8px;border-radius:8px;">หมด</div>`;
+        // 🚫 หมดสนิท — ห้ามกด ห้ามเปิด modal
+        stockBadge = `<div style="position:absolute;top:8px;right:8px;background:#e53935;color:#fff;font-size:11px;font-weight:800;padding:4px 10px;border-radius:8px;box-shadow:0 2px 6px rgba(229,57,53,0.4);">❌ สินค้าหมด</div>
+                      <div style="position:absolute;inset:0;background:rgba(255,255,255,0.5);display:flex;align-items:center;justify-content:center;pointer-events:none;">
+                        <div style="background:rgba(0,0,0,0.7);color:#fff;padding:6px 14px;border-radius:8px;font-size:11px;font-weight:700;">รอร้านอัปเดตสต๊อก</div>
+                      </div>`;
         addBtnDisabled = true;
+        cardOpacity = 'opacity:0.7;';
+        cardClick = `onclick="toast('สินค้าหมด — รอร้านอัปเดตสต๊อก','error')"`;
       } else if (stock <= 10) {
-        stockBadge = `<div style="position:absolute;top:8px;right:8px;background:#FFA726;color:#fff;font-size:10px;font-weight:700;padding:3px 8px;border-radius:8px;">เหลือ ${stock}</div>`;
+        stockBadge = `<div style="position:absolute;top:8px;right:8px;background:#FFA726;color:#fff;font-size:10px;font-weight:700;padding:3px 8px;border-radius:8px;">⚡ เหลือ ${stock}</div>`;
       }
     }
     const wholesaleBadge = hasWholesale(p)
       ? `<span style="display:inline-block;background:#27AE60;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:6px;margin-left:4px;">มีราคาส่ง</span>`
       : '';
-    return `<div class="pcard" onclick="openPD(${p.id})">
+    return `<div class="pcard" style="${cardOpacity}" ${cardClick}>
       <div class="pcard-img" style="position:relative;">${imgH}${p.isNew?'<div class="bnew">NEW</div>':''}${stockBadge}</div>
       <div class="pcard-body">
         <div class="pcard-cat">${p.cat}${wholesaleBadge}</div>
         <div class="pcard-name">${p.name}</div>
         <div class="pcard-price">฿${minP(p).toLocaleString()}${p.sizes.length>1?`<span> ขึ้นไป</span>`:''}</div>
-        <button class="pcard-add" ${addBtnDisabled?'disabled style="opacity:0.5;cursor:not-allowed;"':''} onclick="event.stopPropagation();${addBtnDisabled?'':'quickAdd('+p.id+')'}">${addBtnDisabled?'❌ หมด':(p.sizes.length>1?'🔍 เลือกขนาด':'+ ใส่ตะกร้า')}</button>
+        <button class="pcard-add" ${addBtnDisabled?'disabled style="opacity:0.5;cursor:not-allowed;background:#999;"':''} onclick="event.stopPropagation();${addBtnDisabled?`toast('สินค้าหมด — รอร้านอัปเดตสต๊อก','error')`:'quickAdd('+p.id+')'}">${addBtnDisabled?'❌ สินค้าหมด':(p.sizes.length>1?'🔍 เลือกขนาด':'+ ใส่ตะกร้า')}</button>
       </div>
     </div>`;
   }).join('');
@@ -1282,16 +1291,49 @@ function openPD(id) {
   document.getElementById('pdCat').textContent=curProd.cat;
   document.getElementById('pdName').textContent=curProd.name;
   document.getElementById('pdDesc').textContent=curProd.desc||'';
+
+  // หา size แรกที่ยังมี stock (หรือไม่มี stock tracking)
+  const firstAvailableIdx = curProd.sizes.findIndex(s => s.stock === undefined || s.stock === null || s.stock > 0);
+  const allSoldOut = firstAvailableIdx === -1;
+
   document.getElementById('pdSizes').innerHTML=curProd.sizes.map((s,i)=>{
-    const stockTxt = (s.stock !== undefined && s.stock !== null)
-      ? (s.stock > 0 ? `<small style="display:block;font-size:9px;opacity:0.7;margin-top:2px;">เหลือ ${s.stock}</small>`
-                     : `<small style="display:block;font-size:9px;color:#e53935;margin-top:2px;">หมด</small>`)
-      : '';
-    const disabled = (s.stock === 0) ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : '';
-    return `<button class="sz${i===0?' active':''}" ${disabled} onclick="selSz(this,${i})">${s.n}${stockTxt}</button>`;
+    const hasStock = (s.stock !== undefined && s.stock !== null);
+    const isOut = hasStock && s.stock === 0;
+    const isLow = hasStock && s.stock > 0 && s.stock <= 10;
+
+    let stockTxt = '';
+    let extraStyle = '';
+    if (isOut) {
+      stockTxt = `<small style="display:block;font-size:10px;color:#e53935;font-weight:700;margin-top:3px;">❌ หมด</small>`;
+      extraStyle = 'opacity:0.4;cursor:not-allowed;background:#f5f5f5;border-color:#ccc;';
+    } else if (isLow) {
+      stockTxt = `<small style="display:block;font-size:10px;color:#FFA726;font-weight:700;margin-top:3px;">⚡ เหลือ ${s.stock}</small>`;
+    } else if (hasStock) {
+      stockTxt = `<small style="display:block;font-size:9px;color:#27AE60;font-weight:600;margin-top:3px;">✓ เหลือ ${s.stock}</small>`;
+    }
+
+    // หา default size ที่ active = ตัวแรกที่ยังมี stock
+    const isActive = (i === firstAvailableIdx);
+    const disabled = isOut ? 'disabled' : '';
+
+    return `<button class="sz${isActive?' active':''}" ${disabled} style="${extraStyle}" onclick="selSz(this,${i})">${s.n}${stockTxt}</button>`;
   }).join('');
-  curSize=curProd.sizes[0];
-  curSizeIdx=0;
+
+  // หา size แรกที่ยังมี stock เพื่อ default
+  curSizeIdx = allSoldOut ? 0 : firstAvailableIdx;
+  curSize = curProd.sizes[curSizeIdx];
+
+  // ปุ่ม add to cart
+  const addBtn = document.getElementById('pdAddBtn');
+  if (allSoldOut) {
+    addBtn.disabled = true;
+    addBtn.style.cssText = 'background:#999;cursor:not-allowed;opacity:0.7;';
+    addBtn.innerHTML = '❌ สินค้าหมด — รอร้านอัปเดตสต๊อก';
+  } else {
+    addBtn.disabled = false;
+    addBtn.style.cssText = '';
+    addBtn.innerHTML = '➕ เพิ่มลงตะกร้า';
+  }
   mQty = 1;
   document.getElementById('qnum').textContent = mQty;
   updatePriceDisplay();
@@ -1299,7 +1341,10 @@ function openPD(id) {
 }
 function closePD(){document.getElementById('pdOv').classList.remove('show')}
 function selSz(btn,idx){
-  if (btn.disabled) return;
+  if (btn.disabled) {
+    toast('ขนาดนี้สินค้าหมด — รอร้านอัปเดตสต๊อก', 'error');
+    return;
+  }
   document.querySelectorAll('#pdSizes .sz').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
   curSizeIdx = idx;
@@ -1313,19 +1358,68 @@ function selSz(btn,idx){
 }
 
 // คำนวณราคาตามจำนวน (tier pricing)
-function getPriceForQty(size, qty) {
+// **กลุ่มราคาเดียวกัน:** รวม qty ของทุกขนาดในสินค้านี้ที่ราคาปลีกเท่ากัน
+function getPriceForQty(size, qty, productId) {
   if (!size.tiers || !size.tiers.length) return size.p;
-  // หา tier ที่ qty >= minQty สูงสุด
+
+  // ถ้ามี productId → คำนวณ effective qty รวม (ทุก size ที่ p เดียวกันใน product เดียวกัน)
+  let effectiveQty = qty;
+  if (productId !== undefined && productId !== null) {
+    effectiveQty = getEffectiveQty(productId, size.p, size.n);
+  }
+
+  // หา tier ที่ qty รวม >= minQty สูงสุด
   const sorted = [...size.tiers].sort((a,b) => b.minQty - a.minQty);
   for (const t of sorted) {
-    if (qty >= t.minQty) return t.price;
+    if (effectiveQty >= t.minQty) return t.price;
   }
   return size.p;
 }
 
+// รวม qty ของทุกขนาดในสินค้านี้ที่ราคาปลีก (p) เท่ากัน — รวมขนาดที่ส่งมาด้วย
+// `currentSize` ใช้ตอนกำลังเลือก qty ใน product detail (modal) ก่อนกดเพิ่มเข้าตะกร้า
+function getEffectiveQty(productId, sizePrice, currentSizeName) {
+  let total = 0;
+  // นับจาก cart ก่อน (ขนาดอื่นๆ ในสินค้าเดียวกัน ราคาเท่ากัน)
+  for (const c of cart) {
+    if (c.prod.id !== productId) continue;
+    if (c.size.p !== sizePrice) continue;
+    if (c.size.n === currentSizeName) continue; // skip ขนาดที่กำลังคำนวณ
+    total += c.qty;
+  }
+  return total;
+}
+
+// คำนวณราคาตาม cart รวม (เรียกตอน render cart)
+// ใช้ตอน render รายการในตะกร้า — รวม qty ของทุกขนาดที่ราคาเท่ากันใน product เดียวกัน
+function getCartLinePrice(cartIdx) {
+  const item = cart[cartIdx];
+  if (!item) return 0;
+  if (!item.size.tiers || !item.size.tiers.length) return item.size.p;
+
+  // หา qty รวมของทุกขนาดในสินค้านี้ที่ราคาเท่ากัน (รวมตัวเอง)
+  let totalQty = 0;
+  for (const c of cart) {
+    if (c.prod.id === item.prod.id && c.size.p === item.size.p) {
+      totalQty += c.qty;
+    }
+  }
+
+  // หา tier
+  const sorted = [...item.size.tiers].sort((a,b) => b.minQty - a.minQty);
+  for (const t of sorted) {
+    if (totalQty >= t.minQty) return t.price;
+  }
+  return item.size.p;
+}
+
 function updatePriceDisplay() {
-  if (!curSize) return;
-  const unitPrice = getPriceForQty(curSize, mQty);
+  if (!curSize || !curProd) return;
+  // คำนวณ qty รวม = mQty (ที่เลือกตอนนี้) + ที่อยู่ในตะกร้าแล้วของขนาดอื่นในกลุ่มราคาเดียวกัน
+  const cartQty = getEffectiveQty(curProd.id, curSize.p, curSize.n);
+  const totalQty = mQty + cartQty;
+
+  const unitPrice = getPriceForQty(curSize, totalQty); // ใช้ totalQty โดยตรง
   const total = unitPrice * mQty;
   const isTier = curSize.tiers && curSize.tiers.length && unitPrice < curSize.p;
   const priceEl = document.getElementById('pdPrice');
@@ -1338,9 +1432,18 @@ function updatePriceDisplay() {
     const saved = (curSize.p - unitPrice) * mQty;
     html += ` <div style="font-size:11px;color:#27AE60;font-weight:700;margin-top:4px;">💰 ประหยัด ฿${saved.toLocaleString()} (ราคาส่ง)</div>`;
   }
+
+  // แจ้งว่ารวม qty จากตะกร้าด้วย
+  if (cartQty > 0 && curSize.tiers?.length) {
+    html += `<div style="font-size:10px;color:#1976d2;font-weight:600;margin-top:4px;">📦 รวม ${totalQty} ชิ้น (มีในตะกร้าขนาดอื่นราคาเดียวกัน ${cartQty} ชิ้น)</div>`;
+  }
+
   // แสดงตารางราคาส่ง (ถ้ามี)
   if (curSize.tiers && curSize.tiers.length) {
-    html += `<div style="font-size:10px;color:#666;font-weight:500;margin-top:6px;line-height:1.4;">📊 ซื้อ ${curSize.tiers.map(t => `${t.minQty}+ ฿${t.price}`).join(' • ')}</div>`;
+    // หา sizes ในสินค้านี้ที่ราคาเดียวกัน → แสดงว่าราคาส่งใช้กับขนาดไหนบ้าง
+    const sameP = curProd.sizes.filter(s => s.p === curSize.p).map(s => s.n);
+    const samePNote = sameP.length > 1 ? ` <span style="opacity:0.7;">(${sameP.join(', ')} รวมกัน)</span>` : '';
+    html += `<div style="font-size:10px;color:#666;font-weight:500;margin-top:6px;line-height:1.4;">📊 ซื้อ ${curSize.tiers.map(t => `${t.minQty}+ ฿${t.price}`).join(' • ')}${samePNote}</div>`;
   }
   priceEl.innerHTML = html;
 }
@@ -1421,13 +1524,13 @@ function renderCart(){
   if(!cart.length){el.innerHTML='<div class="cart-empty">🛒<br>ยังไม่มีสินค้า</div>';}
   else el.innerHTML=cart.map((item,i)=>{
     const imgH=item.prod.img?`<img src="${item.prod.img}" alt="">`:item.prod.emoji||'📦';
-    const unitPrice = getPriceForQty(item.size, item.qty);
+    const unitPrice = getCartLinePrice(i); // ใช้ราคาที่รวม qty ของทุกขนาดราคาเดียวกันแล้ว
     const lineTotal = unitPrice * item.qty;
     const isWholesale = item.size.tiers?.length && unitPrice < item.size.p;
     const wholesaleBadge = isWholesale
       ? `<span style="display:inline-block;background:#27AE60;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;margin-left:4px;">ส่ง</span>`
       : '';
-    const unitTxt = item.qty > 1 ? `<small style="opacity:0.7;font-size:10px;">฿${unitPrice}/ชิ้น</small>` : '';
+    const unitTxt = `<small style="opacity:0.7;font-size:10px;">฿${unitPrice}/ชิ้น</small>`;
     // ถ้ามีหลายขนาด → แสดงเป็นปุ่มกดเปลี่ยน
     const sizeDisplay = item.prod.sizes.length > 1
       ? `<button onclick="openCartSizeChange(${i})" style="background:#e3f2fd;border:1px solid #90caf9;color:#1565c0;padding:3px 10px;border-radius:14px;font-size:11px;font-family:'Sarabun',sans-serif;font-weight:600;cursor:pointer;margin-right:4px;">📐 ${item.size.n} ▼</button>`
@@ -1447,7 +1550,7 @@ function renderCart(){
       <button class="ci-rm" onclick="rmCI(${i})">🗑️</button>
     </div>`;
   }).join('');
-  const tot = cart.reduce((s,i) => s + getPriceForQty(i.size, i.qty) * i.qty, 0);
+  const tot = cart.reduce((s,i,idx) => s + getCartLinePrice(idx) * i.qty, 0);
   document.getElementById('cartTotal').textContent=`฿${tot.toLocaleString()}`;
 }
 function rmCI(i){ cart.splice(i,1); updCart(); renderCart(); }
@@ -1461,22 +1564,31 @@ function openCartSizeChange(idx) {
 
   const optsHtml = item.prod.sizes.map(s => {
     const isCurrent = s.n === item.size.n;
-    const stockTxt = (s.stock !== undefined && s.stock !== null)
-      ? (s.stock > 0 ? `<small style="display:block;font-size:10px;opacity:0.7;margin-top:2px;">เหลือ ${s.stock}</small>`
-                     : `<small style="display:block;font-size:10px;color:#e53935;margin-top:2px;">หมด</small>`)
-      : '';
-    const disabled = (s.stock === 0);
+    const hasStock = (s.stock !== undefined && s.stock !== null);
+    const isOut = hasStock && s.stock === 0;
+    const isLow = hasStock && s.stock > 0 && s.stock <= 10;
+
+    let stockTxt = '';
+    if (isOut) {
+      stockTxt = `<small style="display:block;font-size:11px;color:#e53935;font-weight:700;margin-top:3px;">❌ หมด</small>`;
+    } else if (isLow) {
+      stockTxt = `<small style="display:block;font-size:11px;color:#FFA726;font-weight:700;margin-top:3px;">⚡ เหลือ ${s.stock}</small>`;
+    } else if (hasStock) {
+      stockTxt = `<small style="display:block;font-size:10px;color:#27AE60;font-weight:600;margin-top:3px;">✓ เหลือ ${s.stock}</small>`;
+    }
+
+    const disabled = isOut;
     const tierBadge = s.tiers?.length
       ? `<span style="display:inline-block;background:#27AE60;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;margin-left:6px;">มีราคาส่ง</span>`
       : '';
     const escapedName = String(s.n).replace(/'/g, "\\'");
     return `<button
       ${disabled?'disabled':''}
-      onclick="${disabled?'':`changeCartSize(${idx},'${escapedName}')`}"
+      onclick="${disabled?`toast('ขนาดนี้หมด — รอร้านอัปเดตสต๊อก','error')`:`changeCartSize(${idx},'${escapedName}')`}"
       style="
-        background:${isCurrent?'#C0392B':(disabled?'#f0f0f0':'#fff')};
+        background:${isCurrent?'#C0392B':(disabled?'#f5f5f5':'#fff')};
         color:${isCurrent?'#fff':(disabled?'#aaa':'#2C3E50')};
-        border:2px solid ${isCurrent?'#C0392B':'#e0e0e0'};
+        border:2px solid ${isCurrent?'#C0392B':(disabled?'#ccc':'#e0e0e0')};
         padding:14px 16px;
         border-radius:12px;
         text-align:left;
@@ -1603,9 +1715,9 @@ async function sendOrder() {
   const addr    = document.getElementById('cAddr').value.trim();
   const pickT   = document.getElementById('cPickTime').value.trim();
   const note    = document.getElementById('cNote').value.trim();
-  const total   = cart.reduce((s,i)=>s + getPriceForQty(i.size, i.qty) * i.qty, 0);
-  const items   = cart.map(i=>{
-    const unitPrice = getPriceForQty(i.size, i.qty);
+  const total   = cart.reduce((s,i,idx)=>s + getCartLinePrice(idx) * i.qty, 0);
+  const items   = cart.map((i,idx)=>{
+    const unitPrice = getCartLinePrice(idx);
     return {
       name:`${i.prod.name} (${i.size.n})`,
       emoji:i.prod.emoji||'📦',
