@@ -6,6 +6,7 @@
 <title>มนชิน ซัพพลาย</title>
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700;800&family=Prompt:wght@500;600;700;800;900&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -435,6 +436,26 @@ textarea.fi{resize:none;height:70px}
   </div>
 </div>
 
+<!-- ── EXCEL IMPORT PREVIEW MODAL ── -->
+<div id="excelOv" onclick="if(event.target===this)closeExcelPreview()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:650;align-items:center;justify-content:center;padding:20px;">
+  <div style="background:#fff;border-radius:18px;max-width:900px;width:100%;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+    <div style="padding:20px 24px;border-bottom:1px solid #e0e0e0;display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <div style="font-family:'Prompt',sans-serif;font-size:18px;font-weight:700;color:#2C3E50;">📊 ตรวจสอบก่อน Import</div>
+        <div style="font-size:12px;color:#666;margin-top:2px;" id="excelSummary"></div>
+      </div>
+      <button onclick="closeExcelPreview()" style="background:#f0f0f0;border:none;width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:16px;">×</button>
+    </div>
+    <div style="padding:16px 24px;overflow-y:auto;flex:1;">
+      <div id="excelPreviewContent"></div>
+    </div>
+    <div style="padding:14px 24px;border-top:1px solid #e0e0e0;display:flex;gap:8px;justify-content:flex-end;background:#f8f9fa;border-radius:0 0 18px 18px;">
+      <button onclick="closeExcelPreview()" style="padding:10px 18px;background:#fff;border:1.5px solid #ccc;color:#666;border-radius:8px;font-size:13px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;">ยกเลิก</button>
+      <button id="excelConfirmBtn" onclick="confirmExcelImport()" style="padding:10px 24px;background:#27AE60;border:none;color:#fff;border-radius:8px;font-size:13px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;">✅ ยืนยัน Import</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── CART SIZE CHANGE MODAL ── -->
 <div id="csOv" onclick="if(event.target===this)closeCartSize()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:550;align-items:center;justify-content:center;padding:20px;">
   <div style="background:#fff;border-radius:18px;max-width:420px;width:100%;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
@@ -603,6 +624,19 @@ textarea.fi{resize:none;height:70px}
 
     <!-- PRODUCT LIST -->
     <div class="tab-pane" id="tab-products">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;padding:10px;background:linear-gradient(135deg,#e8f5e9,#c8e6c9);border-radius:10px;border:1px solid #81c784;">
+        <div style="font-size:12px;color:#2e7d32;font-weight:700;width:100%;margin-bottom:4px;">📊 จัดการเป็น Excel</div>
+        <button onclick="exportProductsToExcel()" style="padding:8px 14px;background:#27AE60;border:none;color:#fff;border-radius:8px;font-size:12px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:5px;">
+          📥 Export Excel
+        </button>
+        <input type="file" id="importExcelFile" accept=".xlsx,.xls" style="display:none" onchange="handleExcelImport(this)">
+        <button onclick="document.getElementById('importExcelFile').click()" style="padding:8px 14px;background:#fff;border:1.5px solid #27AE60;color:#27AE60;border-radius:8px;font-size:12px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:5px;">
+          📤 Import Excel
+        </button>
+        <button onclick="downloadExcelTemplate()" style="padding:8px 14px;background:#fff;border:1.5px solid #888;color:#666;border-radius:8px;font-size:12px;font-family:'Sarabun',sans-serif;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;">
+          📋 Template
+        </button>
+      </div>
       <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center">
         <input class="f-inp" id="pmSearch" placeholder="🔍 ค้นหาสินค้า..." oninput="renderPMList()" style="flex:1">
         <button onclick="deleteAllProducts()" style="padding:9px 12px;background:#fff;border:1.5px solid #E74C3C;color:#E74C3C;border-radius:9px;font-size:12px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;white-space:nowrap">🗑️ ลบทั้งหมด</button>
@@ -2007,6 +2041,381 @@ async function deleteAllProducts() {
   try { localStorage.removeItem('ms_products'); } catch(e) {}
   renderGrid(); renderPMList();
   toast('ลบสินค้าทั้งหมดแล้ว 🗑️');
+}
+
+// ═══════════════════════════════════════════════════════
+//  EXCEL EXPORT / IMPORT
+// ═══════════════════════════════════════════════════════
+
+// แปลง products ทั้งหมดเป็น flat rows สำหรับ Excel
+// 1 row = 1 ขนาดสินค้า (ถ้าสินค้ามี 3 ขนาด → 3 rows)
+function productsToExcelRows() {
+  const rows = [];
+  for (const p of products) {
+    if (!p.sizes || !p.sizes.length) {
+      // ไม่มี size → ใส่ row ว่าง
+      rows.push({
+        id: p.id, name: p.name, cat: p.cat, emoji: p.emoji||'📦',
+        description: p.desc||'', size: '', price: '', stock: '',
+        tier1_qty:'', tier1_price:'', tier2_qty:'', tier2_price:'',
+        tier3_qty:'', tier3_price:''
+      });
+      continue;
+    }
+    for (const s of p.sizes) {
+      const tiers = (s.tiers || []).slice(0, 3);
+      rows.push({
+        id          : p.id,
+        name        : p.name,
+        cat         : p.cat,
+        emoji       : p.emoji || '📦',
+        description : p.desc || '',
+        size        : s.n,
+        price       : s.p,
+        stock       : (s.stock !== undefined && s.stock !== null) ? s.stock : '',
+        tier1_qty   : tiers[0]?.minQty || '',
+        tier1_price : tiers[0]?.price || '',
+        tier2_qty   : tiers[1]?.minQty || '',
+        tier2_price : tiers[1]?.price || '',
+        tier3_qty   : tiers[2]?.minQty || '',
+        tier3_price : tiers[2]?.price || ''
+      });
+    }
+  }
+  return rows;
+}
+
+// Export สินค้าทั้งหมดเป็น Excel
+function exportProductsToExcel() {
+  if (!products.length) { toast('ไม่มีสินค้าให้ export'); return; }
+
+  const rows = productsToExcelRows();
+  const ws = XLSX.utils.json_to_sheet(rows, {
+    header: ['id','name','cat','emoji','description','size','price','stock','tier1_qty','tier1_price','tier2_qty','tier2_price','tier3_qty','tier3_price']
+  });
+
+  // ตั้งความกว้าง column
+  ws['!cols'] = [
+    {wch:6}, {wch:30}, {wch:15}, {wch:6}, {wch:25},
+    {wch:14}, {wch:10}, {wch:8},
+    {wch:10}, {wch:11}, {wch:10}, {wch:11}, {wch:10}, {wch:11}
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Products');
+
+  // เพิ่ม sheet "วิธีใช้"
+  const helpRows = [
+    {คำอธิบาย:'📋 วิธีใช้ไฟล์นี้'},
+    {คำอธิบาย:''},
+    {คำอธิบาย:'1. แก้ไข price (ราคา) หรือ stock (สต๊อก) ในแต่ละบรรทัดได้เลย'},
+    {คำอธิบาย:'2. ใส่ราคาส่ง: tier1_qty=10, tier1_price=22 (ซื้อ 10+ ฿22/ชิ้น)'},
+    {คำอธิบาย:'3. มี 3 ขั้นราคาส่ง: tier1, tier2, tier3 (ขั้น 2 ต้องมาก > ขั้น 1)'},
+    {คำอธิบาย:'4. ลบสต๊อก = ปล่อยว่าง (ไม่จำกัด)'},
+    {คำอธิบาย:'5. id, size = key สำหรับ matching → ห้ามเปลี่ยน'},
+    {คำอธิบาย:'6. ถ้าจะเพิ่มขนาดใหม่ของสินค้าเดิม: copy บรรทัด ใช้ id เดิม เปลี่ยน size + price'},
+    {คำอธิบาย:'7. ถ้าจะเพิ่มสินค้าใหม่: ใช้ id ใหม่ (ไม่ซ้ำ)'},
+    {คำอธิบาย:'8. บันทึกเป็น .xlsx แล้ว Import กลับ'},
+    {คำอธิบาย:''},
+    {คำอธิบาย:'⚠️ ระบบจะ preview ก่อน import — ตรวจสอบก่อนยืนยันได้'}
+  ];
+  const helpWs = XLSX.utils.json_to_sheet(helpRows);
+  helpWs['!cols'] = [{wch:90}];
+  XLSX.utils.book_append_sheet(wb, helpWs, 'วิธีใช้');
+
+  const today = new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb, `products_${today}.xlsx`);
+  toast(`📥 Export ${rows.length} รายการ`);
+}
+
+// Download template ว่าง
+function downloadExcelTemplate() {
+  const sample = [
+    {
+      id: 999, name: 'ตัวอย่างสินค้า', cat: 'หมวดหมู่', emoji: '📦',
+      description: 'รายละเอียดสินค้า', size: 'S', price: 25, stock: 100,
+      tier1_qty: 10, tier1_price: 22,
+      tier2_qty: 50, tier2_price: 20,
+      tier3_qty: 100, tier3_price: 18
+    },
+    {
+      id: 999, name: 'ตัวอย่างสินค้า', cat: 'หมวดหมู่', emoji: '📦',
+      description: 'รายละเอียดสินค้า', size: 'M', price: 35, stock: 80,
+      tier1_qty: 10, tier1_price: 32, tier2_qty: '', tier2_price: '',
+      tier3_qty: '', tier3_price: ''
+    }
+  ];
+  const ws = XLSX.utils.json_to_sheet(sample, {
+    header: ['id','name','cat','emoji','description','size','price','stock','tier1_qty','tier1_price','tier2_qty','tier2_price','tier3_qty','tier3_price']
+  });
+  ws['!cols'] = [{wch:6},{wch:30},{wch:15},{wch:6},{wch:25},{wch:14},{wch:10},{wch:8},{wch:10},{wch:11},{wch:10},{wch:11},{wch:10},{wch:11}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Products');
+  XLSX.writeFile(wb, 'products_template.xlsx');
+  toast('📋 ดาวน์โหลด Template แล้ว');
+}
+
+// state สำหรับ import preview
+let _importParsed = null;
+
+// Handle file upload
+async function handleExcelImport(input) {
+  const file = input.files[0];
+  if (!file) return;
+
+  try {
+    const ab = await file.arrayBuffer();
+    const wb = XLSX.read(ab, { type: 'array' });
+    const wsName = wb.SheetNames.find(n => n.toLowerCase() === 'products') || wb.SheetNames[0];
+    const ws = wb.Sheets[wsName];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+    if (!rows.length) { toast('ไฟล์ว่างเปล่า', 'error'); input.value = ''; return; }
+
+    // จัด rows เป็น products (group by id)
+    const productMap = new Map();
+    const errors = [];
+    rows.forEach((r, lineIdx) => {
+      const id = parseInt(r.id);
+      if (isNaN(id)) { errors.push(`บรรทัด ${lineIdx+2}: id ไม่ถูกต้อง`); return; }
+      const sizeName = String(r.size || '').trim();
+      const price = parseFloat(r.price);
+
+      if (!sizeName) { errors.push(`บรรทัด ${lineIdx+2}: size ว่าง`); return; }
+      if (isNaN(price)) { errors.push(`บรรทัด ${lineIdx+2}: price ไม่ใช่ตัวเลข`); return; }
+
+      if (!productMap.has(id)) {
+        productMap.set(id, {
+          id, name: String(r.name||'').trim(), cat: String(r.cat||'').trim(),
+          emoji: String(r.emoji||'📦').trim() || '📦',
+          desc: String(r.description||'').trim(),
+          sizes: []
+        });
+      }
+      const p = productMap.get(id);
+
+      // build tiers
+      const tiers = [];
+      for (let t = 1; t <= 3; t++) {
+        const q = parseInt(r[`tier${t}_qty`]);
+        const tp = parseFloat(r[`tier${t}_price`]);
+        if (!isNaN(q) && !isNaN(tp) && q >= 2) tiers.push({ minQty: q, price: tp });
+      }
+      tiers.sort((a,b) => a.minQty - b.minQty);
+
+      const sz = { n: sizeName, p: price };
+      const stockRaw = String(r.stock || '').trim();
+      if (stockRaw !== '') {
+        const st = parseInt(stockRaw);
+        if (!isNaN(st)) sz.stock = Math.max(0, st);
+      }
+      if (tiers.length) sz.tiers = tiers;
+
+      p.sizes.push(sz);
+    });
+
+    // คำนวณ diff (ใหม่/แก้ไข/ไม่เปลี่ยน)
+    const incoming = [...productMap.values()];
+    const diff = { new: [], modified: [], unchanged: [], missing: [] };
+    const incomingIds = new Set(incoming.map(p => p.id));
+
+    for (const np of incoming) {
+      const old = products.find(p => p.id === np.id);
+      if (!old) {
+        diff.new.push(np);
+      } else {
+        // เช็คว่ามีอะไรเปลี่ยน?
+        const oldStr = JSON.stringify({sizes: old.sizes, name: old.name, cat: old.cat});
+        const newStr = JSON.stringify({sizes: np.sizes, name: np.name, cat: np.cat});
+        if (oldStr === newStr) diff.unchanged.push(np);
+        else diff.modified.push({ old, new: np });
+      }
+    }
+
+    // ของเก่าที่ไม่อยู่ในไฟล์ → "missing" (จะไม่ลบ แต่แจ้งให้รู้)
+    for (const op of products) {
+      if (!incomingIds.has(op.id)) diff.missing.push(op);
+    }
+
+    _importParsed = { incoming, diff, errors };
+    showImportPreview();
+  } catch (e) {
+    toast('อ่านไฟล์ไม่ได้: ' + e.message, 'error');
+  } finally {
+    input.value = ''; // reset เพื่อให้เลือกไฟล์เดิมซ้ำได้
+  }
+}
+
+function showImportPreview() {
+  if (!_importParsed) return;
+  const { incoming, diff, errors } = _importParsed;
+
+  const sum = `📥 ${incoming.length} สินค้า • ` +
+              `🆕 ${diff.new.length} ใหม่ • ` +
+              `✏️ ${diff.modified.length} แก้ไข • ` +
+              `✓ ${diff.unchanged.length} ไม่เปลี่ยน` +
+              (diff.missing.length ? ` • ⚠️ ${diff.missing.length} ไม่อยู่ในไฟล์` : '');
+  document.getElementById('excelSummary').textContent = sum;
+
+  let html = '';
+
+  if (errors.length) {
+    html += `<div style="background:#ffebee;border-left:4px solid #c62828;padding:12px;border-radius:8px;margin-bottom:14px;font-size:13px;color:#b71c1c;">
+      <b>⚠️ มี ${errors.length} ข้อผิดพลาด — ระบบจะข้ามบรรทัดเหล่านี้:</b>
+      <ul style="margin:6px 0 0 18px;padding:0;line-height:1.6;">${errors.slice(0,10).map(e => `<li>${e}</li>`).join('')}</ul>
+      ${errors.length > 10 ? `<div style="margin-top:6px;">...และอีก ${errors.length - 10} ข้อ</div>` : ''}
+    </div>`;
+  }
+
+  // 🆕 Modified
+  if (diff.modified.length) {
+    html += `<div style="margin-bottom:14px;">
+      <div style="font-weight:700;color:#FF9800;margin-bottom:8px;">✏️ จะแก้ไข ${diff.modified.length} สินค้า</div>`;
+    diff.modified.slice(0, 30).forEach(({old, new: np}) => {
+      const changes = compareProductChanges(old, np);
+      html += `<div style="background:#fff3e0;border-left:3px solid #FF9800;padding:10px 12px;border-radius:6px;margin-bottom:6px;font-size:12px;">
+        <b>#${np.id} ${escapeHtml(np.name)}</b>
+        <div style="margin-top:4px;color:#666;line-height:1.5;">${changes.join('<br>')}</div>
+      </div>`;
+    });
+    if (diff.modified.length > 30) html += `<div style="font-size:11px;color:#666;text-align:center;">และอีก ${diff.modified.length - 30} รายการ</div>`;
+    html += `</div>`;
+  }
+
+  // 🆕 New
+  if (diff.new.length) {
+    html += `<div style="margin-bottom:14px;">
+      <div style="font-weight:700;color:#27AE60;margin-bottom:8px;">🆕 จะเพิ่มสินค้าใหม่ ${diff.new.length} รายการ</div>`;
+    diff.new.slice(0, 20).forEach(np => {
+      html += `<div style="background:#e8f5e9;border-left:3px solid #27AE60;padding:10px 12px;border-radius:6px;margin-bottom:6px;font-size:12px;">
+        <b>#${np.id} ${escapeHtml(np.name)}</b> — ${escapeHtml(np.cat)} • ${np.sizes.length} ขนาด
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
+  // ⚠️ Missing
+  if (diff.missing.length) {
+    html += `<div style="margin-bottom:14px;">
+      <div style="font-weight:700;color:#999;margin-bottom:8px;">⚠️ สินค้าเดิม ${diff.missing.length} รายการ ที่ไม่อยู่ในไฟล์ Excel</div>
+      <div style="background:#f5f5f5;padding:10px 12px;border-radius:6px;font-size:12px;color:#666;">
+        ระบบ<b>จะไม่ลบ</b> สินค้าเหล่านี้ ถ้าอยากลบ ให้ลบในระบบโดยตรง
+      </div>
+    </div>`;
+  }
+
+  if (!diff.modified.length && !diff.new.length) {
+    html += `<div style="text-align:center;padding:30px;color:#888;">✓ ไม่มีอะไรต้องเปลี่ยน</div>`;
+  }
+
+  document.getElementById('excelPreviewContent').innerHTML = html;
+  const btn = document.getElementById('excelConfirmBtn');
+  btn.disabled = (!diff.modified.length && !diff.new.length);
+  btn.style.opacity = btn.disabled ? '0.5' : '1';
+  btn.style.cursor = btn.disabled ? 'not-allowed' : 'pointer';
+  document.getElementById('excelOv').style.display = 'flex';
+}
+
+function escapeHtml(s) {
+  return String(s||'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+function compareProductChanges(oldP, newP) {
+  const changes = [];
+  if (oldP.name !== newP.name) changes.push(`ชื่อ: ${escapeHtml(oldP.name)} → <b>${escapeHtml(newP.name)}</b>`);
+  if (oldP.cat !== newP.cat) changes.push(`หมวดหมู่: ${escapeHtml(oldP.cat)} → <b>${escapeHtml(newP.cat)}</b>`);
+
+  // เปรียบเทียบ size by size
+  const oldSizes = oldP.sizes || [];
+  const newSizes = newP.sizes || [];
+  const oldByName = new Map(oldSizes.map(s => [s.n, s]));
+  const newByName = new Map(newSizes.map(s => [s.n, s]));
+
+  for (const [name, ns] of newByName) {
+    const os = oldByName.get(name);
+    if (!os) {
+      changes.push(`🆕 ขนาดใหม่ "${escapeHtml(name)}" — ฿${ns.p}`);
+      continue;
+    }
+    if (os.p !== ns.p) changes.push(`💰 ${escapeHtml(name)} ราคา: ฿${os.p} → <b>฿${ns.p}</b>`);
+    const oldStock = os.stock ?? '∞';
+    const newStock = ns.stock ?? '∞';
+    if (String(oldStock) !== String(newStock)) {
+      changes.push(`📦 ${escapeHtml(name)} สต๊อก: ${oldStock} → <b>${newStock}</b>`);
+    }
+    const oldTiers = JSON.stringify(os.tiers || []);
+    const newTiers = JSON.stringify(ns.tiers || []);
+    if (oldTiers !== newTiers) {
+      changes.push(`📊 ${escapeHtml(name)} ราคาส่ง: <b>${(ns.tiers||[]).map(t=>`${t.minQty}+ ฿${t.price}`).join(', ')||'(ไม่มี)'}</b>`);
+    }
+  }
+  for (const [name] of oldByName) {
+    if (!newByName.has(name)) changes.push(`🗑️ ลบขนาด "${escapeHtml(name)}"`);
+  }
+
+  return changes.length ? changes : ['(ไม่พบการเปลี่ยนแปลงในรายละเอียด)'];
+}
+
+function closeExcelPreview() {
+  document.getElementById('excelOv').style.display = 'none';
+  _importParsed = null;
+}
+
+async function confirmExcelImport() {
+  if (!_importParsed) return;
+  const { incoming } = _importParsed;
+
+  const sb = getSB();
+  if (!sb) { toast('ไม่มี Supabase connection', 'error'); return; }
+
+  const btn = document.getElementById('excelConfirmBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ กำลังบันทึก...';
+
+  try {
+    // upsert ทีละ batch (Supabase ไม่ชอบ payload ใหญ่)
+    const batchSize = 50;
+    for (let i = 0; i < incoming.length; i += batchSize) {
+      const batch = incoming.slice(i, i + batchSize);
+      const rows = batch.map(p => ({
+        ...toRow(p),
+        // เก็บ img เก่าไว้ (Excel ไม่มี image)
+        img: products.find(op => op.id === p.id)?.img || ''
+      }));
+      const { error } = await sb.from('products').upsert(rows, { onConflict: 'id' });
+      if (error) throw error;
+    }
+
+    // อัปเดต products array ใน memory
+    for (const np of incoming) {
+      const idx = products.findIndex(p => p.id === np.id);
+      const merged = {
+        id: np.id, name: np.name, cat: np.cat, emoji: np.emoji||'📦',
+        desc: np.desc||'', sizes: np.sizes,
+        img: products[idx]?.img || '',
+        isNew: products[idx]?.isNew ?? true,
+        ts: products[idx]?.ts || Date.now()
+      };
+      if (idx >= 0) products[idx] = merged;
+      else products.unshift(merged);
+
+      // sync cats
+      if (np.cat && !cats.includes(np.cat)) cats.push(np.cat);
+    }
+
+    try { localStorage.setItem('ms_products', JSON.stringify(products)); } catch(e) {}
+    localStorage.setItem('ms_cats', JSON.stringify(cats));
+
+    closeExcelPreview();
+    renderGrid();
+    renderPMList();
+    toast(`✅ Import สำเร็จ ${incoming.length} สินค้า`);
+  } catch (e) {
+    toast('Import ไม่สำเร็จ: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✅ ยืนยัน Import';
+  }
 }
 
 // ═══════════════════════════════════════════
