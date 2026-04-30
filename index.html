@@ -321,7 +321,7 @@ textarea.fi{resize:none;height:70px}
 <header>
   <div class="hdr">
     <div class="logo-wrap">
-      <div class="logo-circle" id="logoCircle"><span id="logoEm">🏪</span><img id="logoImg" src="file:///C:/Users/dealInTrend/Desktop/logo%20%E0%B8%A3%E0%B9%89%E0%B8%B2%E0%B8%99%20%E0%B8%97%E0%B8%A3%E0%B8%87%E0%B8%81%E0%B8%A5%E0%B8%A1.png" style="display:none" alt=""></div>
+      <div class="logo-circle" id="logoCircle"><span id="logoEm">🏪</span><img id="logoImg" src="" style="display:none" alt=""></div>
       <div><div class="shop-name" id="shopNameEl">มนชิน ซัพพลาย</div><div class="shop-tagline">สั่งง่าย ส่งไว ใจดี</div></div>
     </div>
     <div class="hdr-actions">
@@ -432,6 +432,18 @@ textarea.fi{resize:none;height:70px}
       </div>
       <button class="big-btn" id="sendBtn" onclick="sendOrder()">📲 ยืนยันสั่งซื้อ</button>
     </div>
+  </div>
+</div>
+
+<!-- ── CART SIZE CHANGE MODAL ── -->
+<div id="csOv" onclick="if(event.target===this)closeCartSize()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100;align-items:center;justify-content:center;padding:20px;">
+  <div style="background:#fff;border-radius:18px;max-width:420px;width:100%;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <div style="font-family:'Prompt',sans-serif;font-size:18px;font-weight:700;color:#2C3E50;">📐 เปลี่ยนขนาด</div>
+      <button onclick="closeCartSize()" style="background:#f0f0f0;border:none;width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:16px;">×</button>
+    </div>
+    <div style="font-size:13px;color:#666;margin-bottom:14px;" id="csProductName"></div>
+    <div id="csOptions" style="display:flex;flex-direction:column;gap:8px;"></div>
   </div>
 </div>
 
@@ -572,11 +584,15 @@ textarea.fi{resize:none;height:70px}
           <input class="f-inp" id="fEmoji" placeholder="📦" maxlength="4">
         </div>
         <div class="form-full">
-          <label class="f-lbl">ขนาด / ตัวเลือก และราคา *</label>
+          <label class="f-lbl">ขนาด / ตัวเลือก ราคา และสต๊อก *</label>
           <div class="sizes-builder" id="szBuilder">
-            <div class="sz-row"><input placeholder="ขนาด เช่น S/M/L"><input placeholder="ราคา (฿)" type="number" min="0"><button class="sz-rm" onclick="rmSz(this)">✕</button></div>
+            <!-- จะถูก populate ตอน initAdmin -->
           </div>
-          <button class="addsz-btn" onclick="addSzRow()">+ เพิ่มขนาด</button>
+          <button class="addsz-btn" onclick="addSzRow('szBuilder')">+ เพิ่มขนาด</button>
+          <div style="font-size:11px;color:#888;margin-top:6px;line-height:1.4;">
+            💡 <b>สต๊อก:</b> เว้นว่าง = ไม่จำกัด • ใส่ 0 = หมด<br>
+            📊 <b>ราคาส่ง:</b> กดด้านล่างแต่ละขนาด เพื่อตั้งส่วนลดยกแพ็ค/ยกลัง
+          </div>
         </div>
         <div class="form-full">
           <label class="chk-row"><input type="checkbox" id="fIsNew" checked> ติด badge NEW</label>
@@ -751,7 +767,7 @@ let products  = [];
 let cats      = ['ทั้งหมด','สินค้าใหม่'];
 let cart      = [];
 let activeCat = 'ทั้งหมด';
-let curProd   = null, curSize = null, cartOT = 'delivery';
+let curProd   = null, curSize = null, curSizeIdx = 0, cartOT = 'delivery';
 let mQty      = 1;
 let pinBuf    = '';
 let editingId = null;
@@ -980,18 +996,92 @@ function rmBulk(i) { bulkQueue.splice(i,1); renderBulkThumbs(); }
 // ═══════════════════════════════════════════
 //  SIZE ROWS
 // ═══════════════════════════════════════════
-function addSzRow(to='szBuilder') {
-  const el = document.createElement('div'); el.className='sz-row';
-  el.innerHTML=`<input placeholder="ขนาด"><input placeholder="ราคา (฿)" type="number" min="0"><button class="sz-rm" onclick="rmSz(this)">✕</button>`;
+function addSzRow(to='szBuilder', existing=null) {
+  const el = document.createElement('div');
+  el.className='sz-row-wrap';
+  el.style.cssText = 'background:#f8f9fa;padding:10px;border-radius:10px;margin-bottom:8px;border:1.5px solid #e0e0e0;';
+  const stock = existing?.stock ?? '';
+  const tiers = existing?.tiers || [];
+
+  el.innerHTML = `
+    <div class="sz-row" style="margin-bottom:6px;">
+      <input class="sz-name" placeholder="ขนาด เช่น S/M/L" value="${existing?.n||''}">
+      <input class="sz-price" placeholder="ราคาปลีก (฿)" type="number" min="0" value="${existing?.p||''}">
+      <input class="sz-stock" placeholder="สต๊อก" type="number" min="0" value="${stock}" style="max-width:80px;" title="เว้นว่าง = ไม่จำกัด">
+      <button class="sz-rm" onclick="rmSz(this)">✕</button>
+    </div>
+    <div style="margin-top:6px;">
+      <button type="button" class="tier-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block';this.textContent=this.nextElementSibling.style.display==='block'?'▲ ซ่อนราคาส่ง':'▼ ราคาส่ง/ยกลัง (ตามจำนวน)'" style="background:none;border:none;color:#3498DB;font-size:11px;cursor:pointer;font-family:'Sarabun',sans-serif;font-weight:600;padding:0;">${tiers.length?'▲ ซ่อนราคาส่ง':'▼ ราคาส่ง/ยกลัง (ตามจำนวน)'}</button>
+      <div class="tier-rows" style="display:${tiers.length?'block':'none'};margin-top:6px;padding-left:10px;border-left:2px solid #3498DB;">
+        ${tiers.map(t => tierRowHtml(t)).join('')}
+        <button type="button" onclick="addTierRow(this)" style="background:#fff;border:1.5px dashed #3498DB;color:#3498DB;padding:5px 10px;border-radius:6px;font-size:11px;cursor:pointer;font-family:'Sarabun',sans-serif;font-weight:600;margin-top:4px;">+ เพิ่มขั้นราคา</button>
+      </div>
+    </div>
+  `;
   document.getElementById(to).appendChild(el);
 }
+
+function tierRowHtml(t) {
+  return `<div class="tier-row" style="display:flex;gap:6px;align-items:center;margin-bottom:4px;">
+    <span style="font-size:11px;color:#666;flex-shrink:0;">ซื้อ</span>
+    <input class="tier-min" placeholder="10" type="number" min="2" value="${t?.minQty||''}" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;font-family:'Sarabun',sans-serif;outline:none;width:60px;">
+    <span style="font-size:11px;color:#666;flex-shrink:0;">+ ชิ้น = ฿</span>
+    <input class="tier-price" placeholder="22" type="number" min="0" step="0.01" value="${t?.price||''}" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;font-family:'Sarabun',sans-serif;outline:none;width:80px;">
+    <span style="font-size:11px;color:#666;">/ชิ้น</span>
+    <button type="button" onclick="this.parentElement.remove()" style="background:none;border:none;color:#E74C3C;cursor:pointer;font-size:14px;padding:0 4px;">✕</button>
+  </div>`;
+}
+
+function addTierRow(btn) {
+  const div = document.createElement('div');
+  div.innerHTML = tierRowHtml({});
+  btn.parentElement.insertBefore(div.firstChild, btn);
+}
+
 function addESzRow() { addSzRow('eSzBuilder'); }
-function rmSz(btn) { btn.parentElement.remove(); }
+function rmSz(btn) {
+  // ลบ wrapper (.sz-row-wrap) ทั้งก้อน ไม่ใช่แค่ .sz-row
+  const wrap = btn.closest('.sz-row-wrap');
+  if (wrap) wrap.remove(); else btn.parentElement.remove();
+}
+
 function getSzRows(id) {
-  const rows=[]; document.querySelectorAll(`#${id} .sz-row`).forEach(r=>{
-    const ins=r.querySelectorAll('input'); const n=ins[0].value.trim(),p=parseFloat(ins[1].value);
-    if(n&&!isNaN(p)) rows.push({n,p});
-  }); return rows;
+  const rows = [];
+  document.querySelectorAll(`#${id} .sz-row-wrap`).forEach(wrap => {
+    const name  = wrap.querySelector('.sz-name')?.value.trim();
+    const price = parseFloat(wrap.querySelector('.sz-price')?.value);
+    if (!name || isNaN(price)) return;
+
+    const stockRaw = wrap.querySelector('.sz-stock')?.value.trim();
+    const sizeObj = { n: name, p: price };
+    if (stockRaw !== '') sizeObj.stock = parseInt(stockRaw) || 0;
+
+    // tiers
+    const tiers = [];
+    wrap.querySelectorAll('.tier-row').forEach(tr => {
+      const minQty = parseInt(tr.querySelector('.tier-min')?.value);
+      const tprice = parseFloat(tr.querySelector('.tier-price')?.value);
+      if (!isNaN(minQty) && !isNaN(tprice) && minQty >= 2) {
+        tiers.push({ minQty, price: tprice });
+      }
+    });
+    if (tiers.length) {
+      sizeObj.tiers = tiers.sort((a,b) => a.minQty - b.minQty);
+    }
+    rows.push(sizeObj);
+  });
+
+  // fallback: รองรับ format เก่าที่ใช้ .sz-row ตรงๆ ไม่มี wrapper
+  if (!rows.length) {
+    document.querySelectorAll(`#${id} .sz-row`).forEach(r => {
+      if (r.closest('.sz-row-wrap')) return; // ข้ามถ้ามี wrapper แล้ว
+      const ins = r.querySelectorAll('input');
+      const n = ins[0]?.value.trim();
+      const p = parseFloat(ins[1]?.value);
+      if (n && !isNaN(p)) rows.push({ n, p });
+    });
+  }
+  return rows;
 }
 
 // ═══════════════════════════════════════════
@@ -1075,7 +1165,9 @@ async function saveProduct(isEdit) {
   bulkQueue=[]; renderBulkThumbs();
   ['fName','fDesc','fEmoji'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('fIsNew').checked=true;
-  document.querySelectorAll('#szBuilder .sz-row').forEach((r,i)=>{if(i>0)r.remove();else r.querySelectorAll('input').forEach(x=>x.value='');});
+  // reset size builder → 1 แถวว่าง
+  document.getElementById('szBuilder').innerHTML='';
+  addSzRow('szBuilder');
   await saveOne(newP); renderGrid(); renderPMList();
   toast('บันทึกสินค้าแล้ว ✓');
 }
@@ -1110,15 +1202,35 @@ function renderGrid(list) {
   const g = document.getElementById('prodGrid');
   if (!list.length) { g.innerHTML=`<div class="empty-grid"><div class="ei">🔍</div><p>ไม่พบสินค้า</p></div>`; return; }
   const minP = p => Math.min(...p.sizes.map(s=>s.p));
+  const totalStock = p => p.sizes.reduce((s, sz) => {
+    if (sz.stock === undefined || sz.stock === null) return null; // ไม่มี stock tracking
+    return s === null ? null : s + sz.stock;
+  }, 0);
+  const hasWholesale = p => p.sizes.some(s => s.tiers && s.tiers.length);
+
   g.innerHTML = list.map(p => {
     const imgH = p.img?`<img src="${p.img}" alt="${p.name}">`:`<span>${p.emoji||'📦'}</span>`;
+    const stock = totalStock(p);
+    let stockBadge = '';
+    let addBtnDisabled = false;
+    if (stock !== null) {
+      if (stock === 0) {
+        stockBadge = `<div style="position:absolute;top:8px;right:8px;background:#e53935;color:#fff;font-size:10px;font-weight:700;padding:3px 8px;border-radius:8px;">หมด</div>`;
+        addBtnDisabled = true;
+      } else if (stock <= 10) {
+        stockBadge = `<div style="position:absolute;top:8px;right:8px;background:#FFA726;color:#fff;font-size:10px;font-weight:700;padding:3px 8px;border-radius:8px;">เหลือ ${stock}</div>`;
+      }
+    }
+    const wholesaleBadge = hasWholesale(p)
+      ? `<span style="display:inline-block;background:#27AE60;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:6px;margin-left:4px;">มีราคาส่ง</span>`
+      : '';
     return `<div class="pcard" onclick="openPD(${p.id})">
-      <div class="pcard-img">${imgH}${p.isNew?'<div class="bnew">NEW</div>':''}</div>
+      <div class="pcard-img" style="position:relative;">${imgH}${p.isNew?'<div class="bnew">NEW</div>':''}${stockBadge}</div>
       <div class="pcard-body">
-        <div class="pcard-cat">${p.cat}</div>
+        <div class="pcard-cat">${p.cat}${wholesaleBadge}</div>
         <div class="pcard-name">${p.name}</div>
         <div class="pcard-price">฿${minP(p).toLocaleString()}${p.sizes.length>1?`<span> ขึ้นไป</span>`:''}</div>
-        <button class="pcard-add" onclick="event.stopPropagation();quickAdd(${p.id})">+ ใส่ตะกร้า</button>
+        <button class="pcard-add" ${addBtnDisabled?'disabled style="opacity:0.5;cursor:not-allowed;"':''} onclick="event.stopPropagation();${addBtnDisabled?'':'quickAdd('+p.id+')'}">${addBtnDisabled?'❌ หมด':(p.sizes.length>1?'🔍 เลือกขนาด':'+ ใส่ตะกร้า')}</button>
       </div>
     </div>`;
   }).join('');
@@ -1136,25 +1248,89 @@ function openPD(id) {
   document.getElementById('pdCat').textContent=curProd.cat;
   document.getElementById('pdName').textContent=curProd.name;
   document.getElementById('pdDesc').textContent=curProd.desc||'';
-  document.getElementById('pdSizes').innerHTML=curProd.sizes.map((s,i)=>
-    `<button class="sz${i===0?' active':''}" onclick="selSz(this,'${s.n}',${s.p})">${s.n}</button>`
-  ).join('');
+  document.getElementById('pdSizes').innerHTML=curProd.sizes.map((s,i)=>{
+    const stockTxt = (s.stock !== undefined && s.stock !== null)
+      ? (s.stock > 0 ? `<small style="display:block;font-size:9px;opacity:0.7;margin-top:2px;">เหลือ ${s.stock}</small>`
+                     : `<small style="display:block;font-size:9px;color:#e53935;margin-top:2px;">หมด</small>`)
+      : '';
+    const disabled = (s.stock === 0) ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : '';
+    return `<button class="sz${i===0?' active':''}" ${disabled} onclick="selSz(this,${i})">${s.n}${stockTxt}</button>`;
+  }).join('');
   curSize=curProd.sizes[0];
-  document.getElementById('pdPrice').textContent=`฿${curSize.p.toLocaleString()}`;
+  curSizeIdx=0;
   mQty = 1;
   document.getElementById('qnum').textContent = mQty;
+  updatePriceDisplay();
   document.getElementById('pdOv').classList.add('show');
 }
 function closePD(){document.getElementById('pdOv').classList.remove('show')}
-function selSz(btn,n,p){
+function selSz(btn,idx){
+  if (btn.disabled) return;
   document.querySelectorAll('#pdSizes .sz').forEach(b=>b.classList.remove('active'));
-  btn.classList.add('active'); curSize={n,p};
-  document.getElementById('pdPrice').textContent=`฿${p.toLocaleString()}`;
+  btn.classList.add('active');
+  curSizeIdx = idx;
+  curSize = curProd.sizes[idx];
+  // ถ้า qty เกิน stock → ลดลงมา
+  if (curSize.stock !== undefined && curSize.stock !== null && mQty > curSize.stock) {
+    mQty = Math.max(1, curSize.stock);
+    document.getElementById('qnum').textContent = mQty;
+  }
+  updatePriceDisplay();
 }
-function chgQ(d){ mQty=Math.max(1,mQty+d); document.getElementById('qnum').textContent=mQty; }
+
+// คำนวณราคาตามจำนวน (tier pricing)
+function getPriceForQty(size, qty) {
+  if (!size.tiers || !size.tiers.length) return size.p;
+  // หา tier ที่ qty >= minQty สูงสุด
+  const sorted = [...size.tiers].sort((a,b) => b.minQty - a.minQty);
+  for (const t of sorted) {
+    if (qty >= t.minQty) return t.price;
+  }
+  return size.p;
+}
+
+function updatePriceDisplay() {
+  if (!curSize) return;
+  const unitPrice = getPriceForQty(curSize, mQty);
+  const total = unitPrice * mQty;
+  const isTier = curSize.tiers && curSize.tiers.length && unitPrice < curSize.p;
+  const priceEl = document.getElementById('pdPrice');
+
+  let html = `฿${total.toLocaleString()}`;
+  if (mQty > 1) {
+    html += ` <span style="font-size:13px;opacity:0.7;font-weight:500;">(฿${unitPrice.toLocaleString()}/ชิ้น)</span>`;
+  }
+  if (isTier) {
+    const saved = (curSize.p - unitPrice) * mQty;
+    html += ` <div style="font-size:11px;color:#27AE60;font-weight:700;margin-top:4px;">💰 ประหยัด ฿${saved.toLocaleString()} (ราคาส่ง)</div>`;
+  }
+  // แสดงตารางราคาส่ง (ถ้ามี)
+  if (curSize.tiers && curSize.tiers.length) {
+    html += `<div style="font-size:10px;color:#666;font-weight:500;margin-top:6px;line-height:1.4;">📊 ซื้อ ${curSize.tiers.map(t => `${t.minQty}+ ฿${t.price}`).join(' • ')}</div>`;
+  }
+  priceEl.innerHTML = html;
+}
+
+function chgQ(d){
+  const newQty = Math.max(1, mQty + d);
+  // ห้ามเกิน stock
+  if (curSize?.stock !== undefined && curSize.stock !== null && newQty > curSize.stock) {
+    toast(`มีสินค้าคงเหลือ ${curSize.stock} ชิ้น`);
+    return;
+  }
+  mQty = newQty;
+  document.getElementById('qnum').textContent = mQty;
+  updatePriceDisplay();
+}
 function addCart(){
   if(!curProd||!curSize) return;
-  // หาสินค้าเดิมในตะกร้าที่ name + size ตรงกัน → เพิ่ม qty
+  // ตรวจ stock ก่อน
+  if (curSize.stock !== undefined && curSize.stock !== null) {
+    const inCart = cart.find(c => c.prod.id === curProd.id && c.size.n === curSize.n)?.qty || 0;
+    if (inCart + mQty > curSize.stock) {
+      toast(`สต๊อกเหลือ ${curSize.stock} (มีในตะกร้า ${inCart})`); return;
+    }
+  }
   const existing = cart.find(c => c.prod.id === curProd.id && c.size.n === curSize.n);
   if (existing) {
     existing.qty += mQty;
@@ -1164,9 +1340,24 @@ function addCart(){
   updCart(); closePD(); toast('เพิ่มลงตะกร้าแล้ว ✓');
 }
 function quickAdd(id){
-  const p=products.find(x=>x.id===id); if(!p) return;
+  const p = products.find(x => x.id === id);
+  if(!p) return;
+
+  // ✨ ถ้ามีหลายขนาด → เปิด modal ให้ลูกค้าเลือกขนาดเอง
+  if (p.sizes.length > 1) {
+    openPD(id);
+    return;
+  }
+
+  // มีขนาดเดียว → ใส่ตะกร้าทันที
   const sz = p.sizes[0];
-  // หาสินค้าเดิมในตะกร้าที่ name + size ตรงกัน → เพิ่ม qty
+  // ตรวจ stock
+  if (sz.stock !== undefined && sz.stock !== null) {
+    const inCart = cart.find(c => c.prod.id === p.id && c.size.n === sz.n)?.qty || 0;
+    if (inCart + 1 > sz.stock) {
+      toast(`สต๊อกเหลือ ${sz.stock} (มีในตะกร้า ${inCart})`); return;
+    }
+  }
   const existing = cart.find(c => c.prod.id === p.id && c.size.n === sz.n);
   if (existing) {
     existing.qty += 1;
@@ -1180,7 +1371,6 @@ function quickAdd(id){
 //  CART
 // ═══════════════════════════════════════════
 function openCart(){
-  // auto-fill จากข้อมูลที่เคยกรอก
   const savedName = localStorage.getItem('ms_customer_name');
   const savedPhone = localStorage.getItem('ms_customer_phone');
   const cn = document.getElementById('cName');
@@ -1197,28 +1387,132 @@ function renderCart(){
   if(!cart.length){el.innerHTML='<div class="cart-empty">🛒<br>ยังไม่มีสินค้า</div>';}
   else el.innerHTML=cart.map((item,i)=>{
     const imgH=item.prod.img?`<img src="${item.prod.img}" alt="">`:item.prod.emoji||'📦';
+    const unitPrice = getPriceForQty(item.size, item.qty);
+    const lineTotal = unitPrice * item.qty;
+    const isWholesale = item.size.tiers?.length && unitPrice < item.size.p;
+    const wholesaleBadge = isWholesale
+      ? `<span style="display:inline-block;background:#27AE60;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;margin-left:4px;">ส่ง</span>`
+      : '';
+    const unitTxt = item.qty > 1 ? `<small style="opacity:0.7;font-size:10px;">฿${unitPrice}/ชิ้น</small>` : '';
+    // ถ้ามีหลายขนาด → แสดงเป็นปุ่มกดเปลี่ยน
+    const sizeDisplay = item.prod.sizes.length > 1
+      ? `<button onclick="openCartSizeChange(${i})" style="background:#e3f2fd;border:1px solid #90caf9;color:#1565c0;padding:3px 10px;border-radius:14px;font-size:11px;font-family:'Sarabun',sans-serif;font-weight:600;cursor:pointer;margin-right:4px;">📐 ${item.size.n} ▼</button>`
+      : `<span>${item.size.n}</span>`;
     return `<div class="ci">
       <div class="ci-img">${imgH}</div>
       <div class="ci-info">
-        <div class="ci-name">${item.prod.name}</div>
-        <div class="ci-meta">${item.size.n}</div>
+        <div class="ci-name">${item.prod.name}${wholesaleBadge}</div>
+        <div class="ci-meta">${sizeDisplay} ${unitTxt}</div>
         <div class="ci-qty-row">
           <button class="ci-qbtn" onclick="chgCartQty(${i},-1)">−</button>
           <span class="ci-qty">×${item.qty}</span>
           <button class="ci-qbtn" onclick="chgCartQty(${i},1)">+</button>
-          <span class="ci-price">฿${(item.size.p*item.qty).toLocaleString()}</span>
+          <span class="ci-price">฿${lineTotal.toLocaleString()}</span>
         </div>
       </div>
       <button class="ci-rm" onclick="rmCI(${i})">🗑️</button>
     </div>`;
   }).join('');
-  const tot=cart.reduce((s,i)=>s+i.size.p*i.qty,0);
+  const tot = cart.reduce((s,i) => s + getPriceForQty(i.size, i.qty) * i.qty, 0);
   document.getElementById('cartTotal').textContent=`฿${tot.toLocaleString()}`;
 }
 function rmCI(i){ cart.splice(i,1); updCart(); renderCart(); }
+
+// ─── เปลี่ยนขนาดสินค้าในตะกร้า ───
+function openCartSizeChange(idx) {
+  const item = cart[idx];
+  if (!item || !item.prod.sizes || item.prod.sizes.length <= 1) return;
+
+  document.getElementById('csProductName').textContent = item.prod.name;
+
+  const optsHtml = item.prod.sizes.map(s => {
+    const isCurrent = s.n === item.size.n;
+    const stockTxt = (s.stock !== undefined && s.stock !== null)
+      ? (s.stock > 0 ? `<small style="display:block;font-size:10px;opacity:0.7;margin-top:2px;">เหลือ ${s.stock}</small>`
+                     : `<small style="display:block;font-size:10px;color:#e53935;margin-top:2px;">หมด</small>`)
+      : '';
+    const disabled = (s.stock === 0);
+    const tierBadge = s.tiers?.length
+      ? `<span style="display:inline-block;background:#27AE60;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;margin-left:6px;">มีราคาส่ง</span>`
+      : '';
+    const escapedName = String(s.n).replace(/'/g, "\\'");
+    return `<button
+      ${disabled?'disabled':''}
+      onclick="${disabled?'':`changeCartSize(${idx},'${escapedName}')`}"
+      style="
+        background:${isCurrent?'#C0392B':(disabled?'#f0f0f0':'#fff')};
+        color:${isCurrent?'#fff':(disabled?'#aaa':'#2C3E50')};
+        border:2px solid ${isCurrent?'#C0392B':'#e0e0e0'};
+        padding:14px 16px;
+        border-radius:12px;
+        text-align:left;
+        cursor:${disabled?'not-allowed':'pointer'};
+        font-family:'Sarabun',sans-serif;
+        opacity:${disabled?'0.5':'1'};
+        transition:.15s;
+      ">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div style="font-weight:700;font-size:15px;">${s.n}${tierBadge}${isCurrent?' ✓':''}</div>
+        <div style="font-weight:800;font-size:16px;color:${isCurrent?'#fff':'#C0392B'};">฿${s.p.toLocaleString()}</div>
+      </div>
+      ${stockTxt}
+    </button>`;
+  }).join('');
+
+  document.getElementById('csOptions').innerHTML = optsHtml;
+  const ov = document.getElementById('csOv');
+  ov.style.display = 'flex';
+}
+
+function closeCartSize() {
+  document.getElementById('csOv').style.display = 'none';
+}
+
+function changeCartSize(idx, newSizeName) {
+  const item = cart[idx];
+  if (!item) { closeCartSize(); return; }
+
+  const newSize = item.prod.sizes.find(s => s.n === newSizeName);
+  if (!newSize) { closeCartSize(); return; }
+
+  // ถ้ามีของขนาดใหม่อยู่ในตะกร้าแล้ว → รวม qty
+  const existingIdx = cart.findIndex((c, i) =>
+    i !== idx && c.prod.id === item.prod.id && c.size.n === newSize.n
+  );
+
+  if (existingIdx >= 0) {
+    // ตรวจ stock
+    if (newSize.stock !== undefined && newSize.stock !== null) {
+      if (cart[existingIdx].qty + item.qty > newSize.stock) {
+        toast(`สต๊อก ${newSize.n} เหลือ ${newSize.stock}`); return;
+      }
+    }
+    cart[existingIdx].qty += item.qty;
+    cart.splice(idx, 1);
+  } else {
+    // เปลี่ยน size ตรงๆ
+    if (newSize.stock !== undefined && newSize.stock !== null && item.qty > newSize.stock) {
+      // ลด qty ลงให้พอดี stock
+      item.qty = Math.max(1, newSize.stock);
+      toast(`สต๊อก ${newSize.n} เหลือ ${newSize.stock} — ปรับจำนวนแล้ว`);
+    }
+    item.size = newSize;
+  }
+
+  closeCartSize();
+  updCart();
+  renderCart();
+}
+
 function chgCartQty(i, d) {
   if (!cart[i]) return;
-  cart[i].qty = Math.max(1, cart[i].qty + d);
+  const newQty = Math.max(1, cart[i].qty + d);
+  // ตรวจ stock
+  const sz = cart[i].size;
+  if (sz.stock !== undefined && sz.stock !== null && newQty > sz.stock) {
+    toast(`สต๊อกเหลือ ${sz.stock}`); return;
+  }
+  cart[i].qty = newQty;
   updCart(); renderCart();
 }
 function selCOT(t){
@@ -1275,11 +1569,20 @@ async function sendOrder() {
   const addr    = document.getElementById('cAddr').value.trim();
   const pickT   = document.getElementById('cPickTime').value.trim();
   const note    = document.getElementById('cNote').value.trim();
-  const total   = cart.reduce((s,i)=>s+i.size.p*i.qty,0);
-  const items   = cart.map(i=>({
-    name:`${i.prod.name} (${i.size.n})`, emoji:i.prod.emoji||'📦',
-    price:i.size.p, qty:i.qty, orderType:i.ot
-  }));
+  const total   = cart.reduce((s,i)=>s + getPriceForQty(i.size, i.qty) * i.qty, 0);
+  const items   = cart.map(i=>{
+    const unitPrice = getPriceForQty(i.size, i.qty);
+    return {
+      name:`${i.prod.name} (${i.size.n})`,
+      emoji:i.prod.emoji||'📦',
+      price:unitPrice,
+      retailPrice:i.size.p,
+      qty:i.qty,
+      productId:i.prod.id,
+      sizeName:i.size.n,
+      isWholesale: i.size.tiers?.length && unitPrice < i.size.p
+    };
+  });
 
   let extra = '';
   if (cartOT==='delivery') {
@@ -1579,6 +1882,12 @@ function updPinDots() {
 // ═══════════════════════════════════════════
 function openAdmin() {
   renderCatTags(); renderPMList();
+  // init size builder ถ้าว่าง
+  const sb = document.getElementById('szBuilder');
+  if (sb && !sb.querySelector('.sz-row-wrap')) {
+    sb.innerHTML='';
+    addSzRow('szBuilder');
+  }
   document.getElementById('adminOv').classList.add('show');
 }
 function closeAdmin() { document.getElementById('adminOv').classList.remove('show'); }
@@ -1634,11 +1943,7 @@ function openEdit(id) {
   for(let i=0;i<eCat.options.length;i++) if(eCat.options[i].value===p.cat){eCat.selectedIndex=i;break;}
   const sb=document.getElementById('eSzBuilder');
   sb.innerHTML='';
-  p.sizes.forEach(s=>{
-    const d=document.createElement('div'); d.className='sz-row';
-    d.innerHTML=`<input value="${s.n}" placeholder="ขนาด"><input value="${s.p}" placeholder="ราคา" type="number" min="0"><button class="sz-rm" onclick="rmSz(this)">✕</button>`;
-    sb.appendChild(d);
-  });
+  p.sizes.forEach(s => addSzRow('eSzBuilder', s));
   const prev=document.getElementById('editImgPrev');
   if(p.img){prev.src=p.img;prev.style.display='block';}else{prev.style.display='none';}
   document.getElementById('editOv').classList.add('show');
@@ -1659,11 +1964,21 @@ function renderPMList() {
   el.innerHTML=list.map(p=>{
     const imgH=p.img?`<img src="${p.img}" alt="">`:p.emoji||'📦';
     const minP=Math.min(...p.sizes.map(s=>s.p));
+    // คำนวณ total stock
+    const stockSizes = p.sizes.filter(s => s.stock !== undefined && s.stock !== null);
+    const totalStock = stockSizes.reduce((sum, s) => sum + (s.stock || 0), 0);
+    const stockTxt = stockSizes.length === 0
+      ? '<span style="color:#888;">∞</span>'
+      : (totalStock === 0 ? '<span style="color:#e53935;">หมด</span>'
+         : totalStock <= 10 ? `<span style="color:#FFA726;">เหลือ ${totalStock}</span>`
+         : `<span style="color:#27AE60;">${totalStock}</span>`);
+    const hasTiers = p.sizes.some(s => s.tiers?.length);
+    const wholesaleBadge = hasTiers ? ' · 💰 มีราคาส่ง' : '';
     return `<div class="pm-item" id="pmitem-${p.id}">
       <div class="pm-img">${imgH}</div>
       <div class="pm-info">
         <div class="pm-name">${p.name}</div>
-        <div class="pm-meta">${p.cat} · ฿${minP.toLocaleString()} · ${p.sizes.length} ขนาด${p.isNew?' · 🆕':''}</div>
+        <div class="pm-meta">${p.cat} · ฿${minP.toLocaleString()} · ${p.sizes.length} ขนาด · 📦 ${stockTxt}${wholesaleBadge}${p.isNew?' · 🆕':''}</div>
       </div>
       <div class="pm-acts">
         <button class="pm-edit" onclick="window._edit(${p.id})">✏️ แก้ไข</button>

@@ -402,6 +402,23 @@ app.post('/send-order', async (req, res) => {
     return res.status(500).json({ error: 'บันทึกออเดอร์ไม่ได้: ' + dbErr.message });
   }
 
+  // ✂️ ลด stock ของแต่ละ item (ถ้า products มี stock tracking)
+  for (const it of items) {
+    if (!it.productId || !it.sizeName) continue; // skip ถ้า items เก่าไม่มี productId
+    try {
+      // ใช้ RPC function ที่สร้างไว้
+      await supabase.rpc('deduct_stock', {
+        p_product_id: it.productId,
+        p_size_name : it.sizeName,
+        p_qty       : it.qty
+      }).then(({ error }) => {
+        if (error) console.warn(`deduct_stock ${it.productId}/${it.sizeName}:`, error.message);
+      });
+    } catch (e) {
+      console.warn('stock deduct skipped:', e.message);
+    }
+  }
+
   // บันทึก system message ในแชทลูกค้า — สรุปออเดอร์
   const summaryMsg =
     `🎉 ขอบคุณสำหรับการสั่งซื้อ คุณ ${customerName}\n\n` +
