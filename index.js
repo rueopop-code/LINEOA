@@ -116,6 +116,47 @@ function buildAdminMsg(order) {
 // ─── LINE Flex Message Builders ───────────────────────────
 const SHOP_URL = 'https://lineoa-production-a8e8.up.railway.app/';
 
+// ─── LINE OA Auto-Reply Keywords ───
+// ถ้าลูกค้าพิมพ์ตรงกับ keyword เหล่านี้ → ระบบไม่แจ้งแอดมิน LINE
+// (เพราะ LINE OA ตั้ง auto-reply ตอบให้แล้ว — ไม่ต้องรบกวนแอดมิน)
+//
+// แก้ list ได้ 2 ทาง:
+// 1. แก้ตรงนี้แล้ว redeploy
+// 2. ตั้ง ENV variable LINE_OA_AUTOREPLY_KEYWORDS ใน Railway (ใช้ , แยก)
+//    ตัวอย่าง: วิธีสั่งสินค้า,สั่งยังไง,วิธีใช้,ราคาเท่าไหร่
+const DEFAULT_AUTOREPLY_KEYWORDS = [
+  'วิธีสั่งสินค้า',
+  'สั่งยังไง',
+  'วิธีสั่ง',
+  'วิธีใช้',
+  'วิธีใช้งาน',
+  'ราคาเท่าไหร่',
+  'มีโปรไหม',
+  'โปรโมชั่น',
+  'สวัสดี',
+  'สวัสดีครับ',
+  'สวัสดีค่ะ',
+  'hello',
+  'hi'
+];
+
+const AUTOREPLY_KEYWORDS = (
+  process.env.LINE_OA_AUTOREPLY_KEYWORDS
+    ? process.env.LINE_OA_AUTOREPLY_KEYWORDS.split(',')
+    : DEFAULT_AUTOREPLY_KEYWORDS
+).map(k => k.trim().toLowerCase()).filter(Boolean);
+
+function isAutoReplyKeyword(text) {
+  if (!text) return false;
+  const t = String(text).trim().toLowerCase();
+  // exact match
+  if (AUTOREPLY_KEYWORDS.includes(t)) return true;
+  // เผื่อมี whitespace/symbol เกินมา
+  const cleaned = t.replace(/[\s\?\!\.\,]+/g, '');
+  return AUTOREPLY_KEYWORDS.some(k => k.replace(/\s+/g, '') === cleaned);
+}
+
+
 // สีตามสถานะ
 function statusColor(s) {
   return ({
@@ -801,7 +842,7 @@ app.post('/webhook', async (req, res) => {
           text: `🛍 สวัสดีค่ะ! ยินดีต้อนรับสู่ มนชิน ซัพพลาย\n\n` +
                 `กดลิงก์ด้านล่างเพื่อเริ่มสั่งซื้อ ระบบจะจดจำคุณอัตโนมัติ ไม่ต้องลงทะเบียน 🚀\n\n` +
                 `${shopLink}\n\n` +
-                `ครั้งหน้าพิมพ์ "ผูกบัญชี(สั่งสินค้า)" เพื่อรับลิงก์ใหม่ได้ตลอดค่ะ`
+               `ครั้งหน้าพิมพ์ "ผูกบัญชี(สั่งสินค้า)" เพื่อรับลิงก์ใหม่ได้ตลอดค่ะ`
                  `ครั้งหน้าพิมพ์ "ผูกบัญชี" เพื่อรับลิงก์ใหม่ได้ตลอดค่ะ`
         }
       ]);
@@ -1081,11 +1122,15 @@ app.post('/webhook', async (req, res) => {
       });
     }
 
-    // ✨ แจ้งแอดมินเฉพาะลูกค้าที่มีออเดอร์จริง (ไม่ใช่ ghost LINE-)
-    // ลูกค้าใหม่ที่ยังไม่เคยสั่ง — ไม่ต้องแจ้ง LINE OA admin (ดูใน admin panel ได้)
+    // ✨ แจ้งแอดมินเฉพาะลูกค้าที่มีออเดอร์จริง + ไม่ใช่ keyword auto-reply
     if (latest) {
-      const notifyText = `💬 ${displayName} ส่งข้อความใน LINE (#${latest.order_id}):\n\n${rawText.slice(0,500)}`;
-      notifyAllAdmins([{ type:'text', text: notifyText }]).catch(console.error);
+      // ถ้าตรงกับ keyword auto-reply ของ LINE OA → ไม่แจ้ง (LINE OA ตอบให้แล้ว)
+      if (isAutoReplyKeyword(rawText)) {
+        console.log(`💬 ${displayName} ส่ง "${rawText.slice(0,30)}" ตรงกับ auto-reply keyword — ไม่แจ้งแอดมิน`);
+      } else {
+        const notifyText = `💬 ${displayName} ส่งข้อความใน LINE (#${latest.order_id}):\n\n${rawText.slice(0,500)}`;
+        notifyAllAdmins([{ type:'text', text: notifyText }]).catch(console.error);
+      }
     } else {
       console.log(`💬 ${displayName} ทักเข้ามาใน LINE (ยังไม่มีออเดอร์) — ไม่แจ้งแอดมิน`);
     }
