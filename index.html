@@ -425,8 +425,12 @@ textarea.fi{resize:none;height:70px}
         <div class="cotype" id="cot-p" onclick="selCOT('pickup')">📦 จอง/รับเอง</div>
       </div>
       <!-- common -->
-      <input class="fi" id="cName" placeholder="ชื่อ-นามสกุล *" type="text">
-      <input class="fi" id="cPhone" placeholder="เบอร์โทรศัพท์ *" type="tel">
+      <div style="background:linear-gradient(135deg,#06C755,#00A050);padding:8px 12px;border-radius:8px;margin-bottom:8px;color:#fff;font-size:11px;font-weight:600;display:flex;align-items:center;gap:6px;">
+        💬 <span>ชื่อ LINE ใช้ผูกบัญชี — แอดมินจะค้นหาคุณใน LINE ได้</span>
+      </div>
+      <input class="fi" id="cLineName" placeholder="📱 ชื่อใน LINE ของคุณ *" type="text">
+      <input class="fi" id="cName" placeholder="👤 ชื่อ-นามสกุลจริง (สำหรับจ่าหน้าพัสดุ) *" type="text">
+      <input class="fi" id="cPhone" placeholder="📞 เบอร์โทรศัพท์ *" type="tel">
       <!-- delivery extra -->
       <div class="deliv-extra show" id="delivExtra">
         <input class="fi" id="cAddr" placeholder="ที่อยู่จัดส่ง *" type="text">
@@ -1627,10 +1631,13 @@ function quickAdd(id){
 //  CART
 // ═══════════════════════════════════════════
 function openCart(){
-  const savedName = localStorage.getItem('ms_customer_name');
+  const savedLineName = localStorage.getItem('ms_line_name');     // จาก LINE displayName
+  const savedName = localStorage.getItem('ms_customer_name');     // ชื่อจริง
   const savedPhone = localStorage.getItem('ms_customer_phone');
+  const cln = document.getElementById('cLineName');
   const cn = document.getElementById('cName');
   const cp = document.getElementById('cPhone');
+  if (cln && savedLineName && !cln.value) cln.value = savedLineName;
   if (cn && savedName && !cn.value) cn.value = savedName;
   if (cp && savedPhone && !cp.value) cp.value = savedPhone;
   renderCart();
@@ -1821,9 +1828,11 @@ function showMapPin() {
 //  SEND ORDER
 // ═══════════════════════════════════════════
 async function sendOrder() {
+  const lineName = document.getElementById('cLineName').value.trim();
   const name  = document.getElementById('cName').value.trim();
   const phone = document.getElementById('cPhone').value.trim();
-  if (!name)  { toast('กรุณากรอกชื่อผู้สั่ง'); return; }
+  if (!lineName) { toast('กรุณากรอกชื่อ LINE'); return; }
+  if (!name)  { toast('กรุณากรอกชื่อจริง'); return; }
   if (!phone) { toast('กรุณากรอกเบอร์โทร'); return; }
   if (!cart.length) { toast('กรุณาเลือกสินค้าก่อน'); return; }
   if (cartOT==='delivery' && !document.getElementById('cAddr').value.trim()) { toast('กรุณากรอกที่อยู่จัดส่ง'); return; }
@@ -1859,7 +1868,12 @@ async function sendOrder() {
   }
 
   try {
-    const payload = { customerId: CUSTOMER_ID, customerName:name, phone, orderType:cartOT, address:addr, extra, items, total };
+    const payload = {
+      customerId: CUSTOMER_ID,
+      customerName: name,        // ชื่อจริง — สำหรับจ่าหน้าพัสดุ
+      lineName: lineName,        // ✨ ชื่อ LINE — สำหรับผูกแชท
+      phone, orderType:cartOT, address:addr, extra, items, total
+    };
     console.log('📦 sending order:', JSON.stringify(payload));
 
     const res = await fetch(`${BACKEND_URL}/send-order`,{
@@ -1879,6 +1893,7 @@ async function sendOrder() {
     const orderId = result.orderId || '';
 
     // เก็บชื่อลูกค้าไว้ครั้งหน้าจะได้ไม่ต้องกรอกใหม่
+    localStorage.setItem('ms_line_name', lineName);
     localStorage.setItem('ms_customer_name', name);
     if (phone) localStorage.setItem('ms_customer_phone', phone);
 

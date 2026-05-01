@@ -380,7 +380,7 @@ app.get('/api', (req, res) => res.json({
 // ── POST /send-order ──────────────────────────────────────
 app.post('/send-order', async (req, res) => {
   const {
-    customerId, customerName, phone, address, note,
+    customerId, customerName, lineName, phone, address, note,
     items, total, orderType, extra
   } = req.body;
 
@@ -390,7 +390,9 @@ app.post('/send-order', async (req, res) => {
   const order_id   = genOrderId();
   const created_at = new Date().toISOString();
   const order      = {
-    order_id, customer_id: customerId, customer_name: customerName,
+    order_id, customer_id: customerId,
+    customer_name: customerName,             // ชื่อจริง — สำหรับจ่าหน้าพัสดุ
+    line_name: lineName || customerName,     // ✨ ชื่อ LINE — สำหรับผูกแชท
     phone: phone || null, address: address || null, note: note || extra || null,
     items, total, status: 'pending', created_at,
     order_type: orderType || 'pickup'
@@ -441,20 +443,26 @@ app.post('/send-order', async (req, res) => {
   try {
     // หา ghost orders ที่อาจจะเป็นลูกค้าคนเดียวกัน
     const { data: ghostOrders } = await supabase.from('orders')
-      .select('order_id, line_user_id, customer_name, phone')
+      .select('order_id, line_user_id, customer_name, line_name, phone')
       .like('order_id', 'LINE-%')
       .not('line_user_id', 'is', null);
 
     if (ghostOrders?.length) {
-      // matching: phone หรือ ชื่อ
+      // matching: phone, ชื่อ LINE (สำคัญสุด!), หรือ ชื่อจริง
       const normPhone = (p) => String(p || '').replace(/\D/g, '');
+      const norm = (s) => String(s || '').trim().toLowerCase();
       const myPhone = normPhone(phone);
-      const myName  = (customerName || '').trim().toLowerCase();
+      const myLineName = norm(lineName);          // ✨ ใช้ชื่อ LINE เป็นหลัก
+      const myCustName = norm(customerName);
 
-      const matched = ghostOrders.find(g =>
-        (myPhone && normPhone(g.phone) === myPhone) ||
-        (myName && (g.customer_name || '').trim().toLowerCase() === myName)
-      );
+      const matched = ghostOrders.find(g => {
+        const gLine = norm(g.line_name);
+        const gCust = norm(g.customer_name);
+        return (myPhone && normPhone(g.phone) === myPhone) ||
+               (myLineName && gLine && gLine === myLineName) ||
+               (myLineName && gCust && gCust === myLineName) ||  // ghost เก่าอาจเก็บใน customer_name
+               (myCustName && gCust && gCust === myCustName);
+      });
 
       if (matched?.line_user_id) {
         autoLinkedLineUid = matched.line_user_id;
@@ -990,7 +998,7 @@ app.post('/webhook', async (req, res) => {
     }
 
     // คำสั่ง: เปิดร้าน / shop / สั่ง / ซื้อ → ส่งลิงก์ shop พร้อม token
-    if (text === 'เปิดร้าน' || text === 'shop' || text === 'สั่ง' || text === 'ซื้อ' || text === 'สั่งซื้อ' || text === 'เปิด' || text === 'ร้าน' || text === 'ผูกบัญชี(สั่งสินค้า)') {
+    if (text === 'เปิดร้าน' || text === 'shop' || text === 'สั่ง' || text === 'ซื้อ' || text === 'สั่งซื้อ' || text === 'เปิด' || text === 'ร้าน'|| text === 'ผูกบัญชี(สั่งสินค้า)') {
       const token = createLinkToken(userId);
       const shopLink = `${SHOP_URL}?lid=${token}`;
       await lineReply(replyToken, [{
