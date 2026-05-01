@@ -1025,9 +1025,11 @@ app.post('/webhook', async (req, res) => {
     }
 
     // ข้อความอื่นๆ: forward ไปแอดมิน + บันทึกในแชท (ถ้าผูกบัญชีแล้ว)
+    // ✨ กรอง ghost order (LINE-xxx) ออก — นับเฉพาะออเดอร์จริงที่ลูกค้าสั่งของแล้ว
     const { data: linkedOrders } = await supabase.from('orders')
       .select('order_id, customer_id, customer_name')
       .eq('line_user_id', userId)
+      .not('order_id', 'like', 'LINE-%')
       .order('created_at', { ascending: false })
       .limit(1);
 
@@ -1078,11 +1080,14 @@ app.post('/webhook', async (req, res) => {
       });
     }
 
-    // แจ้งแอดมินทุกคน
-    const notifyText = latest
-      ? `💬 ${displayName} ส่งข้อความใน LINE (#${latest.order_id}):\n\n${rawText.slice(0,500)}`
-      : `💬 ${displayName} ทักเข้ามาใน LINE (ยังไม่มีออเดอร์):\n\n${rawText.slice(0,500)}`;
-    notifyAllAdmins([{ type:'text', text: notifyText }]).catch(console.error);
+    // ✨ แจ้งแอดมินเฉพาะลูกค้าที่มีออเดอร์จริง (ไม่ใช่ ghost LINE-)
+    // ลูกค้าใหม่ที่ยังไม่เคยสั่ง — ไม่ต้องแจ้ง LINE OA admin (ดูใน admin panel ได้)
+    if (latest) {
+      const notifyText = `💬 ${displayName} ส่งข้อความใน LINE (#${latest.order_id}):\n\n${rawText.slice(0,500)}`;
+      notifyAllAdmins([{ type:'text', text: notifyText }]).catch(console.error);
+    } else {
+      console.log(`💬 ${displayName} ทักเข้ามาใน LINE (ยังไม่มีออเดอร์) — ไม่แจ้งแอดมิน`);
+    }
 
     // ✨ ไม่ตอบ auto-reply — ปล่อยให้แอดมินตอบเอง ลูกค้าจะไม่เห็น "ได้รับข้อความแล้ว..." spam
     // (ถ้าลูกค้าอยากเปิดร้าน/ดูออเดอร์ → กด Rich Menu หรือพิมพ์ keyword)
