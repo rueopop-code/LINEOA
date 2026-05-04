@@ -491,7 +491,23 @@ app.post('/send-order', async (req, res) => {
     const norm = (s) => String(s || '').trim().toLowerCase();
     const myPhone = normPhone(phone);
 
-    // ── วิธีที่ 1 (แม่นที่สุด): ค้นจาก line_users.customer_id ──
+    // ── วิธีที่ 0 (เร็วและแม่นที่สุด): ค้น LINK-{customerId} row โดยตรง ──
+    // /link-line สร้าง row นี้ทันทีที่ลูกค้าเปิดร้านผ่านลิงก์ LINE
+    // ไม่ต้องเดา ไม่ต้อง match ชื่อ/phone เลย
+    if (!autoLinkedLineUid) {
+      const linkRowId = `LINK-${customerId.slice(0, 20)}`;
+      const { data: linkRow } = await supabase.from('orders')
+        .select('line_user_id')
+        .eq('order_id', linkRowId)
+        .not('line_user_id', 'is', null)
+        .maybeSingle();
+      if (linkRow?.line_user_id) {
+        autoLinkedLineUid = linkRow.line_user_id;
+        console.log(`🔗 auto-linked via LINK- row: ${linkRowId}`);
+      }
+    }
+
+    // ── วิธีที่ 1: ค้นจาก line_users.customer_id ──
     // บันทึกตอนลูกค้าเปิดร้านผ่านลิงก์ LINE → ผูกได้ทันทีโดยไม่ต้องเดา
     if (!autoLinkedLineUid) {
       const { data: luRow } = await supabase.from('line_users')
@@ -902,7 +918,6 @@ app.post('/messages', async (req, res) => {
 
 
 // ── upsert ข้อมูลลูกค้าลง line_users (เรียกทุกครั้งที่มี event) ──
-// ✨ FIX: 2-step เพื่อไม่ให้ webhook ทับ customer_id ที่ผูกไว้แล้วด้วย null
 async function upsertLineUser(userId, extraFields = {}) {
   if (!userId) return null;
   try {
@@ -913,23 +928,17 @@ async function upsertLineUser(userId, extraFields = {}) {
     const displayName = profile.displayName || null;
     const pictureUrl  = profile.pictureUrl  || null;
 
-    // Step 1: insert row ใหม่ถ้ายังไม่มี (onConflict=user_id, ignoreDuplicates=true)
-    await supabase.from('line_users')
-      .upsert([{ user_id: userId, display_name: displayName, picture_url: pictureUrl,
-                 last_seen: new Date().toISOString(), ...extraFields }],
-              { onConflict: 'user_id', ignoreDuplicates: false })
-      .catch(() => {});
-
-    // Step 2: update เฉพาะ field ที่ปลอดภัย — ไม่แตะ customer_id ถ้าไม่ได้ส่งมา
-    const updateFields = {
+    const row = {
+      user_id     : userId,
       display_name: displayName,
       picture_url : pictureUrl,
       last_seen   : new Date().toISOString(),
+      ...extraFields   // ✨ เผื่อส่ง customer_id มาด้วย
     };
-    // ✨ เพิ่ม customer_id เข้า update เฉพาะเมื่อ caller ส่งมาจริงๆ
-    if (extraFields.customer_id) updateFields.customer_id = extraFields.customer_id;
+    // ถ้าไม่มี customer_id ใน extraFields → ไม่ทับค่าเดิม (only update if provided)
+    if (!extraFields.customer_id) delete row.customer_id;
 
-    await supabase.from('line_users').update(updateFields).eq('user_id', userId);
+    await supabase.from('line_users').upsert([row], { onConflict: 'user_id' });
     return displayName;
   } catch (e) {
     console.warn('upsertLineUser failed:', e.message);
