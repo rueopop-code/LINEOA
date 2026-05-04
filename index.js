@@ -6,7 +6,13 @@ const path    = require('path');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
-app.use(cors({ origin: '*' }));
+// CORS — รองรับ preflight (OPTIONS) จาก GitHub Pages และทุก domain
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+app.options('*', cors()); // preflight สำหรับทุก route
 app.use(express.json());
 
 // ─── Supabase ──────────────────────────────────────────────
