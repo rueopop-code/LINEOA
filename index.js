@@ -482,10 +482,10 @@ app.post('/send-order', async (req, res) => {
   // ใช้เบอร์โทรเป็น matching key ก่อน (แม่นกว่า) — fallback ใช้ customer_name
   let autoLinkedLineUid = null;
   try {
-    // หา ghost orders ที่อาจจะเป็นลูกค้าคนเดียวกัน
+    // ✨ FIX Bug 2: ค้นหา ghost orders ทั้ง LINE-% (chat ghost) และ LINK-% (link ghost)
     const { data: ghostOrders } = await supabase.from('orders')
       .select('order_id, line_user_id, customer_name, line_name, phone')
-      .like('order_id', 'LINE-%')
+      .or('order_id.like.LINE-%,order_id.like.LINK-%')
       .not('line_user_id', 'is', null);
 
     if (ghostOrders?.length) {
@@ -593,6 +593,23 @@ app.post('/link-line', async (req, res) => {
     .eq('customer_id', customer_id);
   if (error) console.warn('link orders failed:', error.message);
 
+  // ✨ FIX Bug 1: upsert ghost LINK-row เพื่อเก็บ mapping แม้ยังไม่มีออเดอร์จริง
+  // เวลา /send-order ทำงาน จะหา line_user_id จาก row นี้ได้เสมอ
+  await supabase.from('orders').upsert([{
+    order_id    : `LINK-${customer_id.slice(0, 20)}`,
+    customer_id,
+    line_user_id: lineUserId,
+    customer_name: '',          // จะ fill ทีหลังตอนดึงโปรไฟล์ LINE
+    items       : [],
+    total       : 0,
+    status      : 'pending',
+    created_at  : new Date().toISOString(),
+    note        : '🔗 ผูกบัญชี LINE (รอสั่งสินค้า)'
+  }], { onConflict: 'order_id' }).then(({ error: e }) => {
+    if (e) console.warn('upsert link-ghost failed:', e.message);
+    else console.log(`🔗 stored LINK mapping: customer=${customer_id} ↔ LINE=${lineUserId.slice(0,12)}…`);
+  });
+
   // ดึงโปรไฟล์ LINE มาเพิ่ม customer_name (ถ้าออเดอร์ยังไม่มีชื่อ)
   let displayName = null;
   try {
@@ -604,6 +621,14 @@ app.post('/link-line', async (req, res) => {
       displayName = profile.displayName || null;
     }
   } catch(e) { /* ignore */ }
+
+  // ✨ อัปเดตชื่อ LINE ใน LINK ghost row
+  if (displayName) {
+    await supabase.from('orders')
+      .update({ customer_name: displayName, line_name: displayName })
+      .eq('order_id', `LINK-${customer_id.slice(0, 20)}`)
+      .catch(() => {});
+  }
 
   console.log(`🔗 linked customer ${customer_id} ↔ LINE ${lineUserId.slice(0,12)}…`);
   res.json({ success: true, lineUserId: lineUserId.slice(0,12) + '…', displayName });
@@ -1068,11 +1093,12 @@ app.post('/webhook', async (req, res) => {
     }
 
     // ข้อความอื่นๆ: forward ไปแอดมิน + บันทึกในแชท (ถ้าผูกบัญชีแล้ว)
-    // ✨ กรอง ghost order (LINE-xxx) ออก — นับเฉพาะออเดอร์จริงที่ลูกค้าสั่งของแล้ว
+    // ✨ FIX Bug 3: กรองออกทั้ง LINE-% และ LINK-% ghost — นับเฉพาะออเดอร์จริง
     const { data: linkedOrders } = await supabase.from('orders')
       .select('order_id, customer_id, customer_name')
       .eq('line_user_id', userId)
       .not('order_id', 'like', 'LINE-%')
+      .not('order_id', 'like', 'LINK-%')
       .order('created_at', { ascending: false })
       .limit(1);
 
@@ -1106,21 +1132,37 @@ app.post('/webhook', async (req, res) => {
       created_at : new Date().toISOString()
     }]).then(({ error }) => { if (error) console.warn('insert msg:', error.message); });
 
-    // ถ้ายังไม่มีออเดอร์ → สร้าง "ghost order" เพื่อให้แสดงในแอดมิน panel
+    // ✨ FIX: ถ้ายังไม่มีออเดอร์จริง → สร้าง ghost เฉพาะถ้ายังไม่มี LINK- ghost อยู่แล้ว
     if (!latest) {
-      await supabase.from('orders').upsert([{
-        order_id     : threadOrderId,
-        customer_id  : threadCustomerId,
-        customer_name: displayName,
-        line_user_id : userId,
-        items        : [],
-        total        : 0,
-        status       : 'pending',
-        created_at   : new Date().toISOString(),
-        note         : '💬 แชทเข้ามาทาง LINE OA (ยังไม่มีออเดอร์)'
-      }], { onConflict: 'order_id' }).then(({ error }) => {
-        if (error) console.warn('upsert ghost order:', error.message);
-      });
+      // ตรวจว่ามี LINK- ghost (ผูกบัญชีแล้วแต่ยังไม่สั่ง) ไหม — ถ้ามี ไม่ต้องสร้าง LINE- ซ้ำ
+      const { data: linkGhost } = await supabase.from('orders')
+        .select('order_id').eq('line_user_id', userId).like('order_id', 'LINK-%').limit(1);
+
+      if (!linkGhost?.length) {
+        // ยังไม่ผูกบัญชีเลย → สร้าง LINE- ghost ให้แอดมินเห็นแชท
+        await supabase.from('orders').upsert([{
+          order_id     : threadOrderId,
+          customer_id  : threadCustomerId,
+          customer_name: displayName,
+          line_user_id : userId,
+          items        : [],
+          total        : 0,
+          status       : 'pending',
+          created_at   : new Date().toISOString(),
+          note         : '💬 แชทเข้ามาทาง LINE OA (ยังไม่มีออเดอร์)'
+        }], { onConflict: 'order_id' }).then(({ error }) => {
+          if (error) console.warn('upsert ghost order:', error.message);
+        });
+      } else {
+        // มี LINK- ghost → อัปเดตชื่อ/ข้อความแทน
+        await supabase.from('messages').upsert([{
+          order_id   : linkGhost[0].order_id,
+          customer_id: threadCustomerId,
+          sender     : 'customer',
+          text       : rawText,
+          created_at : new Date().toISOString()
+        }]).catch(() => {});
+      }
     }
 
     // ✨ แจ้งแอดมินเฉพาะลูกค้าที่มีออเดอร์จริง + ไม่ใช่ keyword auto-reply
