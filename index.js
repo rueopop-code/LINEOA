@@ -544,6 +544,14 @@ app.post('/send-order', async (req, res) => {
     }
   }
 
+  // ✨ ลบ LINK- ghost row — ออเดอร์จริงมี line_user_id แล้ว ไม่ต้องการ mapping row อีกต่อไป
+  supabase.from('orders')
+    .delete()
+    .eq('order_id', `LINK-${customerId.slice(0, 20)}`)
+    .then(({ error: e }) => {
+      if (!e) console.log(`🗑️ cleaned up LINK-${customerId.slice(0,10)}… ghost`);
+    });
+
   res.json({ success: true, orderId: order_id });
 });
 
@@ -1207,6 +1215,8 @@ app.get('/orders', async (req, res) => {
   const { data, error, count } = await supabase
     .from('orders')
     .select('*', { count: 'exact' })
+    // ✨ ซ่อน LINK- rows — mapping record ไม่ใช่ออเดอร์จริง
+    .not('order_id', 'like', 'LINK-%')
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
   if (error) return res.status(500).json({ error: error.message });
