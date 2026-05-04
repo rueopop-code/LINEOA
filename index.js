@@ -976,7 +976,11 @@ app.post('/webhook', async (req, res) => {
           }
         ];
         if (fullLatest && fullLatest.items?.length) {
+          // ✨ ส่ง order summary + status flex พร้อมกัน (ไม่ต้องกดดูสถานะ)
           replyMessages.push(buildOrderSummaryFlex(fullLatest));
+          if (fullLatest.status && fullLatest.status !== 'pending') {
+            replyMessages.push(buildStatusUpdateFlex(fullLatest, fullLatest.status));
+          }
         }
 
         await lineReply(replyToken, replyMessages);
@@ -992,7 +996,7 @@ app.post('/webhook', async (req, res) => {
 
     // คำสั่ง: ออเดอร์ / order / สถานะ → ดูออเดอร์ของตัวเอง
     if (text.includes('ออเดอร์') || text.includes('order') || text.includes('สถานะ') || text.includes('status')) {
-      // หาออเดอร์ที่ผูกกับ LINE user นี้
+      // หาออเดอร์ที่ผูกกับ LINE user นี้ (ตรง)
       const { data: myOrders } = await supabase.from('orders')
         .select('*')
         .eq('line_user_id', userId)
@@ -1001,9 +1005,41 @@ app.post('/webhook', async (req, res) => {
         .limit(10);
 
       // กรอง ghost orders ออก (ที่ items เป็น array ว่าง)
-      const realOrders = (myOrders || []).filter(o =>
+      let realOrders = (myOrders || []).filter(o =>
         Array.isArray(o.items) && o.items.length > 0
       );
+
+      // ✨ FIX: ถ้าไม่พบ — fallback หา customer_id จาก LINK- ghost แล้วดึงออเดอร์
+      if (!realOrders.length) {
+        const { data: linkGhost } = await supabase.from('orders')
+          .select('customer_id')
+          .eq('line_user_id', userId)
+          .like('order_id', 'LINK-%')
+          .limit(1);
+
+        if (linkGhost?.[0]?.customer_id) {
+          const { data: cidOrders } = await supabase.from('orders')
+            .select('*')
+            .eq('customer_id', linkGhost[0].customer_id)
+            .not('order_id', 'like', 'LINK-%')
+            .not('order_id', 'like', 'LINE-%')
+            .order('created_at', { ascending: false })
+            .limit(10);
+
+          const filtered = (cidOrders || []).filter(o =>
+            Array.isArray(o.items) && o.items.length > 0
+          );
+          if (filtered.length) {
+            // ✨ backfill line_user_id ให้ออเดอร์เหล่านี้ด้วย
+            await supabase.from('orders')
+              .update({ line_user_id: userId })
+              .eq('customer_id', linkGhost[0].customer_id)
+              .not('order_id', 'like', 'LINK-%')
+              .catch(() => {});
+            realOrders = filtered;
+          }
+        }
+      }
 
       if (!realOrders.length) {
         await lineReply(replyToken, [{
