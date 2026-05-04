@@ -754,10 +754,8 @@ const CUSTOMER_ID = getOrCreateCustomerId();
       localStorage.setItem('ms_line_linked', '1');
       if (result.displayName) {
         localStorage.setItem('ms_line_name', result.displayName);
-        // auto-fill ชื่อถ้ายังไม่มี
-        if (!localStorage.getItem('ms_customer_name')) {
-          localStorage.setItem('ms_customer_name', result.displayName);
-        }
+        // ✨ FIX: ไม่ copy LINE displayName → ms_customer_name
+        // เพราะชื่อ LINE (เช่น "PHONE", "Boy") ≠ ชื่อจริงสำหรับจ่าหน้าพัสดุ
       }
       console.log('✅ LINE linked');
       // ซ่อน banner ถ้ามี
@@ -1650,7 +1648,12 @@ function openCart(){
   const cn = document.getElementById('cName');
   const cp = document.getElementById('cPhone');
   if (cln && savedLineName && !cln.value) cln.value = savedLineName;
-  if (cn && savedName && !cn.value) cn.value = savedName;
+  // ✨ FIX: ไม่ auto-fill ชื่อจริงถ้าเป็น garbage value (LINE displayName ที่หลุดเข้ามา)
+  const BAD_SAVED = ['phone','name','ชื่อ','ชื่อจริง','customer','user','test'];
+  const cleanedName = (savedName || '').trim();
+  if (cn && cleanedName && !BAD_SAVED.includes(cleanedName.toLowerCase()) && !cn.value) {
+    cn.value = cleanedName;
+  }
   if (cp && savedPhone && !cp.value) cp.value = savedPhone;
   renderCart();
   document.getElementById('cartOv').classList.add('show');
@@ -1845,6 +1848,11 @@ async function sendOrder() {
   const phone = document.getElementById('cPhone').value.trim();
   if (!lineName) { toast('กรุณากรอกชื่อ LINE'); return; }
   if (!name)  { toast('กรุณากรอกชื่อจริง'); return; }
+  // ✨ FIX: กัน placeholder/garbage ชื่อจริงที่ดูเหมือน system value
+  const BAD_NAMES = ['phone','name','ชื่อ','ชื่อจริง','customer','user','test'];
+  if (BAD_NAMES.includes(name.toLowerCase())) {
+    toast('กรุณากรอกชื่อจริง-นามสกุลของคุณ'); return;
+  }
   if (!phone) { toast('กรุณากรอกเบอร์โทร'); return; }
   if (!cart.length) { toast('กรุณาเลือกสินค้าก่อน'); return; }
   if (cartOT==='delivery' && !document.getElementById('cAddr').value.trim()) { toast('กรุณากรอกที่อยู่จัดส่ง'); return; }
