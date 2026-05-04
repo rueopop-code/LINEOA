@@ -484,41 +484,79 @@ app.post('/send-order', async (req, res) => {
     if (error) console.warn('insert summary msg:', error.message);
   });
 
-  // ✨ Auto-link: หา ghost LINE chat ที่ลูกค้าเคยทักไว้ → ผูก line_user_id ให้ออเดอร์ใหม่
-  // ใช้เบอร์โทรเป็น matching key ก่อน (แม่นกว่า) — fallback ใช้ customer_name
+  // ✨ Auto-link: ผูก line_user_id ให้ออเดอร์ใหม่อัตโนมัติ — 3 วิธีเรียงตามความแม่นยำ
   let autoLinkedLineUid = null;
   try {
-    // ✨ FIX Bug 2: ค้นหา ghost orders ทั้ง LINE-% (chat ghost) และ LINK-% (link ghost)
-    const { data: ghostOrders } = await supabase.from('orders')
-      .select('order_id, line_user_id, customer_name, line_name, phone')
-      .or('order_id.like.LINE-%,order_id.like.LINK-%')
-      .not('line_user_id', 'is', null);
+    const normPhone = (p) => String(p || '').replace(/\D/g, '');
+    const norm = (s) => String(s || '').trim().toLowerCase();
+    const myPhone = normPhone(phone);
 
-    if (ghostOrders?.length) {
-      // matching: phone, ชื่อ LINE (สำคัญสุด!), หรือ ชื่อจริง
-      const normPhone = (p) => String(p || '').replace(/\D/g, '');
-      const norm = (s) => String(s || '').trim().toLowerCase();
-      const myPhone = normPhone(phone);
-      const myLineName = norm(lineName);          // ✨ ใช้ชื่อ LINE เป็นหลัก
-      const myCustName = norm(customerName);
-
-      const matched = ghostOrders.find(g => {
-        const gLine = norm(g.line_name);
-        const gCust = norm(g.customer_name);
-        return (myPhone && normPhone(g.phone) === myPhone) ||
-               (myLineName && gLine && gLine === myLineName) ||
-               (myLineName && gCust && gCust === myLineName) ||  // ghost เก่าอาจเก็บใน customer_name
-               (myCustName && gCust && gCust === myCustName);
-      });
-
-      if (matched?.line_user_id) {
-        autoLinkedLineUid = matched.line_user_id;
-        // อัปเดตออเดอร์ใหม่ + ทุกออเดอร์ของ customer_id ให้มี line_user_id
-        await supabase.from('orders')
-          .update({ line_user_id: autoLinkedLineUid })
-          .eq('customer_id', customerId)
-          .then(({ error }) => { if (!error) console.log(`🔗 auto-linked ${customerId} ↔ LINE`); });
+    // ── วิธีที่ 1 (แม่นที่สุด): ค้นจาก line_users.customer_id ──
+    // บันทึกตอนลูกค้าเปิดร้านผ่านลิงก์ LINE → ผูกได้ทันทีโดยไม่ต้องเดา
+    if (!autoLinkedLineUid) {
+      const { data: luRow } = await supabase.from('line_users')
+        .select('user_id')
+        .eq('customer_id', customerId)
+        .order('last_seen', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (luRow?.user_id) {
+        autoLinkedLineUid = luRow.user_id;
+        console.log(`🔗 auto-linked via line_users.customer_id: ${customerId}`);
       }
+    }
+
+    // ── วิธีที่ 2: ค้นจาก ghost orders (LINE-% / LINK-%) ด้วย phone + ชื่อ ──
+    if (!autoLinkedLineUid) {
+      const { data: ghostOrders } = await supabase.from('orders')
+        .select('order_id, line_user_id, customer_name, line_name, phone')
+        .or('order_id.like.LINE-%,order_id.like.LINK-%')
+        .not('line_user_id', 'is', null);
+
+      if (ghostOrders?.length) {
+        const myLineName = norm(lineName);
+        const myCustName = norm(customerName);
+        const matched = ghostOrders.find(g => {
+          const gLine = norm(g.line_name);
+          const gCust = norm(g.customer_name);
+          return (myPhone && normPhone(g.phone) === myPhone) ||
+                 (myLineName && gLine && gLine === myLineName) ||
+                 (myLineName && gCust && gCust === myLineName) ||
+                 (myCustName && gCust && gCust === myCustName);
+        });
+        if (matched?.line_user_id) {
+          autoLinkedLineUid = matched.line_user_id;
+          console.log(`🔗 auto-linked via ghost order match: ${matched.order_id}`);
+        }
+      }
+    }
+
+    // ── วิธีที่ 3: ค้นจาก line_users ด้วยเบอร์โทร (ถ้ามี phone column) ──
+    if (!autoLinkedLineUid && myPhone) {
+      const { data: luPhone } = await supabase.from('line_users')
+        .select('user_id')
+        .eq('phone', myPhone)
+        .order('last_seen', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (luPhone?.user_id) {
+        autoLinkedLineUid = luPhone.user_id;
+        console.log(`🔗 auto-linked via line_users.phone: ${myPhone}`);
+      }
+    }
+
+    // ── ผูกสำเร็จ → อัปเดต orders + line_users ──
+    if (autoLinkedLineUid) {
+      await supabase.from('orders')
+        .update({ line_user_id: autoLinkedLineUid })
+        .eq('customer_id', customerId)
+        .then(({ error }) => { if (!error) console.log(`✅ ${customerId} ↔ LINE ${autoLinkedLineUid.slice(0,12)}…`); });
+
+      // อัปเดต line_users ให้มี customer_id (เพื่อ match ได้เร็วขึ้นครั้งถัดไป)
+      await supabase.from('line_users')
+        .update({ customer_id: customerId })
+        .eq('user_id', autoLinkedLineUid)
+        .catch(() => {});
     }
   } catch (e) {
     console.warn('auto-link failed:', e.message);
@@ -643,6 +681,9 @@ app.post('/link-line', async (req, res) => {
       .eq('order_id', `LINK-${customer_id.slice(0, 20)}`)
       .catch(() => {});
   }
+
+  // ✨ บันทึก customer_id ลง line_users เพื่อให้ auto-link ได้ 100%
+  upsertLineUser(lineUserId, { customer_id }).catch(() => {});
 
   console.log(`🔗 linked customer ${customer_id} ↔ LINE ${lineUserId.slice(0,12)}…`);
   res.json({ success: true, lineUserId: lineUserId.slice(0,12) + '…', displayName });
@@ -861,20 +902,31 @@ app.post('/messages', async (req, res) => {
 
 
 // ── upsert ข้อมูลลูกค้าลง line_users (เรียกทุกครั้งที่มี event) ──
-async function upsertLineUser(userId) {
-  if (!userId) return;
+async function upsertLineUser(userId, extraFields = {}) {
+  if (!userId) return null;
   try {
     const profRes = await fetch(`https://api.line.me/v2/bot/profile/${userId}`, {
       headers: { 'Authorization': `Bearer ${process.env.LINE_TOKEN}` }
     });
-    const displayName = profRes.ok ? (await profRes.json()).displayName || null : null;
-    await supabase.from('line_users').upsert([{
+    const profile = profRes.ok ? await profRes.json() : {};
+    const displayName = profile.displayName || null;
+    const pictureUrl  = profile.pictureUrl  || null;
+
+    const row = {
       user_id     : userId,
       display_name: displayName,
-      last_seen   : new Date().toISOString()
-    }], { onConflict: 'user_id' });
+      picture_url : pictureUrl,
+      last_seen   : new Date().toISOString(),
+      ...extraFields   // ✨ เผื่อส่ง customer_id มาด้วย
+    };
+    // ถ้าไม่มี customer_id ใน extraFields → ไม่ทับค่าเดิม (only update if provided)
+    if (!extraFields.customer_id) delete row.customer_id;
+
+    await supabase.from('line_users').upsert([row], { onConflict: 'user_id' });
+    return displayName;
   } catch (e) {
     console.warn('upsertLineUser failed:', e.message);
+    return null;
   }
 }
 
@@ -1009,6 +1061,15 @@ app.post('/webhook', async (req, res) => {
           if (fullLatest.status && fullLatest.status !== 'pending') {
             replyMessages.push(buildStatusUpdateFlex(fullLatest, fullLatest.status));
           }
+        }
+
+        // ✨ บันทึก customer_id ลง line_users เพื่อ auto-link ครั้งถัดไป
+        const matchedCustomerId = matches[0].customer_id;
+        if (matchedCustomerId) {
+          supabase.from('line_users')
+            .update({ customer_id: matchedCustomerId })
+            .eq('user_id', userId)
+            .catch(() => {});
         }
 
         await lineReply(replyToken, replyMessages);
