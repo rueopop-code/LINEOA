@@ -846,10 +846,11 @@ async function compressImage(file, maxSize = 1200, quality = 0.8) {
   });
 }
 
-async function uploadImg(file) {
-  const sb = getSB();
-  if (!sb) throw new Error('Supabase ยังไม่ได้ตั้งค่า');
+// ── CLOUDINARY CONFIG ──
+const CLOUDINARY_CLOUD = 'dwet6be8c';
+const CLOUDINARY_PRESET = 'monshin';
 
+async function uploadImg(file) {
   // 🚀 บีบอัดก่อน — เร็วขึ้นมาก!
   let toUpload = file;
   try {
@@ -863,14 +864,24 @@ async function uploadImg(file) {
     console.warn('compress fail, use original:', e.message);
   }
 
-  const path = `products/${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`;
-  const { error } = await sb.storage.from('products').upload(path, toUpload, {
-    cacheControl: '31536000',  // cache 1 ปี (เดิม 1 ชั่วโมง)
-    upsert: false,
-    contentType: 'image/jpeg'
+  const formData = new FormData();
+  formData.append('file', toUpload);
+  formData.append('upload_preset', CLOUDINARY_PRESET);
+  formData.append('folder', 'products');
+
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, {
+    method: 'POST',
+    body: formData
   });
-  if (error) throw new Error(error.message);
-  return sb.storage.from('products').getPublicUrl(path).data.publicUrl;
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || `Upload failed: ${res.status}`);
+  }
+
+  const data = await res.json();
+  // ใช้ f_auto,q_auto เพื่อ optimize รูปอัตโนมัติ (WebP บน browser รองรับ)
+  return data.secure_url.replace('/upload/', '/upload/f_auto,q_auto/');
 }
 
 // ═══════════════════════════════════════════
@@ -2755,6 +2766,90 @@ function toast(msg){
 
 // init render — ไม่ render ที่นี่ เพราะ window.onload จะจัดการให้
 // (ก่อนหน้านี้บรรทัดนี้ render grid ทับข้อมูลที่กำลังโหลดจาก Supabase ทำให้สินค้าหาย)
+
+// ═══════════════════════════════════════════
+//  ONE-TIME MIGRATION: Supabase Storage → Cloudinary
+//  รันครั้งเดียวอัตโนมัติ แล้วหยุดเอง
+// ═══════════════════════════════════════════
+(async function migrateToCloudinary() {
+  const DONE_KEY = 'ms_cloudinary_migrated_v1';
+  if (localStorage.getItem(DONE_KEY)) return; // รันแล้ว → ข้าม
+
+  // รอให้ Supabase JS library โหลดเสร็จก่อน (max 15 วิ)
+  let sb = null;
+  for (let i = 0; i < 30; i++) {
+    if (typeof supabase !== 'undefined') {
+      sb = getSB();
+      if (sb) break;
+    }
+    await new Promise(r => setTimeout(r, 500));
+  }
+  if (!sb) { console.warn('[migrate] Supabase ไม่พร้อม — ลองรีเฟรชใหม่'); return; }
+
+  // ดึงสินค้าทั้งหมด
+  const { data: rows, error } = await sb.from('products').select('id, img');
+  if (error) { console.warn('[migrate] ดึงข้อมูลไม่ได้:', error.message); return; }
+
+  const toMigrate = rows.filter(r =>
+    r.img && r.img.includes('supabase') && !r.img.includes('cloudinary')
+  );
+
+  if (!toMigrate.length) {
+    localStorage.setItem(DONE_KEY, '1');
+    console.log('[migrate] ไม่มีรูปต้องย้าย');
+    return;
+  }
+
+  console.log(`[migrate] เริ่มย้าย ${toMigrate.length} รูป → Cloudinary`);
+  let ok = 0, fail = 0;
+
+  for (const row of toMigrate) {
+    try {
+      const imgRes = await fetch(row.img);
+      if (!imgRes.ok) throw new Error('download ไม่ได้: ' + imgRes.status);
+      const blob = await imgRes.blob();
+
+      const fd = new FormData();
+      fd.append('file', blob, 'img.jpg');
+      fd.append('upload_preset', CLOUDINARY_PRESET);
+      fd.append('folder', 'products');
+
+      const upRes = await fetch(
+        `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`,
+        { method: 'POST', body: fd }
+      );
+      if (!upRes.ok) throw new Error('upload ไม่ได้: ' + upRes.status);
+      const upData = await upRes.json();
+      const newUrl = upData.secure_url.replace('/upload/', '/upload/f_auto,q_auto/');
+
+      const { error: upErr } = await sb.from('products')
+        .update({ img: newUrl })
+        .eq('id', row.id);
+      if (upErr) throw new Error('อัปเดต DB ไม่ได้: ' + upErr.message);
+
+      // อัปเดต memory ด้วย
+      const p = products.find(x => String(x.id) === String(row.id));
+      if (p) { p.img = newUrl; }
+
+      console.log(`[migrate] OK id=${row.id}`);
+      ok++;
+    } catch (e) {
+      console.warn(`[migrate] FAIL id=${row.id}:`, e.message);
+      fail++;
+    }
+  }
+
+  console.log(`[migrate] เสร็จ: สำเร็จ ${ok} / ล้มเหลว ${fail}`);
+
+  if (fail === 0) {
+    // สำเร็จทั้งหมด → mark done ไม่ให้รันอีก
+    localStorage.setItem(DONE_KEY, '1');
+  }
+
+  // อัปเดต localStorage cache และ re-render
+  try { localStorage.setItem('ms_products', JSON.stringify(products)); } catch(e) {}
+  if (ok > 0 && typeof renderGrid === 'function') renderGrid();
+})();
 </script>
 </body>
 </html>
