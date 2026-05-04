@@ -1137,7 +1137,16 @@ app.post('/webhook', async (req, res) => {
       continue;
     }
 
-    // คำสั่ง: เปิดร้าน / shop / สั่ง / ซื้อ → ส่งลิงก์ shop พร้อม token
+    // คำสั่ง: id → ส่ง LINE User ID กลับให้ลูกค้า (เพื่อให้แอดมินผูกบัญชีได้)
+    if (text === 'id' || text === 'my id' || text === 'userid' || text === 'user id' || text === 'ไอดี') {
+      await lineReply(replyToken, [{
+        type: 'text',
+        text: `🆔 LINE User ID ของคุณ:\n\n${userId}\n\n📋 คัดลอกและส่งให้ร้านค้าเพื่อผูกบัญชีค่ะ`
+      }]);
+      continue;
+    }
+
+        // คำสั่ง: เปิดร้าน / shop / สั่ง / ซื้อ → ส่งลิงก์ shop พร้อม token
     if (text === 'เปิดร้าน' || text === 'shop' || text === 'สั่ง' || text === 'ซื้อ' || text === 'สั่งซื้อ' || text === 'เปิด' || text === 'ร้าน'|| text === 'ผูกบัญชี(สั่งสินค้า)'|| text === 'ผูกบัญชี') {
       const token = createLinkToken(userId);
       const shopLink = `${SHOP_URL}?lid=${token}`;
