@@ -561,6 +561,24 @@ app.post('/send-order', async (req, res) => {
       }
     }
 
+    // ── วิธีที่ 4: ค้นจากออเดอร์เก่าของ customer_id เดียวกัน ──
+    // กรณีลูกค้าสั่งซ้ำ — ออเดอร์แรกผูก LINE แล้ว ออเดอร์ถัดไปควรได้ใช้ตาม
+    if (!autoLinkedLineUid) {
+      const { data: prevOrder } = await supabase.from('orders')
+        .select('line_user_id')
+        .eq('customer_id', customerId)
+        .not('line_user_id', 'is', null)
+        .not('order_id', 'like', 'LINE-%')
+        .not('order_id', 'like', 'LINK-%')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (prevOrder?.line_user_id) {
+        autoLinkedLineUid = prevOrder.line_user_id;
+        console.log(`🔗 auto-linked via previous order of customer: ${customerId}`);
+      }
+    }
+
     // ── ผูกสำเร็จ → อัปเดต orders + line_users ──
     if (autoLinkedLineUid) {
       await supabase.from('orders')
