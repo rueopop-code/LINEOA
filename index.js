@@ -853,6 +853,25 @@ app.post('/messages', async (req, res) => {
   res.json({ success: true, message: data });
 });
 
+
+// ── upsert ข้อมูลลูกค้าลง line_users (เรียกทุกครั้งที่มี event) ──
+async function upsertLineUser(userId) {
+  if (!userId) return;
+  try {
+    const profRes = await fetch(`https://api.line.me/v2/bot/profile/${userId}`, {
+      headers: { 'Authorization': `Bearer ${process.env.LINE_TOKEN}` }
+    });
+    const displayName = profRes.ok ? (await profRes.json()).displayName || null : null;
+    await supabase.from('line_users').upsert([{
+      user_id     : userId,
+      display_name: displayName,
+      last_seen   : new Date().toISOString()
+    }], { onConflict: 'user_id' });
+  } catch (e) {
+    console.warn('upsertLineUser failed:', e.message);
+  }
+}
+
 // ── POST /webhook ─────────────────────────────────────────
 // LINE bot — ลูกค้าทักมา → ตอบสถานะออเดอร์
 app.post('/webhook', async (req, res) => {
@@ -862,6 +881,9 @@ app.post('/webhook', async (req, res) => {
   for (const ev of events) {
     const userId = ev.source?.userId;
     if (!userId) continue;
+
+    // ✨ บันทึก / อัปเดต line_users อัตโนมัติทุกครั้ง (fire-and-forget)
+    upsertLineUser(userId).catch(() => {});
 
     // ── FOLLOW EVENT (ลูกค้าเพิ่ม bot เป็นเพื่อน / unblock) ──
     if (ev.type === 'follow') {
