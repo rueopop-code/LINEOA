@@ -641,6 +641,18 @@ textarea.fi{resize:none;height:70px}
 
     <!-- PRODUCT LIST -->
     <div class="tab-pane" id="tab-products">
+      <!-- ☁️ Cloudinary Migration -->
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;padding:10px;background:linear-gradient(135deg,#e3f2fd,#bbdefb);border-radius:10px;border:1px solid #64b5f6;">
+        <div style="font-size:12px;color:#1565c0;font-weight:700;width:100%;margin-bottom:4px;">☁️ ย้ายรูปไป Cloudinary</div>
+        <button onclick="migrateImages()" style="padding:8px 14px;background:#1976d2;border:none;color:#fff;border-radius:8px;font-size:12px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:5px;">
+          🚀 ย้ายรูปจาก Supabase
+        </button>
+        <button onclick="if(confirm('บังคับย้ายใหม่ทั้งหมด? (รูปที่ย้ายแล้วจะข้าม)')){localStorage.removeItem('ms_cloudinary_migrated_v1');migrateImages(true);}" style="padding:8px 14px;background:#fff;border:1.5px solid #1976d2;color:#1976d2;border-radius:8px;font-size:12px;font-family:'Sarabun',sans-serif;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;">
+          🔄 บังคับย้ายใหม่
+        </button>
+      </div>
+
+      <!-- 📊 Excel -->
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;padding:10px;background:linear-gradient(135deg,#e8f5e9,#c8e6c9);border-radius:10px;border:1px solid #81c784;">
         <div style="font-size:12px;color:#2e7d32;font-weight:700;width:100%;margin-bottom:4px;">📊 จัดการเป็น Excel</div>
         <button onclick="exportProductsToExcel()" style="padding:8px 14px;background:#27AE60;border:none;color:#fff;border-radius:8px;font-size:12px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:5px;">
@@ -1343,7 +1355,19 @@ function renderGrid(list) {
   }, 0);
   const hasWholesale = p => p.sizes.some(s => s.tiers && s.tiers.length);
 
-  g.innerHTML = list.map((p, idx) => {
+  // 🔽 จัดเรียง: สินค้าหมด (stock = 0) → ดันลงล่างสุด
+  // สินค้าที่ไม่ track stock (null) หรือมีของ → อยู่บน, รักษาลำดับเดิม
+  const sortedList = [...list].sort((a, b) => {
+    const aStock = totalStock(a);
+    const bStock = totalStock(b);
+    const aOut = (aStock === 0);   // หมดเฉพาะตอน stock = 0 จริงๆ
+    const bOut = (bStock === 0);
+    if (aOut && !bOut) return 1;   // a หมด → ลงล่าง
+    if (!aOut && bOut) return -1;  // b หมด → ลงล่าง
+    return 0;                      // เท่าเทียม → ลำดับเดิม
+  });
+
+  g.innerHTML = sortedList.map((p, idx) => {
     // 12 รูปแรก = โหลดทันที (above the fold + รอบๆ)
     // ที่เหลือ lazy แต่ trigger เร็ว (scroll ใกล้ก็โหลดแล้ว)
     const loadAttr = idx < 12 ? 'loading="eager" fetchpriority="high"' : 'loading="lazy" fetchpriority="low"';
@@ -2777,41 +2801,52 @@ function toast(msg){
 
 // ═══════════════════════════════════════════
 //  ONE-TIME MIGRATION: Supabase Storage → Cloudinary
-//  รันครั้งเดียวอัตโนมัติ แล้วหยุดเอง
 // ═══════════════════════════════════════════
-(async function migrateToCloudinary() {
+//  ☁️ MIGRATE SUPABASE → CLOUDINARY
+//  เรียก migrateImages() จากปุ่มใน admin panel
+//  หรือพิมพ์ migrateImages() ที่ console
+// ═══════════════════════════════════════════
+async function migrateImages(force = false) {
   const DONE_KEY = 'ms_cloudinary_migrated_v1';
-  if (localStorage.getItem(DONE_KEY)) return; // รันแล้ว → ข้าม
-
-  // รอให้ Supabase JS library โหลดเสร็จก่อน (max 15 วิ)
-  let sb = null;
-  for (let i = 0; i < 30; i++) {
-    if (typeof supabase !== 'undefined') {
-      sb = getSB();
-      if (sb) break;
-    }
-    await new Promise(r => setTimeout(r, 500));
+  if (!force && localStorage.getItem(DONE_KEY)) {
+    if (typeof toast === 'function') toast('✓ ย้ายรูปเสร็จแล้วก่อนหน้านี้ — กดปุ่ม "บังคับย้ายใหม่" ถ้าต้องการ');
+    return { skipped: true };
   }
-  if (!sb) { console.warn('[migrate] Supabase ไม่พร้อม — ลองรีเฟรชใหม่'); return; }
 
-  // ดึงสินค้าทั้งหมด
-  const { data: rows, error } = await sb.from('products').select('id, img');
-  if (error) { console.warn('[migrate] ดึงข้อมูลไม่ได้:', error.message); return; }
+  const sb = getSB();
+  if (!sb) {
+    if (typeof toast === 'function') toast('⚠️ Supabase ยังไม่พร้อม', 'error');
+    return { error: 'no supabase' };
+  }
 
-  const toMigrate = rows.filter(r =>
+  const { data: rows, error } = await sb.from('products').select('id, name, img');
+  if (error) {
+    console.warn('[migrate] ดึงข้อมูลไม่ได้:', error.message);
+    if (typeof toast === 'function') toast('ดึงข้อมูลไม่ได้: ' + error.message, 'error');
+    return { error: error.message };
+  }
+
+  const toMigrate = (rows || []).filter(r =>
     r.img && r.img.includes('supabase') && !r.img.includes('cloudinary')
   );
 
   if (!toMigrate.length) {
     localStorage.setItem(DONE_KEY, '1');
     console.log('[migrate] ไม่มีรูปต้องย้าย');
-    return;
+    if (typeof toast === 'function') toast('✓ ไม่มีรูปต้องย้าย — Cloudinary พร้อมใช้แล้ว');
+    return { ok: 0, fail: 0 };
+  }
+
+  if (!confirm(`พบ ${toMigrate.length} รูปจาก Supabase\nต้องการย้ายไป Cloudinary ใช่ไหม?\n\n(ระยะเวลาประมาณ ${Math.ceil(toMigrate.length * 2 / 60)} นาที)`)) {
+    return { cancelled: true };
   }
 
   console.log(`[migrate] เริ่มย้าย ${toMigrate.length} รูป → Cloudinary`);
   let ok = 0, fail = 0;
 
-  for (const row of toMigrate) {
+  for (let i = 0; i < toMigrate.length; i++) {
+    const row = toMigrate[i];
+    if (typeof toast === 'function') toast(`📤 ย้าย ${i+1}/${toMigrate.length}: ${row.name || row.id}`);
     try {
       const imgRes = await fetch(row.img);
       if (!imgRes.ok) throw new Error('download ไม่ได้: ' + imgRes.status);
@@ -2835,29 +2870,30 @@ function toast(msg){
         .eq('id', row.id);
       if (upErr) throw new Error('อัปเดต DB ไม่ได้: ' + upErr.message);
 
-      // อัปเดต memory ด้วย
       const p = products.find(x => String(x.id) === String(row.id));
-      if (p) { p.img = newUrl; }
+      if (p) p.img = newUrl;
 
-      console.log(`[migrate] OK id=${row.id}`);
+      console.log(`[migrate] ✓ id=${row.id}`);
       ok++;
     } catch (e) {
-      console.warn(`[migrate] FAIL id=${row.id}:`, e.message);
+      console.warn(`[migrate] ✗ id=${row.id}:`, e.message);
       fail++;
     }
   }
 
   console.log(`[migrate] เสร็จ: สำเร็จ ${ok} / ล้มเหลว ${fail}`);
 
-  if (fail === 0) {
-    // สำเร็จทั้งหมด → mark done ไม่ให้รันอีก
-    localStorage.setItem(DONE_KEY, '1');
-  }
+  if (fail === 0) localStorage.setItem(DONE_KEY, '1');
 
-  // อัปเดต localStorage cache และ re-render
   try { localStorage.setItem('ms_products', JSON.stringify(products)); } catch(e) {}
-  if (ok > 0 && typeof renderGrid === 'function') renderGrid();
-})();
+  if (typeof renderGrid === 'function') renderGrid();
+  if (typeof renderPMList === 'function') renderPMList();
+
+  if (typeof toast === 'function') {
+    toast(`🎉 เสร็จ! สำเร็จ ${ok} ${fail ? `/ ล้มเหลว ${fail}` : ''}`);
+  }
+  return { ok, fail };
+}
 </script>
 </body>
 </html>
