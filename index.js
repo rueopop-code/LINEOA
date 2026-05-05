@@ -1043,7 +1043,7 @@ app.post('/webhook', async (req, res) => {
     }
 
     // คำสั่ง: เปิดร้าน / shop / สั่ง / ซื้อ → ส่งลิงก์ shop พร้อม token
-    if (text === 'เปิดร้าน' || text === 'shop' || text === 'สั่ง' || text === 'ซื้อ' || text === 'สั่งซื้อ' || text === 'เปิด' || text === 'ร้าน') {
+     if (text === 'เปิดร้าน' || text === 'shop' || text === 'สั่ง' || text === 'ซื้อ' || text === 'สั่งซื้อ' || text === 'เปิด' || text === 'ร้าน'|| text === 'ผูกบัญชี(สั่งสินค้า)'|| text === 'ผูกบัญชี') {
       const token = createLinkToken(userId);
       const shopLink = `${SHOP_URL}?lid=${token}`;
       await lineReply(replyToken, [{
@@ -1063,7 +1063,7 @@ app.post('/webhook', async (req, res) => {
               `🛒 สั่งสินค้า → ${shopLink}\n` +
               `📦 พิมพ์ "ออเดอร์" → ดูสถานะออเดอร์\n` +
               `🔗 พิมพ์เบอร์โทร → ผูกออเดอร์เก่า\n` +
-              `📲 พิมพ์ "เปิดร้าน" → รับลิงก์ใหม่\n\n` +
+              `📲 พิมพ์ "เปิดร้าน/ผูกบัญชี(สั่งสินค้า)/ผูกบัญชี" → รับลิงก์ใหม่\n\n` +
               `ถ้ามีคำถาม พิมพ์มาได้เลย — ร้านจะตอบในแชทค่ะ 💬`
       }]);
       continue;
