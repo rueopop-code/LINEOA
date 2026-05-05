@@ -1916,7 +1916,10 @@ async function sendOrder() {
       customerId: CUSTOMER_ID,
       customerName: name,        // ชื่อจริง — สำหรับจ่าหน้าพัสดุ
       lineName: lineName,        // ✨ ชื่อ LINE — สำหรับผูกแชท
-      phone, orderType:cartOT, address:addr, extra, items, total
+      phone, orderType:cartOT, address:addr, extra, items, total,
+      // 📍 พิกัด GPS (ถ้ามี) — สำหรับให้แอดมินดูแผนที่
+      mapLat: mapLat || null,
+      mapLng: mapLng || null
     };
     console.log('📦 sending order:', JSON.stringify(payload));
 

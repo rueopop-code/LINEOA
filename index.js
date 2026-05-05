@@ -6,13 +6,7 @@ const path    = require('path');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
-// CORS — รองรับ preflight (OPTIONS) จาก GitHub Pages และทุก domain
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
-app.options('*', cors()); // preflight สำหรับทุก route
+app.use(cors({ origin: '*' }));
 app.use(express.json());
 
 // ─── Supabase ──────────────────────────────────────────────
@@ -428,7 +422,8 @@ app.get('/api', (req, res) => res.json({
 app.post('/send-order', async (req, res) => {
   const {
     customerId, customerName, lineName, phone, address, note,
-    items, total, orderType, extra
+    items, total, orderType, extra,
+    mapLat, mapLng                              // 📍 พิกัด GPS
   } = req.body;
 
   if (!customerId || !customerName || !items?.length || total == null)
@@ -442,7 +437,10 @@ app.post('/send-order', async (req, res) => {
     line_name: lineName || customerName,     // ✨ ชื่อ LINE — สำหรับผูกแชท
     phone: phone || null, address: address || null, note: note || extra || null,
     items, total, status: 'pending', created_at,
-    order_type: orderType || 'pickup'
+    order_type: orderType || 'pickup',
+    // 📍 พิกัด GPS (ถ้ามี)
+    map_lat: (mapLat !== null && mapLat !== undefined && !isNaN(mapLat)) ? Number(mapLat) : null,
+    map_lng: (mapLng !== null && mapLng !== undefined && !isNaN(mapLng)) ? Number(mapLng) : null
   };
 
   const { error: dbErr } = await supabase.from('orders').insert([order]);
@@ -484,113 +482,41 @@ app.post('/send-order', async (req, res) => {
     if (error) console.warn('insert summary msg:', error.message);
   });
 
-  // ✨ Auto-link: ผูก line_user_id ให้ออเดอร์ใหม่อัตโนมัติ — 3 วิธีเรียงตามความแม่นยำ
+  // ✨ Auto-link: หา ghost LINE chat ที่ลูกค้าเคยทักไว้ → ผูก line_user_id ให้ออเดอร์ใหม่
+  // ใช้เบอร์โทรเป็น matching key ก่อน (แม่นกว่า) — fallback ใช้ customer_name
   let autoLinkedLineUid = null;
   try {
-    const normPhone = (p) => String(p || '').replace(/\D/g, '');
-    const norm = (s) => String(s || '').trim().toLowerCase();
-    const myPhone = normPhone(phone);
+    // หา ghost orders ที่อาจจะเป็นลูกค้าคนเดียวกัน
+    const { data: ghostOrders } = await supabase.from('orders')
+      .select('order_id, line_user_id, customer_name, line_name, phone')
+      .like('order_id', 'LINE-%')
+      .not('line_user_id', 'is', null);
 
-    // ── วิธีที่ 0 (เร็วและแม่นที่สุด): ค้น LINK-{customerId} row โดยตรง ──
-    // /link-line สร้าง row นี้ทันทีที่ลูกค้าเปิดร้านผ่านลิงก์ LINE
-    // ไม่ต้องเดา ไม่ต้อง match ชื่อ/phone เลย
-    if (!autoLinkedLineUid) {
-      const linkRowId = `LINK-${customerId.slice(0, 20)}`;
-      const { data: linkRow } = await supabase.from('orders')
-        .select('line_user_id')
-        .eq('order_id', linkRowId)
-        .not('line_user_id', 'is', null)
-        .maybeSingle();
-      if (linkRow?.line_user_id) {
-        autoLinkedLineUid = linkRow.line_user_id;
-        console.log(`🔗 auto-linked via LINK- row: ${linkRowId}`);
+    if (ghostOrders?.length) {
+      // matching: phone, ชื่อ LINE (สำคัญสุด!), หรือ ชื่อจริง
+      const normPhone = (p) => String(p || '').replace(/\D/g, '');
+      const norm = (s) => String(s || '').trim().toLowerCase();
+      const myPhone = normPhone(phone);
+      const myLineName = norm(lineName);          // ✨ ใช้ชื่อ LINE เป็นหลัก
+      const myCustName = norm(customerName);
+
+      const matched = ghostOrders.find(g => {
+        const gLine = norm(g.line_name);
+        const gCust = norm(g.customer_name);
+        return (myPhone && normPhone(g.phone) === myPhone) ||
+               (myLineName && gLine && gLine === myLineName) ||
+               (myLineName && gCust && gCust === myLineName) ||  // ghost เก่าอาจเก็บใน customer_name
+               (myCustName && gCust && gCust === myCustName);
+      });
+
+      if (matched?.line_user_id) {
+        autoLinkedLineUid = matched.line_user_id;
+        // อัปเดตออเดอร์ใหม่ + ทุกออเดอร์ของ customer_id ให้มี line_user_id
+        await supabase.from('orders')
+          .update({ line_user_id: autoLinkedLineUid })
+          .eq('customer_id', customerId)
+          .then(({ error }) => { if (!error) console.log(`🔗 auto-linked ${customerId} ↔ LINE`); });
       }
-    }
-
-    // ── วิธีที่ 1: ค้นจาก line_users.customer_id ──
-    // บันทึกตอนลูกค้าเปิดร้านผ่านลิงก์ LINE → ผูกได้ทันทีโดยไม่ต้องเดา
-    if (!autoLinkedLineUid) {
-      const { data: luRow } = await supabase.from('line_users')
-        .select('user_id')
-        .eq('customer_id', customerId)
-        .order('last_seen', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (luRow?.user_id) {
-        autoLinkedLineUid = luRow.user_id;
-        console.log(`🔗 auto-linked via line_users.customer_id: ${customerId}`);
-      }
-    }
-
-    // ── วิธีที่ 2: ค้นจาก ghost orders (LINE-% / LINK-%) ด้วย phone + ชื่อ ──
-    if (!autoLinkedLineUid) {
-      const { data: ghostOrders } = await supabase.from('orders')
-        .select('order_id, line_user_id, customer_name, line_name, phone')
-        .or('order_id.like.LINE-%,order_id.like.LINK-%')
-        .not('line_user_id', 'is', null);
-
-      if (ghostOrders?.length) {
-        const myLineName = norm(lineName);
-        const myCustName = norm(customerName);
-        const matched = ghostOrders.find(g => {
-          const gLine = norm(g.line_name);
-          const gCust = norm(g.customer_name);
-          return (myPhone && normPhone(g.phone) === myPhone) ||
-                 (myLineName && gLine && gLine === myLineName) ||
-                 (myLineName && gCust && gCust === myLineName) ||
-                 (myCustName && gCust && gCust === myCustName);
-        });
-        if (matched?.line_user_id) {
-          autoLinkedLineUid = matched.line_user_id;
-          console.log(`🔗 auto-linked via ghost order match: ${matched.order_id}`);
-        }
-      }
-    }
-
-    // ── วิธีที่ 3: ค้นจาก line_users ด้วยเบอร์โทร (ถ้ามี phone column) ──
-    if (!autoLinkedLineUid && myPhone) {
-      const { data: luPhone } = await supabase.from('line_users')
-        .select('user_id')
-        .eq('phone', myPhone)
-        .order('last_seen', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (luPhone?.user_id) {
-        autoLinkedLineUid = luPhone.user_id;
-        console.log(`🔗 auto-linked via line_users.phone: ${myPhone}`);
-      }
-    }
-
-    // ── วิธีที่ 4: ค้นจากออเดอร์เก่าของ customer_id เดียวกัน ──
-    // กรณีลูกค้าสั่งซ้ำ — ออเดอร์แรกผูก LINE แล้ว ออเดอร์ถัดไปควรได้ใช้ตาม
-    if (!autoLinkedLineUid) {
-      const { data: prevOrder } = await supabase.from('orders')
-        .select('line_user_id')
-        .eq('customer_id', customerId)
-        .not('line_user_id', 'is', null)
-        .not('order_id', 'like', 'LINE-%')
-        .not('order_id', 'like', 'LINK-%')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (prevOrder?.line_user_id) {
-        autoLinkedLineUid = prevOrder.line_user_id;
-        console.log(`🔗 auto-linked via previous order of customer: ${customerId}`);
-      }
-    }
-
-    // ── ผูกสำเร็จ → อัปเดต orders + line_users ──
-    if (autoLinkedLineUid) {
-      await supabase.from('orders')
-        .update({ line_user_id: autoLinkedLineUid })
-        .eq('customer_id', customerId)
-        .then(({ error }) => { if (!error) console.log(`✅ ${customerId} ↔ LINE ${autoLinkedLineUid.slice(0,12)}…`); });
-
-      // อัปเดต line_users ให้มี customer_id (เพื่อ match ได้เร็วขึ้นครั้งถัดไป)
-      await supabase.from('line_users')
-        .update({ customer_id: customerId })
-        .eq('user_id', autoLinkedLineUid)
-        .catch(() => {});
     }
   } catch (e) {
     console.warn('auto-link failed:', e.message);
@@ -621,14 +547,6 @@ app.post('/send-order', async (req, res) => {
       console.log(`ℹ️ ${order_id} ลูกค้ายังไม่ได้ผูกบัญชี LINE — จะส่ง flex หลังผูกบัญชี`);
     }
   }
-
-  // ✨ ลบ LINK- ghost row — ออเดอร์จริงมี line_user_id แล้ว ไม่ต้องการ mapping row อีกต่อไป
-  supabase.from('orders')
-    .delete()
-    .eq('order_id', `LINK-${customerId.slice(0, 20)}`)
-    .then(({ error: e }) => {
-      if (!e) console.log(`🗑️ cleaned up LINK-${customerId.slice(0,10)}… ghost`);
-    });
 
   res.json({ success: true, orderId: order_id });
 });
@@ -679,23 +597,6 @@ app.post('/link-line', async (req, res) => {
     .eq('customer_id', customer_id);
   if (error) console.warn('link orders failed:', error.message);
 
-  // ✨ FIX Bug 1: upsert ghost LINK-row เพื่อเก็บ mapping แม้ยังไม่มีออเดอร์จริง
-  // เวลา /send-order ทำงาน จะหา line_user_id จาก row นี้ได้เสมอ
-  await supabase.from('orders').upsert([{
-    order_id    : `LINK-${customer_id.slice(0, 20)}`,
-    customer_id,
-    line_user_id: lineUserId,
-    customer_name: '',          // จะ fill ทีหลังตอนดึงโปรไฟล์ LINE
-    items       : [],
-    total       : 0,
-    status      : 'pending',
-    created_at  : new Date().toISOString(),
-    note        : '🔗 ผูกบัญชี LINE (รอสั่งสินค้า)'
-  }], { onConflict: 'order_id' }).then(({ error: e }) => {
-    if (e) console.warn('upsert link-ghost failed:', e.message);
-    else console.log(`🔗 stored LINK mapping: customer=${customer_id} ↔ LINE=${lineUserId.slice(0,12)}…`);
-  });
-
   // ดึงโปรไฟล์ LINE มาเพิ่ม customer_name (ถ้าออเดอร์ยังไม่มีชื่อ)
   let displayName = null;
   try {
@@ -707,17 +608,6 @@ app.post('/link-line', async (req, res) => {
       displayName = profile.displayName || null;
     }
   } catch(e) { /* ignore */ }
-
-  // ✨ อัปเดตชื่อ LINE ใน LINK ghost row
-  if (displayName) {
-    await supabase.from('orders')
-      .update({ customer_name: displayName, line_name: displayName })
-      .eq('order_id', `LINK-${customer_id.slice(0, 20)}`)
-      .catch(() => {});
-  }
-
-  // ✨ บันทึก customer_id ลง line_users เพื่อให้ auto-link ได้ 100%
-  upsertLineUser(lineUserId, { customer_id }).catch(() => {});
 
   console.log(`🔗 linked customer ${customer_id} ↔ LINE ${lineUserId.slice(0,12)}…`);
   res.json({ success: true, lineUserId: lineUserId.slice(0,12) + '…', displayName });
@@ -934,36 +824,6 @@ app.post('/messages', async (req, res) => {
   res.json({ success: true, message: data });
 });
 
-
-// ── upsert ข้อมูลลูกค้าลง line_users (เรียกทุกครั้งที่มี event) ──
-async function upsertLineUser(userId, extraFields = {}) {
-  if (!userId) return null;
-  try {
-    const profRes = await fetch(`https://api.line.me/v2/bot/profile/${userId}`, {
-      headers: { 'Authorization': `Bearer ${process.env.LINE_TOKEN}` }
-    });
-    const profile = profRes.ok ? await profRes.json() : {};
-    const displayName = profile.displayName || null;
-    const pictureUrl  = profile.pictureUrl  || null;
-
-    const row = {
-      user_id     : userId,
-      display_name: displayName,
-      picture_url : pictureUrl,
-      last_seen   : new Date().toISOString(),
-      ...extraFields   // ✨ เผื่อส่ง customer_id มาด้วย
-    };
-    // ถ้าไม่มี customer_id ใน extraFields → ไม่ทับค่าเดิม (only update if provided)
-    if (!extraFields.customer_id) delete row.customer_id;
-
-    await supabase.from('line_users').upsert([row], { onConflict: 'user_id' });
-    return displayName;
-  } catch (e) {
-    console.warn('upsertLineUser failed:', e.message);
-    return null;
-  }
-}
-
 // ── POST /webhook ─────────────────────────────────────────
 // LINE bot — ลูกค้าทักมา → ตอบสถานะออเดอร์
 app.post('/webhook', async (req, res) => {
@@ -973,9 +833,6 @@ app.post('/webhook', async (req, res) => {
   for (const ev of events) {
     const userId = ev.source?.userId;
     if (!userId) continue;
-
-    // ✨ บันทึก / อัปเดต line_users อัตโนมัติทุกครั้ง (fire-and-forget)
-    upsertLineUser(userId).catch(() => {});
 
     // ── FOLLOW EVENT (ลูกค้าเพิ่ม bot เป็นเพื่อน / unblock) ──
     if (ev.type === 'follow') {
@@ -990,8 +847,6 @@ app.post('/webhook', async (req, res) => {
                 `กดลิงก์ด้านล่างเพื่อเริ่มสั่งซื้อ ระบบจะจดจำคุณอัตโนมัติ ไม่ต้องลงทะเบียน 🚀\n\n` +
                 `${shopLink}\n\n` +
                 `ครั้งหน้าพิมพ์ "เปิดร้าน" เพื่อรับลิงก์ใหม่ได้ตลอดค่ะ`
-                `ครั้งหน้าพิมพ์ "ผูกบัญชี(สั่งสินค้า)" เพื่อรับลิงก์ใหม่ได้ตลอดค่ะ`
-                `ครั้งหน้าพิมพ์ "ผูกบัญชี" เพื่อรับลิงก์ใหม่ได้ตลอดค่ะ`
         }
       ]);
       continue;
@@ -1090,20 +945,7 @@ app.post('/webhook', async (req, res) => {
           }
         ];
         if (fullLatest && fullLatest.items?.length) {
-          // ✨ ส่ง order summary + status flex พร้อมกัน (ไม่ต้องกดดูสถานะ)
           replyMessages.push(buildOrderSummaryFlex(fullLatest));
-          if (fullLatest.status && fullLatest.status !== 'pending') {
-            replyMessages.push(buildStatusUpdateFlex(fullLatest, fullLatest.status));
-          }
-        }
-
-        // ✨ บันทึก customer_id ลง line_users เพื่อ auto-link ครั้งถัดไป
-        const matchedCustomerId = matches[0].customer_id;
-        if (matchedCustomerId) {
-          supabase.from('line_users')
-            .update({ customer_id: matchedCustomerId })
-            .eq('user_id', userId)
-            .catch(() => {});
         }
 
         await lineReply(replyToken, replyMessages);
@@ -1119,7 +961,7 @@ app.post('/webhook', async (req, res) => {
 
     // คำสั่ง: ออเดอร์ / order / สถานะ → ดูออเดอร์ของตัวเอง
     if (text.includes('ออเดอร์') || text.includes('order') || text.includes('สถานะ') || text.includes('status')) {
-      // หาออเดอร์ที่ผูกกับ LINE user นี้ (ตรง)
+      // หาออเดอร์ที่ผูกกับ LINE user นี้
       const { data: myOrders } = await supabase.from('orders')
         .select('*')
         .eq('line_user_id', userId)
@@ -1128,41 +970,9 @@ app.post('/webhook', async (req, res) => {
         .limit(10);
 
       // กรอง ghost orders ออก (ที่ items เป็น array ว่าง)
-      let realOrders = (myOrders || []).filter(o =>
+      const realOrders = (myOrders || []).filter(o =>
         Array.isArray(o.items) && o.items.length > 0
       );
-
-      // ✨ FIX: ถ้าไม่พบ — fallback หา customer_id จาก LINK- ghost แล้วดึงออเดอร์
-      if (!realOrders.length) {
-        const { data: linkGhost } = await supabase.from('orders')
-          .select('customer_id')
-          .eq('line_user_id', userId)
-          .like('order_id', 'LINK-%')
-          .limit(1);
-
-        if (linkGhost?.[0]?.customer_id) {
-          const { data: cidOrders } = await supabase.from('orders')
-            .select('*')
-            .eq('customer_id', linkGhost[0].customer_id)
-            .not('order_id', 'like', 'LINK-%')
-            .not('order_id', 'like', 'LINE-%')
-            .order('created_at', { ascending: false })
-            .limit(10);
-
-          const filtered = (cidOrders || []).filter(o =>
-            Array.isArray(o.items) && o.items.length > 0
-          );
-          if (filtered.length) {
-            // ✨ backfill line_user_id ให้ออเดอร์เหล่านี้ด้วย
-            await supabase.from('orders')
-              .update({ line_user_id: userId })
-              .eq('customer_id', linkGhost[0].customer_id)
-              .not('order_id', 'like', 'LINK-%')
-              .catch(() => {});
-            realOrders = filtered;
-          }
-        }
-      }
 
       if (!realOrders.length) {
         await lineReply(replyToken, [{
@@ -1232,22 +1042,13 @@ app.post('/webhook', async (req, res) => {
       continue;
     }
 
-    // คำสั่ง: id → ส่ง LINE User ID กลับให้ลูกค้า (เพื่อให้แอดมินผูกบัญชีได้)
-    if (text === 'id' || text === 'my id' || text === 'userid' || text === 'user id' || text === 'ไอดี') {
-      await lineReply(replyToken, [{
-        type: 'text',
-        text: `🆔 LINE User ID ของคุณ:\n\n${userId}\n\n📋 คัดลอกและส่งให้ร้านค้าเพื่อผูกบัญชีค่ะ`
-      }]);
-      continue;
-    }
-
-        // คำสั่ง: เปิดร้าน / shop / สั่ง / ซื้อ → ส่งลิงก์ shop พร้อม token
-    if (text === 'เปิดร้าน' || text === 'shop' || text === 'สั่ง' || text === 'ซื้อ' || text === 'สั่งซื้อ' || text === 'เปิด' || text === 'ร้าน'|| text === 'ผูกบัญชี(สั่งสินค้า)'|| text === 'ผูกบัญชี') {
+    // คำสั่ง: เปิดร้าน / shop / สั่ง / ซื้อ → ส่งลิงก์ shop พร้อม token
+    if (text === 'เปิดร้าน' || text === 'shop' || text === 'สั่ง' || text === 'ซื้อ' || text === 'สั่งซื้อ' || text === 'เปิด' || text === 'ร้าน') {
       const token = createLinkToken(userId);
       const shopLink = `${SHOP_URL}?lid=${token}`;
       await lineReply(replyToken, [{
         type: 'text',
-        text: `🛍 กดลิงก์ด้านล่างเพื่อสั่งสินค้า ระบบจะจดจำคุณอัตโนมัติ\n\n${shopLink}\n\n⏰ ลิงก์มีอายุ 30 นาที`
+        text: `🛍 กดลิงก์ด้านล่างเพื่อเปิดร้านค้า ระบบจะจดจำคุณอัตโนมัติ\n\n${shopLink}\n\n⏰ ลิงก์มีอายุ 30 นาที`
       }]);
       continue;
     }
@@ -1262,19 +1063,18 @@ app.post('/webhook', async (req, res) => {
               `🛒 สั่งสินค้า → ${shopLink}\n` +
               `📦 พิมพ์ "ออเดอร์" → ดูสถานะออเดอร์\n` +
               `🔗 พิมพ์เบอร์โทร → ผูกออเดอร์เก่า\n` +
-              `📲 พิมพ์ "เปิดร้าน/ผูกบัญชี(สั่งสินค้า)/ผูกบัญชี" → รับลิงก์ใหม่\n\n` +
+              `📲 พิมพ์ "เปิดร้าน" → รับลิงก์ใหม่\n\n` +
               `ถ้ามีคำถาม พิมพ์มาได้เลย — ร้านจะตอบในแชทค่ะ 💬`
       }]);
       continue;
     }
 
     // ข้อความอื่นๆ: forward ไปแอดมิน + บันทึกในแชท (ถ้าผูกบัญชีแล้ว)
-    // ✨ FIX Bug 3: กรองออกทั้ง LINE-% และ LINK-% ghost — นับเฉพาะออเดอร์จริง
+    // ✨ กรอง ghost order (LINE-xxx) ออก — นับเฉพาะออเดอร์จริงที่ลูกค้าสั่งของแล้ว
     const { data: linkedOrders } = await supabase.from('orders')
       .select('order_id, customer_id, customer_name')
       .eq('line_user_id', userId)
       .not('order_id', 'like', 'LINE-%')
-      .not('order_id', 'like', 'LINK-%')
       .order('created_at', { ascending: false })
       .limit(1);
 
@@ -1308,37 +1108,21 @@ app.post('/webhook', async (req, res) => {
       created_at : new Date().toISOString()
     }]).then(({ error }) => { if (error) console.warn('insert msg:', error.message); });
 
-    // ✨ FIX: ถ้ายังไม่มีออเดอร์จริง → สร้าง ghost เฉพาะถ้ายังไม่มี LINK- ghost อยู่แล้ว
+    // ถ้ายังไม่มีออเดอร์ → สร้าง "ghost order" เพื่อให้แสดงในแอดมิน panel
     if (!latest) {
-      // ตรวจว่ามี LINK- ghost (ผูกบัญชีแล้วแต่ยังไม่สั่ง) ไหม — ถ้ามี ไม่ต้องสร้าง LINE- ซ้ำ
-      const { data: linkGhost } = await supabase.from('orders')
-        .select('order_id').eq('line_user_id', userId).like('order_id', 'LINK-%').limit(1);
-
-      if (!linkGhost?.length) {
-        // ยังไม่ผูกบัญชีเลย → สร้าง LINE- ghost ให้แอดมินเห็นแชท
-        await supabase.from('orders').upsert([{
-          order_id     : threadOrderId,
-          customer_id  : threadCustomerId,
-          customer_name: displayName,
-          line_user_id : userId,
-          items        : [],
-          total        : 0,
-          status       : 'pending',
-          created_at   : new Date().toISOString(),
-          note         : '💬 แชทเข้ามาทาง LINE OA (ยังไม่มีออเดอร์)'
-        }], { onConflict: 'order_id' }).then(({ error }) => {
-          if (error) console.warn('upsert ghost order:', error.message);
-        });
-      } else {
-        // มี LINK- ghost → อัปเดตชื่อ/ข้อความแทน
-        await supabase.from('messages').upsert([{
-          order_id   : linkGhost[0].order_id,
-          customer_id: threadCustomerId,
-          sender     : 'customer',
-          text       : rawText,
-          created_at : new Date().toISOString()
-        }]).catch(() => {});
-      }
+      await supabase.from('orders').upsert([{
+        order_id     : threadOrderId,
+        customer_id  : threadCustomerId,
+        customer_name: displayName,
+        line_user_id : userId,
+        items        : [],
+        total        : 0,
+        status       : 'pending',
+        created_at   : new Date().toISOString(),
+        note         : '💬 แชทเข้ามาทาง LINE OA (ยังไม่มีออเดอร์)'
+      }], { onConflict: 'order_id' }).then(({ error }) => {
+        if (error) console.warn('upsert ghost order:', error.message);
+      });
     }
 
     // ✨ แจ้งแอดมินเฉพาะลูกค้าที่มีออเดอร์จริง + ไม่ใช่ keyword auto-reply
@@ -1383,8 +1167,6 @@ app.get('/orders', async (req, res) => {
   const { data, error, count } = await supabase
     .from('orders')
     .select('*', { count: 'exact' })
-    // ✨ ซ่อน LINK- rows — mapping record ไม่ใช่ออเดอร์จริง
-    .not('order_id', 'like', 'LINK-%')
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
   if (error) return res.status(500).json({ error: error.message });
@@ -1438,6 +1220,395 @@ app.patch('/orders/:orderId/status', async (req, res) => {
 //  หน้าร้านลูกค้า อยู่ที่ index.html (อยู่บน Railway/GitHub)
 //  หน้าแอดมิน admin.html เก็บไว้ในเครื่องเจ้าของร้าน — เปิดจาก browser ตรงๆ
 //  (admin.html จะเรียก API ของ backend ที่นี่ผ่าน CORS)
+
+// ═══════════════════════════════════════════════════════════
+//  RIDER SYSTEM — Phase 1
+// ═══════════════════════════════════════════════════════════
+
+// ─── สร้าง ID ให้ rider ─────────────────────────────────
+function genRiderId() {
+  return 'RID-' + Math.random().toString(36).slice(2, 8).toUpperCase();
+}
+
+// ─── Rider linkTokens (เหมือน customer link tokens) ─────
+const riderLinkTokens = new Map();
+
+function createRiderLinkToken(riderId) {
+  const token = Math.random().toString(36).slice(2, 12) + Math.random().toString(36).slice(2, 8);
+  riderLinkTokens.set(token, { riderId, expiresAt: Date.now() + 30*60*1000 });
+  // cleanup expired
+  for (const [k, v] of riderLinkTokens.entries()) {
+    if (v.expiresAt < Date.now()) riderLinkTokens.delete(k);
+  }
+  return token;
+}
+
+// ─── สร้าง Flex Message งานใหม่สำหรับไรเดอร์ ─────────────
+function buildRiderJobFlex(order, riderUrl) {
+  const items = Array.isArray(order.items) ? order.items : [];
+  const itemSummary = items.length 
+    ? items.slice(0, 3).map(i => `• ${i.name || ''} ×${i.qty || 1}`).join('\n') +
+      (items.length > 3 ? `\n• และอีก ${items.length - 3} รายการ` : '')
+    : '—';
+  
+  return {
+    type: 'flex',
+    altText: `🆕 งานใหม่ — ${order.customer_name || ''}`,
+    contents: {
+      type: 'bubble',
+      size: 'mega',
+      header: {
+        type: 'box', layout: 'vertical', backgroundColor: '#FF6B35',
+        paddingAll: 'lg',
+        contents: [
+          { type: 'text', text: '🆕 งานใหม่!', color: '#ffffff', size: 'xl', weight: 'bold' },
+          { type: 'text', text: `#${order.order_id}`, color: '#ffffff', size: 'sm' }
+        ]
+      },
+      body: {
+        type: 'box', layout: 'vertical', spacing: 'md',
+        contents: [
+          { type: 'text', text: `👤 ${order.customer_name || '-'}`, weight: 'bold', size: 'md' },
+          { type: 'text', text: `📞 ${order.phone || '-'}`, size: 'sm', color: '#666666' },
+          ...(order.address ? [
+            { type: 'separator', margin: 'sm' },
+            { type: 'text', text: '📍 จัดส่งที่:', size: 'xs', color: '#888888', margin: 'sm' },
+            { type: 'text', text: String(order.address).slice(0, 100), size: 'sm', wrap: true }
+          ] : []),
+          { type: 'separator', margin: 'sm' },
+          { type: 'text', text: '📦 รายการ:', size: 'xs', color: '#888888', margin: 'sm' },
+          { type: 'text', text: itemSummary, size: 'sm', wrap: true },
+          { type: 'separator', margin: 'sm' },
+          { type: 'box', layout: 'baseline', spacing: 'sm', margin: 'sm', contents: [
+            { type: 'text', text: 'ยอดรวม', size: 'sm', color: '#666666', flex: 0 },
+            { type: 'text', text: `฿${(order.total || 0).toLocaleString()}`, size: 'lg', weight: 'bold', color: '#C0392B', align: 'end' }
+          ]}
+        ]
+      },
+      footer: {
+        type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: 'lg',
+        contents: [
+          { type: 'button', style: 'primary', color: '#27AE60', height: 'sm',
+            action: { type: 'uri', label: '✅ รับงานนี้', uri: `${riderUrl}#accept=${order.order_id}` }},
+          { type: 'text', text: 'กดด่วน! ใครรับก่อน ได้ก่อน', size: 'xs', color: '#888888', align: 'center', margin: 'sm' }
+        ]
+      }
+    }
+  };
+}
+
+// ─── ส่ง Flex แจ้งงานให้ไรเดอร์ทั้งหมด (ที่ออนไลน์) ─────
+async function offerJobToRiders(orderId) {
+  const { data: order, error: oErr } = await supabase
+    .from('orders').select('*').eq('order_id', orderId).single();
+  if (oErr || !order) return { sent: 0, error: 'order not found' };
+  
+  if (order.rider_id) return { sent: 0, error: 'already assigned' };
+  if (String(order.order_id).startsWith('LINE-')) return { sent: 0, error: 'ghost order' };
+  
+  // หา riders ที่: active + มี line_user_id + ไม่มีงานค้าง (status != 'busy')
+  const { data: riders } = await supabase
+    .from('riders')
+    .select('id, name, line_user_id, status')
+    .eq('is_active', true)
+    .neq('status', 'busy')
+    .not('line_user_id', 'is', null);
+  
+  if (!riders?.length) {
+    console.warn(`[rider] no available riders for #${orderId}`);
+    return { sent: 0, error: 'no available riders' };
+  }
+  
+  // บันทึก offer ในตาราง
+  const offers = riders.map(r => ({
+    order_id: orderId, rider_id: r.id, status: 'pending'
+  }));
+  await supabase.from('rider_offers').upsert(offers, { onConflict: 'order_id,rider_id' });
+  
+  // ส่ง Flex ให้ทุกคน
+  const riderUrl = `${SHOP_URL}rider.html`;
+  const flex = buildRiderJobFlex(order, riderUrl);
+  
+  let sent = 0;
+  for (const r of riders) {
+    try {
+      await linePush(r.line_user_id, [flex]);
+      sent++;
+    } catch (e) {
+      console.error(`[rider] push to ${r.id} failed:`, e.message);
+    }
+  }
+  
+  console.log(`[rider] offered #${orderId} to ${sent}/${riders.length} riders`);
+  return { sent, total: riders.length };
+}
+
+// ─── Endpoint: GET rider info by token ─────────────────
+app.get('/rider/me', async (req, res) => {
+  const { token, lid } = req.query;
+  
+  let riderId = null;
+  
+  // ผ่าน token (จากลิงก์ใน LINE)
+  if (token) {
+    const t = riderLinkTokens.get(String(token));
+    if (t && t.expiresAt > Date.now()) {
+      riderId = t.riderId;
+    }
+  }
+  
+  // ผ่าน line_user_id
+  if (!riderId && lid) {
+    const { data } = await supabase.from('riders')
+      .select('id').eq('line_user_id', String(lid)).single();
+    if (data) riderId = data.id;
+  }
+  
+  if (!riderId) return res.status(401).json({ error: 'unauthorized' });
+  
+  const { data: rider, error } = await supabase.from('riders')
+    .select('*').eq('id', riderId).single();
+  if (error || !rider) return res.status(404).json({ error: 'rider not found' });
+  
+  // อัปเดต last_seen
+  await supabase.from('riders')
+    .update({ last_seen_at: new Date().toISOString() })
+    .eq('id', riderId);
+  
+  res.json({ rider });
+});
+
+// ─── Endpoint: GET งานที่เปิดให้รับ (offers) ─────────────
+app.get('/rider/:riderId/offers', async (req, res) => {
+  const riderId = req.params.riderId;
+  
+  // หา offers pending ของ rider นี้
+  const { data: offers } = await supabase.from('rider_offers')
+    .select('order_id, offered_at, status')
+    .eq('rider_id', riderId)
+    .eq('status', 'pending')
+    .order('offered_at', { ascending: false });
+  
+  if (!offers?.length) return res.json({ offers: [] });
+  
+  const orderIds = offers.map(o => o.order_id);
+  const { data: orders } = await supabase.from('orders')
+    .select('order_id, customer_name, phone, address, items, total, note, order_type')
+    .in('order_id', orderIds)
+    .is('rider_id', null);  // เฉพาะที่ยังไม่มีคนรับ
+  
+  const result = (orders || []).map(o => {
+    const offer = offers.find(x => x.order_id === o.order_id);
+    return { ...o, offered_at: offer?.offered_at };
+  });
+  
+  res.json({ offers: result });
+});
+
+// ─── Endpoint: GET งานที่กำลังทำของ rider ─────────────
+app.get('/rider/:riderId/active', async (req, res) => {
+  const riderId = req.params.riderId;
+  const { data: orders } = await supabase.from('orders')
+    .select('*')
+    .eq('rider_id', riderId)
+    .in('status', ['shipped'])
+    .order('rider_assigned_at', { ascending: false });
+  res.json({ orders: orders || [] });
+});
+
+// ─── Endpoint: GET ประวัติงานเสร็จของ rider ─────────────
+app.get('/rider/:riderId/history', async (req, res) => {
+  const riderId = req.params.riderId;
+  const { data: orders } = await supabase.from('orders')
+    .select('order_id, customer_name, total, rider_delivered_at, status')
+    .eq('rider_id', riderId)
+    .in('status', ['done', 'cancelled', 'failed'])
+    .order('rider_delivered_at', { ascending: false })
+    .limit(50);
+  res.json({ orders: orders || [] });
+});
+
+// ─── Endpoint: รับงาน (atomic ผ่าน RPC) ───────────────
+app.post('/rider/:riderId/accept/:orderId', async (req, res) => {
+  const { riderId, orderId } = req.params;
+  
+  const { data, error } = await supabase.rpc('accept_rider_job', {
+    p_order_id: orderId, p_rider_id: riderId
+  });
+  
+  if (error) return res.status(500).json({ success: false, error: error.message });
+  if (!data?.success) return res.status(409).json(data);
+  
+  // ดึงข้อมูล order + rider
+  const [{ data: order }, { data: rider }] = await Promise.all([
+    supabase.from('orders').select('*').eq('order_id', orderId).single(),
+    supabase.from('riders').select('*').eq('id', riderId).single()
+  ]);
+  
+  // แจ้งลูกค้า: ไรเดอร์รับงานแล้ว
+  if (order?.line_user_id) {
+    const txt = `🏍️ ไรเดอร์รับงานของคุณแล้ว!\n\n` +
+                `👤 ${rider.name}\n` +
+                `🚗 ${rider.vehicle || 'มอเตอร์ไซค์'}${rider.vehicle_plate ? ` (${rider.vehicle_plate})` : ''}\n` +
+                `📞 ${rider.phone || '-'}\n\n` +
+                `📦 ออเดอร์ #${orderId}`;
+    linePush(order.line_user_id, [{ type: 'text', text: txt }]).catch(console.error);
+  }
+  
+  // แจ้งแอดมิน
+  notifyAllAdmins([{ 
+    type: 'text', 
+    text: `✅ ไรเดอร์ ${rider.name} รับงาน #${orderId} แล้ว` 
+  }]).catch(console.error);
+  
+  res.json({ success: true, order });
+});
+
+// ─── Endpoint: เสร็จงาน ────────────────────────────────
+app.post('/rider/:riderId/complete/:orderId', async (req, res) => {
+  const { riderId, orderId } = req.params;
+  
+  const { data, error } = await supabase.rpc('complete_rider_job', {
+    p_order_id: orderId, p_rider_id: riderId
+  });
+  if (error) return res.status(500).json({ success: false, error: error.message });
+  
+  // แจ้งลูกค้า
+  const { data: order } = await supabase.from('orders')
+    .select('line_user_id, customer_name').eq('order_id', orderId).single();
+  
+  if (order?.line_user_id) {
+    linePush(order.line_user_id, [{
+      type: 'text',
+      text: `🎉 ออเดอร์ #${orderId} ส่งสำเร็จแล้ว!\n\nขอบคุณที่ใช้บริการ ❤️\n\nหากมีปัญหาใดๆ ทักแอดมินได้เลยค่ะ`
+    }]).catch(console.error);
+  }
+  
+  // แจ้งแอดมิน
+  const { data: rider } = await supabase.from('riders').select('name').eq('id', riderId).single();
+  notifyAllAdmins([{
+    type: 'text',
+    text: `🎉 ${rider?.name || riderId} ส่งสำเร็จ #${orderId}`
+  }]).catch(console.error);
+  
+  res.json({ success: true });
+});
+
+// ─── Endpoint: เปลี่ยนสถานะ online/offline ───────────────
+app.post('/rider/:riderId/status', async (req, res) => {
+  const { riderId } = req.params;
+  const { status } = req.body; // 'online' | 'offline'
+  if (!['online', 'offline'].includes(status))
+    return res.status(400).json({ error: 'invalid status' });
+  
+  await supabase.from('riders')
+    .update({ status, last_seen_at: new Date().toISOString() })
+    .eq('id', riderId);
+  res.json({ success: true });
+});
+
+// ─── ADMIN: รายชื่อไรเดอร์ทั้งหมด ────────────────────────
+app.get('/admin/riders', async (req, res) => {
+  const { data, error } = await supabase.from('riders')
+    .select('*').order('created_at', { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ riders: data || [] });
+});
+
+// ─── ADMIN: เพิ่มไรเดอร์ใหม่ + ส่งลิงก์ผูกบัญชี ────────
+app.post('/admin/rider', async (req, res) => {
+  const { name, phone, vehicle, vehicle_plate, line_user_id, note } = req.body;
+  if (!name) return res.status(400).json({ error: 'name required' });
+  
+  const id = genRiderId();
+  const { error } = await supabase.from('riders').insert([{
+    id, name, phone: phone || null, vehicle: vehicle || 'มอเตอร์ไซค์',
+    vehicle_plate: vehicle_plate || null,
+    line_user_id: line_user_id || null,
+    note: note || null
+  }]);
+  if (error) return res.status(500).json({ error: error.message });
+  
+  // ถ้ามี line_user_id → ส่งลิงก์ rider.html ที่ผูก token แล้ว
+  if (line_user_id) {
+    const token = createRiderLinkToken(id);
+    const link = `${SHOP_URL}rider.html?token=${token}`;
+    linePush(line_user_id, [
+      { type: 'text', text: `🏍️ ยินดีต้อนรับสู่ทีมไรเดอร์!\n\n👤 ${name}\n🆔 ${id}\n\nกดลิงก์ด้านล่างเพื่อเปิดแอปไรเดอร์ — ระบบจะจดจำคุณอัตโนมัติ` },
+      { type: 'text', text: link }
+    ]).catch(console.error);
+  }
+  
+  res.json({ success: true, id });
+});
+
+// ─── ADMIN: แก้ไขไรเดอร์ ────────────────────────────────
+app.put('/admin/rider/:riderId', async (req, res) => {
+  const { riderId } = req.params;
+  const updates = {};
+  ['name', 'phone', 'vehicle', 'vehicle_plate', 'line_user_id', 'is_active', 'note']
+    .forEach(k => { if (req.body[k] !== undefined) updates[k] = req.body[k]; });
+  
+  const { error } = await supabase.from('riders').update(updates).eq('id', riderId);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
+// ─── ADMIN: ลบไรเดอร์ ──────────────────────────────────
+app.delete('/admin/rider/:riderId', async (req, res) => {
+  const { riderId } = req.params;
+  const { error } = await supabase.from('riders').delete().eq('id', riderId);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
+// ─── ADMIN: เสนองานให้ไรเดอร์ทั้งหมด (auto-assign) ────
+app.post('/admin/offer-job/:orderId', async (req, res) => {
+  const { orderId } = req.params;
+  const result = await offerJobToRiders(orderId);
+  res.json(result);
+});
+
+// ─── ADMIN: assign โดยตรง (ข้าม auto-assign) ───────────
+app.post('/admin/assign-rider/:orderId/:riderId', async (req, res) => {
+  const { orderId, riderId } = req.params;
+  
+  const { data, error } = await supabase.rpc('accept_rider_job', {
+    p_order_id: orderId, p_rider_id: riderId
+  });
+  if (error) return res.status(500).json({ success: false, error: error.message });
+  if (!data?.success) return res.status(409).json(data);
+  
+  // ดึง rider + order ส่ง Flex
+  const [{ data: order }, { data: rider }] = await Promise.all([
+    supabase.from('orders').select('*').eq('order_id', orderId).single(),
+    supabase.from('riders').select('*').eq('id', riderId).single()
+  ]);
+  
+  // แจ้ง rider
+  if (rider?.line_user_id) {
+    const riderUrl = `${SHOP_URL}rider.html`;
+    const flex = buildRiderJobFlex(order, riderUrl);
+    linePush(rider.line_user_id, [
+      { type: 'text', text: `🎯 แอดมินมอบหมายงานนี้ให้คุณ` },
+      flex
+    ]).catch(console.error);
+  }
+  
+  // แจ้งลูกค้า
+  if (order?.line_user_id) {
+    linePush(order.line_user_id, [{
+      type: 'text',
+      text: `🏍️ ไรเดอร์ ${rider.name} รับงานของคุณแล้ว!\n📞 ${rider.phone || '-'}\n#${orderId}`
+    }]).catch(console.error);
+  }
+  
+  res.json({ success: true });
+});
+
+// ═══════════════════════════════════════════════════════════
+//  END RIDER SYSTEM
+// ═══════════════════════════════════════════════════════════
 
 // fallback: ทุก URL ที่ไม่ match route ข้างบน → ส่งหน้าร้าน
 app.use(express.static(__dirname));
