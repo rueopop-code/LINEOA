@@ -428,11 +428,20 @@ app.get('/api', (req, res) => res.json({
 app.post('/send-order', async (req, res) => {
   const {
     customerId, customerName, lineName, phone, address, note,
-    items, total, orderType, extra
+    items, total, orderType, extra,
+    mapLat, mapLng              // 📍 พิกัด GPS จากการปักหมุดบนหน้าร้าน
   } = req.body;
 
   if (!customerId || !customerName || !items?.length || total == null)
     return res.status(400).json({ error: 'ข้อมูลไม่ครบ (customerId/customerName/items/total)' });
+
+  // ── parse + validate พิกัด ── (รับเฉพาะค่าที่อยู่ในช่วงที่ถูกต้อง)
+  const lat = Number(mapLat);
+  const lng = Number(mapLng);
+  const hasValidPin =
+    Number.isFinite(lat) && Number.isFinite(lng) &&
+    lat >= -90  && lat <= 90 &&
+    lng >= -180 && lng <= 180;
 
   const order_id   = genOrderId();
   const created_at = new Date().toISOString();
@@ -442,7 +451,10 @@ app.post('/send-order', async (req, res) => {
     line_name: lineName || customerName,     // ✨ ชื่อ LINE — สำหรับผูกแชท
     phone: phone || null, address: address || null, note: note || extra || null,
     items, total, status: 'pending', created_at,
-    order_type: orderType || 'pickup'
+    order_type: orderType || 'pickup',
+    // 📍 บันทึกพิกัดจัดส่ง (ถ้ามี) — ให้หน้าแอดมินเห็นปุ่มแผนที่
+    map_lat: hasValidPin ? lat : null,
+    map_lng: hasValidPin ? lng : null
   };
 
   const { error: dbErr } = await supabase.from('orders').insert([order]);
