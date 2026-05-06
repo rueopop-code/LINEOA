@@ -414,6 +414,55 @@ function consumeLinkToken(token) {
 }
 
 // ═══════════════════════════════════════════════════════════
+//  📍 GPS PIN EXTRACTOR — แกะพิกัดจากข้อความ
+// ═══════════════════════════════════════════════════════════
+
+function isValidLatLng(lat, lng) {
+  return Number.isFinite(lat) && Number.isFinite(lng)
+    && lat >= -90  && lat <= 90
+    && lng >= -180 && lng <= 180
+    && !(lat === 0 && lng === 0);            // กัน "0,0" กลางมหาสมุทร
+}
+
+/**
+ * ดึงพิกัด lat/lng จากข้อความ — รองรับฟอร์แมตที่หน้าร้านเดิมส่งมา:
+ *   • Google Maps URL: maps.google.com/?q=19.91,99.84
+ *   • Google Maps URL: google.com/maps/search/?api=1&query=19.91,99.84
+ *   • Google Maps URL: google.com/maps/dir/?api=1&destination=19.91,99.84
+ *   • Google Maps path: /@19.91,99.84,17z
+ *   • พิกัดดิบ: "19.910500, 99.840600"  หรือ  "พิกัด: 19.91, 99.84"
+ *
+ * ⚠️ ไม่รองรับ shortened URL (maps.app.goo.gl/xxx, goo.gl/maps/xxx)
+ *    เพราะต้อง follow redirect — ให้หน้าร้านส่ง mapLat/mapLng แยกแทน
+ */
+function extractCoordsFromText(text) {
+  if (!text) return null;
+  const s = String(text);
+
+  // Pattern 1: Google Maps URL (q=, query=, destination=, /@)
+  const urlPatterns = [
+    /[?&](?:q|query|destination|ll)=(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/i,
+    /\/@(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/,
+  ];
+  for (const re of urlPatterns) {
+    const m = s.match(re);
+    if (m) {
+      const lat = +m[1], lng = +m[2];
+      if (isValidLatLng(lat, lng)) return { lat, lng };
+    }
+  }
+
+  // Pattern 2: พิกัดดิบ "lat, lng" (ต้องมีจุดทศนิยมอย่างน้อย 3 หลัก กันสับสนกับยอดเงิน/เบอร์โทร)
+  const plain = s.match(/(-?\d{1,2}\.\d{3,})\s*[,， ]\s*(-?\d{1,3}\.\d{3,})/);
+  if (plain) {
+    const lat = +plain[1], lng = +plain[2];
+    if (isValidLatLng(lat, lng)) return { lat, lng };
+  }
+
+  return null;
+}
+
+// ═══════════════════════════════════════════════════════════
 //  ROUTES
 // ═══════════════════════════════════════════════════════════
 
@@ -435,13 +484,23 @@ app.post('/send-order', async (req, res) => {
   if (!customerId || !customerName || !items?.length || total == null)
     return res.status(400).json({ error: 'ข้อมูลไม่ครบ (customerId/customerName/items/total)' });
 
-  // ── parse + validate พิกัด ── (รับเฉพาะค่าที่อยู่ในช่วงที่ถูกต้อง)
-  const lat = Number(mapLat);
-  const lng = Number(mapLng);
-  const hasValidPin =
-    Number.isFinite(lat) && Number.isFinite(lng) &&
-    lat >= -90  && lat <= 90 &&
-    lng >= -180 && lng <= 180;
+  // ── parse + validate พิกัด GPS ──
+  // 1) ลองรับจาก mapLat/mapLng ก่อน (ทางที่ดีที่สุด — ส่งแยกฟิลด์)
+  // 2) ถ้าไม่มี → auto-extract จาก note/extra/address (รองรับฟอร์แมตเดิมที่ฝังใน text)
+  let lat = Number(mapLat);
+  let lng = Number(mapLng);
+  let hasValidPin = isValidLatLng(lat, lng);
+
+  if (!hasValidPin) {
+    const haystack = `${note || ''}\n${extra || ''}\n${address || ''}`;
+    const found = extractCoordsFromText(haystack);
+    if (found) {
+      lat = found.lat;
+      lng = found.lng;
+      hasValidPin = true;
+      console.log(`📍 auto-extracted pin from text: ${lat},${lng}`);
+    }
+  }
 
   const order_id   = genOrderId();
   const created_at = new Date().toISOString();
