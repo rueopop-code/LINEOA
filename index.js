@@ -27,8 +27,12 @@ const LINE_API = 'https://api.line.me/v2/bot/message';
 // อ่าน admin UIDs จาก env — รองรับหลายคนคั่นด้วย comma
 // รองรับทั้งชื่อเก่า ADMIN_LINE_UID และชื่อใหม่ ADMIN_LINE_UIDS
 function getAdminUids() {
-  const raw = process.env.ADMIN_LINE_UIDS || process.env.ADMIN_LINE_UID || '';
-  return raw.split(',').map(s => s.trim()).filter(Boolean);
+  // รวมทั้ง ADMIN_LINE_UIDS และ ADMIN_LINE_UID เข้าด้วยกัน (ไม่ใช่ OR)
+  const fromPlural   = process.env.ADMIN_LINE_UIDS || '';
+  const fromSingular = process.env.ADMIN_LINE_UID  || '';
+  const combined = [fromPlural, fromSingular].filter(Boolean).join(',');
+  // deduplicate — กรณีใส่ UID เดียวกันใน 2 ตัวแปร
+  return [...new Set(combined.split(',').map(s => s.trim()).filter(Boolean))];
 }
 
 async function linePush(userId, messages) {
