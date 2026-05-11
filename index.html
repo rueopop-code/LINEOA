@@ -453,37 +453,36 @@ textarea.fi{resize:none;height:70px}
   </div>
 </div>
 
-<!-- ── LOCATION MODAL (GPS permission guide + manual entry) ── -->
-<div id="locOv" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:600;align-items:center;justify-content:center;padding:20px;">
+<!-- ── LOCATION PICKER MODAL ── -->
+<div id="locOv" onclick="if(event.target===this)closeLocModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:600;align-items:center;justify-content:center;padding:20px;">
   <div style="background:#fff;border-radius:18px;padding:24px;width:100%;max-width:420px;box-shadow:0 20px 60px rgba(0,0,0,.3);">
-    <!-- MODE A: สิทธิ์ถูกปฏิเสธ -->
-    <div id="locPermDenied" style="display:none;">
-      <div style="font-size:44px;text-align:center;margin-bottom:10px;">🔒</div>
-      <div style="font-family:'Prompt',sans-serif;font-size:17px;font-weight:700;text-align:center;margin-bottom:8px;">GPS ถูกปิดกั้น</div>
-      <div style="font-size:13px;color:#555;line-height:1.75;margin-bottom:16px;background:#FFF8F8;border-radius:10px;padding:12px;border:1px solid #F5C6C6;">
-        กรุณาเปิดสิทธิ์ตำแหน่งที่ตั้งก่อน:<br>
-        <b>ตั้งค่า → แอป → LINE<br>→ สิทธิ์การใช้งาน → ตำแหน่งที่ตั้ง → อนุญาต</b>
-      </div>
-      <div style="display:flex;gap:8px;margin-bottom:10px;">
-        <button onclick="closeLocModal()" style="flex:1;padding:11px;background:#F7F7F7;border:1.5px solid #E5E5E5;border-radius:10px;font-size:13px;font-family:'Sarabun',sans-serif;font-weight:600;cursor:pointer;">ยกเลิก</button>
-        <button onclick="retryGPS()" style="flex:1;padding:11px;background:#2ECC71;color:#fff;border:none;border-radius:10px;font-size:13px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;">🔄 ลองใหม่</button>
-      </div>
-      <button onclick="switchToManual()" style="width:100%;padding:11px;background:#fff;border:1.5px solid #C0392B;color:#C0392B;border-radius:10px;font-size:13px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;">✏️ กรอกพิกัดเอง</button>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <div style="font-family:'Prompt',sans-serif;font-size:17px;font-weight:700;">📍 เลือกตำแหน่งจัดส่ง</div>
+      <button onclick="closeLocModal()" style="background:#F0F0F0;border:none;width:30px;height:30px;border-radius:50%;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;">✕</button>
     </div>
-    <!-- MODE B: กรอกพิกัดเอง -->
-    <div id="locManual" style="display:none;">
-      <div style="font-family:'Prompt',sans-serif;font-size:17px;font-weight:700;margin-bottom:6px;">📍 ระบุตำแหน่งด้วยตนเอง</div>
-      <div style="font-size:13px;color:#777;margin-bottom:14px;line-height:1.6;">วางลิงค์ Google Maps<br>หรือพิกัด เช่น <b>18.12345, 99.12345</b></div>
-      <input id="locInput" type="text" placeholder="https://maps.google.com/... หรือ lat, lng"
-        style="width:100%;padding:11px 14px;border:1.5px solid #E5E5E5;border-radius:10px;font-size:14px;font-family:'Sarabun',sans-serif;outline:none;margin-bottom:8px;"
-        onfocus="this.style.borderColor='#C0392B'" onblur="this.style.borderColor='#E5E5E5'"
-        onkeydown="if(event.key==='Enter')confirmLocInput()">
-      <div id="locErr" style="color:#C0392B;font-size:12px;margin-bottom:10px;display:none;">⚠️ รูปแบบไม่ถูกต้อง กรุณากรอกใหม่</div>
-      <div style="display:flex;gap:10px;">
-        <button onclick="closeLocModal()" style="flex:1;padding:12px;background:#F7F7F7;border:1.5px solid #E5E5E5;border-radius:10px;font-size:14px;font-family:'Sarabun',sans-serif;font-weight:600;cursor:pointer;">ยกเลิก</button>
-        <button onclick="confirmLocInput()" style="flex:2;padding:12px;background:#C0392B;color:#fff;border:none;border-radius:10px;font-size:14px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;">✅ ยืนยัน</button>
-      </div>
+
+    <!-- ปุ่ม GPS -->
+    <button id="gpsBtn" onclick="tryGPS()" style="width:100%;padding:13px;background:linear-gradient(135deg,#27AE60,#2ECC71);color:#fff;border:none;border-radius:12px;font-size:15px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;margin-bottom:14px;display:flex;align-items:center;justify-content:center;gap:8px;">
+      <span id="gpsBtnIcon">🛰️</span>
+      <span id="gpsBtnText">ตรวจจับตำแหน่งอัตโนมัติ</span>
+    </button>
+    <div id="gpsStatus" style="font-size:12px;text-align:center;color:#777;margin-top:-8px;margin-bottom:10px;min-height:16px;"></div>
+
+    <!-- เส้นคั่น -->
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+      <div style="flex:1;height:1px;background:#E5E5E5;"></div>
+      <div style="font-size:12px;color:#aaa;">หรือกรอกเอง</div>
+      <div style="flex:1;height:1px;background:#E5E5E5;"></div>
     </div>
+
+    <!-- กรอกพิกัด/ลิงค์ -->
+    <div style="font-size:12px;color:#777;margin-bottom:6px;">วางลิงค์ Google Maps หรือพิกัด เช่น <b>18.12345, 99.12345</b></div>
+    <input id="locInput" type="text" placeholder="https://maps.google.com/... หรือ lat, lng"
+      style="width:100%;padding:11px 14px;border:1.5px solid #E5E5E5;border-radius:10px;font-size:14px;font-family:'Sarabun',sans-serif;outline:none;margin-bottom:6px;"
+      onfocus="this.style.borderColor='#C0392B'" onblur="this.style.borderColor='#E5E5E5'"
+      onkeydown="if(event.key==='Enter')confirmLocInput()">
+    <div id="locErr" style="color:#C0392B;font-size:12px;margin-bottom:8px;display:none;">⚠️ รูปแบบไม่ถูกต้อง กรุณากรอกใหม่</div>
+    <button onclick="confirmLocInput()" style="width:100%;padding:12px;background:#C0392B;color:#fff;border:none;border-radius:10px;font-size:14px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;">✅ ยืนยันพิกัด</button>
   </div>
 </div>
 
@@ -1872,58 +1871,48 @@ function selCOT(t){
 //  MAP PIN
 // ═══════════════════════════════════════════
 function openMapPick() {
-  if (!navigator.geolocation) { openLocModal(false); return; }
-  const btn = document.getElementById('mapBtn');
-  btn.textContent = '⏳ กำลังขอสิทธิ์ GPS...';
-  btn.disabled = true;
-  // ตรวจสิทธิ์ก่อนถ้า browser รองรับ
-  if (navigator.permissions && navigator.permissions.query) {
-    navigator.permissions.query({ name: 'geolocation' }).then(r => {
-      if (r.state === 'denied') {
-        btn.disabled = false;
-        btn.textContent = '📍 ปักหมุดตำแหน่งจัดส่ง (ไม่บังคับ)';
-        openLocModal(true);
-      } else { doGetLocation(btn); }
-    }).catch(() => doGetLocation(btn));
-  } else { doGetLocation(btn); }
-}
-function doGetLocation(btn) {
-  navigator.geolocation.getCurrentPosition(pos => {
-    btn.disabled = false;
-    mapLat = pos.coords.latitude;
-    mapLng = pos.coords.longitude;
-    showMapPin();
-  }, err => {
-    btn.disabled = false;
-    btn.textContent = '📍 ปักหมุดตำแหน่งจัดส่ง (ไม่บังคับ)';
-    openLocModal(err.code === 1); // code 1 = PERMISSION_DENIED
-  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
-}
-function openLocModal(permDenied) {
-  document.getElementById('locPermDenied').style.display = permDenied ? 'block' : 'none';
-  document.getElementById('locManual').style.display    = permDenied ? 'none'  : 'block';
   document.getElementById('locInput').value = '';
   document.getElementById('locErr').style.display = 'none';
+  setGPSBtn('idle');
   document.getElementById('locOv').style.display = 'flex';
-  if (!permDenied) setTimeout(() => document.getElementById('locInput').focus(), 200);
 }
-function switchToManual() {
-  document.getElementById('locPermDenied').style.display = 'none';
-  document.getElementById('locManual').style.display = 'block';
-  setTimeout(() => document.getElementById('locInput').focus(), 200);
+function closeLocModal() {
+  document.getElementById('locOv').style.display = 'none';
 }
-function retryGPS() { closeLocModal(); openMapPick(); }
-function closeLocModal() { document.getElementById('locOv').style.display = 'none'; }
+function setGPSBtn(state, msg) {
+  const btn  = document.getElementById('gpsBtn');
+  const icon = document.getElementById('gpsBtnIcon');
+  const text = document.getElementById('gpsBtnText');
+  const status = document.getElementById('gpsStatus');
+  if (state === 'idle')    { btn.disabled=false; btn.style.opacity='1'; icon.textContent='🛰️'; text.textContent='ตรวจจับตำแหน่งอัตโนมัติ'; status.textContent=''; }
+  if (state === 'loading') { btn.disabled=true;  btn.style.opacity='.7'; icon.textContent='⏳'; text.textContent='กำลังหาตำแหน่ง...'; status.textContent=''; }
+  if (state === 'error')   { btn.disabled=false; btn.style.opacity='1'; icon.textContent='⚠️'; text.textContent='ลองใหม่อีกครั้ง'; status.textContent = msg || 'ไม่สามารถเข้าถึง GPS ได้'; }
+}
+function tryGPS() {
+  if (!navigator.geolocation) { setGPSBtn('error','เบราว์เซอร์ไม่รองรับ GPS'); return; }
+  setGPSBtn('loading');
+  navigator.geolocation.getCurrentPosition(pos => {
+    mapLat = pos.coords.latitude;
+    mapLng = pos.coords.longitude;
+    closeLocModal();
+    showMapPin();
+  }, err => {
+    const msg = err.code === 1
+      ? 'GPS ถูกปฏิเสธ — ไปที่ ตั้งค่า > LINE > สิทธิ์ > ตำแหน่งที่ตั้ง'
+      : 'หา GPS ไม่พบ ลองกรอกพิกัดด้านล่างแทน';
+    setGPSBtn('error', msg);
+  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+}
 function confirmLocInput() {
   const inp = document.getElementById('locInput').value.trim();
   const errEl = document.getElementById('locErr');
   if (!inp) { errEl.style.display = 'block'; return; }
   let lat = null, lng = null, m;
   m = inp.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
-  if (m) { lat = parseFloat(m[1]); lng = parseFloat(m[2]); }
+  if (m) { lat=parseFloat(m[1]); lng=parseFloat(m[2]); }
   if (!lat) { m = inp.match(/[?&](q|ll)=(-?\d+\.\d+)[,+](-?\d+\.\d+)/); if(m){lat=parseFloat(m[2]);lng=parseFloat(m[3]);} }
   if (!lat) { m = inp.match(/^(-?\d+(?:\.\d+)?)[,\s]+(-?\d+(?:\.\d+)?)$/); if(m){lat=parseFloat(m[1]);lng=parseFloat(m[2]);} }
-  if (!lat || isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90) { errEl.style.display = 'block'; return; }
+  if (!lat || isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90) { errEl.style.display='block'; return; }
   mapLat = lat; mapLng = lng;
   closeLocModal();
   showMapPin();
