@@ -252,6 +252,59 @@ textarea.fi{resize:none;height:70px}
 .logo-drop:hover,.logo-drop.drag{border-color:var(--c1);background:var(--cp)}
 .logo-drop input{display:none}
 .logo-prev{width:70px;height:70px;border-radius:50%;object-fit:cover;margin:8px auto;display:block}
+/* ── Ad Popup ─────────────────────────────────────────── */
+.ad-drop{border:2px dashed var(--border);border-radius:12px;padding:20px;text-align:center;cursor:pointer;transition:.2s;margin-bottom:8px;position:relative}
+.ad-drop:hover,.ad-drop.drag{border-color:var(--c1);background:var(--cp)}
+.ad-drop input{display:none}
+.ad-prev-wrap{margin-top:8px;position:relative;display:inline-block}
+.ad-prev-wrap img,.ad-prev-wrap video{max-width:100%;max-height:120px;border-radius:8px;object-fit:cover;display:block}
+.ad-prev-del{position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:50%;background:var(--c1);color:#fff;border:none;font-size:13px;line-height:22px;text-align:center;cursor:pointer;padding:0}
+.ad-row-mini{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+.ad-row-mini select,.ad-row-mini input[type=number]{flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:9px;font-size:13px;font-family:'Sarabun',sans-serif;outline:none}
+.ad-row-mini select:focus,.ad-row-mini input[type=number]:focus{border-color:var(--c1)}
+.ad-toggle-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.ad-toggle-lbl{font-size:13px;font-weight:700}
+.ad-toggle-sub{font-size:11px;color:#888;margin-top:2px}
+.sw-wrap{position:relative;width:46px;height:26px;flex:0 0 46px}
+.sw-wrap input{opacity:0;width:0;height:0;position:absolute}
+.sw-track{position:absolute;inset:0;background:#ccc;border-radius:999px;transition:.2s;cursor:pointer}
+.sw-wrap input:checked+.sw-track{background:var(--c1)}
+.sw-track::after{content:'';position:absolute;width:20px;height:20px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+.sw-wrap input:checked+.sw-track::after{left:23px}
+/* ad list cards */
+.ad-list{display:flex;flex-direction:column;gap:10px;margin-bottom:14px}
+.ad-card{border:1.5px solid var(--border);border-radius:12px;padding:12px;display:flex;align-items:center;gap:10px;background:#fafafa;cursor:pointer;transition:.15s}
+.ad-card:hover{border-color:var(--c1);background:var(--cp)}
+.ad-card.editing{border-color:var(--c1);background:var(--cp)}
+.ad-card-thumb{width:52px;height:40px;border-radius:7px;object-fit:cover;background:#eee;flex:0 0 52px;display:flex;align-items:center;justify-content:center;font-size:20px;overflow:hidden}
+.ad-card-thumb img,.ad-card-thumb video{width:100%;height:100%;object-fit:cover}
+.ad-card-info{flex:1;min-width:0}
+.ad-card-title{font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ad-card-sub{font-size:11px;color:#888;margin-top:2px}
+.ad-card-del{background:none;border:none;color:#e53935;font-size:18px;cursor:pointer;padding:4px;line-height:1;flex:0 0 auto}
+.ad-form-wrap{border:1.5px solid var(--c1);border-radius:12px;padding:14px;background:var(--cp);margin-bottom:12px}
+.ad-form-title{font-size:13px;font-weight:700;margin-bottom:12px;color:var(--c1)}
+/* Popup overlay + carousel */
+#adOverlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:2000;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(3px)}
+#adOverlay.show{display:flex;animation:fadein .3s ease}
+.ad-box{background:#fff;border-radius:18px;max-width:440px;width:100%;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.4);position:relative;animation:popscale .3s cubic-bezier(.34,1.56,.64,1)}
+.ad-box-close{position:absolute;top:10px;right:10px;width:32px;height:32px;border-radius:50%;background:rgba(0,0,0,.45);color:#fff;border:none;font-size:17px;line-height:32px;text-align:center;cursor:pointer;z-index:10;transition:.15s}
+.ad-box-close:hover{background:rgba(0,0,0,.7)}
+.ad-box img,.ad-box video{width:100%;max-height:60vh;object-fit:contain;display:block;background:#000}
+.ad-box iframe{width:100%;height:240px;border:none;display:block}
+.ad-caption{padding:14px 18px;font-size:15px;font-weight:700;line-height:1.4;color:var(--ink)}
+.ad-link-btn{display:block;margin:0 18px 16px;padding:11px;background:var(--c1);color:#fff;text-align:center;border-radius:10px;font-weight:700;font-size:14px;text-decoration:none;transition:.15s}
+.ad-link-btn:hover{filter:brightness(1.1)}
+/* carousel nav */
+.ad-carousel-nav{display:flex;align-items:center;justify-content:space-between;padding:8px 14px 12px;gap:8px}
+.ad-nav-btn{background:none;border:1.5px solid var(--border);border-radius:50%;width:34px;height:34px;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:.15s;flex:0 0 34px}
+.ad-nav-btn:hover{border-color:var(--c1);color:var(--c1)}
+.ad-nav-btn:disabled{opacity:.3;cursor:default}
+.ad-dots{display:flex;gap:6px;align-items:center;flex:1;justify-content:center}
+.ad-dot{width:8px;height:8px;border-radius:50%;background:#ddd;cursor:pointer;transition:.2s;border:none;padding:0}
+.ad-dot.on{background:var(--c1);transform:scale(1.25)}
+@keyframes popscale{from{transform:scale(.8);opacity:0}to{transform:scale(1);opacity:1}}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
 .save-btn{width:100%;padding:12px;background:var(--c1);color:#fff;border:none;border-radius:10px;font-size:15px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;transition:.15s}
 .save-btn:hover{background:var(--c2)}
 
@@ -583,6 +636,93 @@ textarea.fi{resize:none;height:70px}
         </div>
       </div>
       <button class="save-btn" onclick="saveSettings()">💾 บันทึกการตั้งค่า</button>
+
+      <!-- ── โฆษณา Pop-up ─────────────────────────────── -->
+      <div style="margin-top:22px;padding-top:18px;border-top:1.5px solid var(--border)">
+        <div class="ad-toggle-row">
+          <div>
+            <div class="ad-toggle-lbl">📢 โฆษณา Pop-up</div>
+            <div class="ad-toggle-sub">แสดงเมื่อลูกค้าเปิดหน้าร้าน</div>
+          </div>
+          <label class="sw-wrap">
+            <input type="checkbox" id="adEnabled" onchange="adToggleChange()">
+            <span class="sw-track"></span>
+          </label>
+        </div>
+
+        <div id="adConfig" style="display:none">
+          <!-- ตั้งเวลา + ความถี่ (global) -->
+          <div class="s-row">
+            <label class="s-lbl">ตั้งเวลา &amp; ความถี่</label>
+            <div class="ad-row-mini">
+              <span style="font-size:13px;white-space:nowrap">หน่วงเวลา</span>
+              <input type="number" id="adDelay" value="1" min="0" max="30" step="0.5" style="max-width:70px">
+              <span style="font-size:13px">วินาที</span>
+              <select id="adFreq" style="flex:1">
+                <option value="always">ทุกครั้ง</option>
+                <option value="session">ครั้งละ session</option>
+                <option value="daily" selected>วันละครั้ง</option>
+                <option value="once">แสดงครั้งเดียว</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- รายการโฆษณา -->
+          <div class="s-lbl" style="margin-bottom:8px">รายการโฆษณา <span id="adListCount" style="font-weight:400;color:#888"></span></div>
+          <div class="ad-list" id="adList"></div>
+
+          <!-- ฟอร์มเพิ่ม/แก้ไข -->
+          <div class="ad-form-wrap" id="adFormWrap">
+            <div class="ad-form-title" id="adFormTitle">➕ เพิ่มโฆษณาใหม่</div>
+
+            <div class="s-row" style="margin-bottom:10px">
+              <label class="s-lbl">ประเภทเนื้อหา</label>
+              <select class="s-inp" id="adType" onchange="adTypeChange()">
+                <option value="image">🖼️ รูปภาพ (PNG / JPG / GIF / WebP)</option>
+                <option value="video">🎬 วีดิโอ (MP4 / WebM)</option>
+                <option value="youtube">▶️ YouTube (วางลิงก์)</option>
+                <option value="url">🌐 URL รูปภาพ / วีดิโอ</option>
+              </select>
+            </div>
+
+            <div id="adFileRow" style="margin-bottom:10px">
+              <div class="ad-drop" id="adDrop"
+                  onclick="document.getElementById('adFile').click()"
+                  ondragover="doDrag(event,'adDrop')" ondragleave="unDrag('adDrop')" ondrop="dropAd(event)">
+                <div style="font-size:24px" id="adDropIcon">📁</div>
+                <p id="adDropText" style="margin:4px 0 0;font-size:13px">คลิกหรือลากวางไฟล์</p>
+                <input type="file" id="adFile" accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm" onchange="pickAd(this)">
+              </div>
+              <div id="adPrevWrap" style="display:none;text-align:center" class="ad-prev-wrap">
+                <img id="adPrevImg" style="display:none" alt="preview">
+                <video id="adPrevVid" style="display:none" muted playsinline loop autoplay></video>
+                <button class="ad-prev-del" onclick="clearAdMedia()" title="ลบ">✕</button>
+              </div>
+            </div>
+
+            <div id="adUrlRow" style="display:none;margin-bottom:10px">
+              <label class="s-lbl" id="adUrlLbl">URL</label>
+              <input class="s-inp" id="adUrl" placeholder="https://..." oninput="adUrlPreview()">
+              <div id="adUrlPrev" style="margin-top:8px"></div>
+            </div>
+
+            <input class="s-inp" id="adCaption" placeholder="ข้อความ (ไม่บังคับ)" style="margin-bottom:7px">
+            <input class="s-inp" id="adBtnUrl"  placeholder="ลิงก์ปุ่ม เช่น https://..." style="margin-bottom:7px">
+            <input class="s-inp" id="adBtnTxt"  placeholder="ข้อความปุ่ม เช่น ดูเพิ่มเติม" style="margin-bottom:12px">
+
+            <div style="display:flex;gap:8px">
+              <button class="save-btn" style="flex:1;margin-top:0;padding:11px" onclick="adSaveItem()">💾 บันทึกโฆษณานี้</button>
+              <button onclick="adCancelEdit()" style="padding:0 14px;border-radius:10px;border:1.5px solid var(--border);background:#fff;font-size:13px;font-family:'Sarabun',sans-serif;cursor:pointer">ยกเลิก</button>
+            </div>
+          </div>
+
+          <div style="display:flex;gap:8px;margin-top:4px">
+            <button class="save-btn" style="flex:1;margin-top:0" onclick="saveAdSettings()">💾 บันทึกทั้งหมด</button>
+            <button onclick="previewAd()" style="padding:0 18px;border-radius:10px;border:1.5px solid var(--border);background:#fff;font-size:14px;font-family:'Sarabun',sans-serif;cursor:pointer;font-weight:700">👁 ดูตัวอย่าง</button>
+          </div>
+          <button onclick="clearAdSettings()" style="width:100%;margin-top:8px;padding:9px;background:none;border:none;color:#e53935;font-size:13px;font-family:'Sarabun',sans-serif;cursor:pointer;font-weight:700">🗑 ลบโฆษณาทั้งหมด</button>
+        </div>
+      </div>
     </div>
 
     <!-- CATEGORIES -->
@@ -711,6 +851,22 @@ textarea.fi{resize:none;height:70px}
 <button class="fab" onclick="askPin()" title="จัดการร้าน">⚙️</button>
 
 <!-- TOAST -->
+<!-- ══ Ad Popup Overlay ═══════════════════════════════════ -->
+<div id="adOverlay" onclick="adOverlayClick(event)">
+  <div class="ad-box" id="adBox">
+    <button class="ad-box-close" onclick="closeAdOverlay()">✕</button>
+    <div id="adBoxContent"></div>
+    <div id="adBoxCaption" class="ad-caption" style="display:none"></div>
+    <a id="adBoxBtn" class="ad-link-btn" href="#" target="_blank" rel="noopener" style="display:none"></a>
+    <!-- carousel nav — แสดงเฉพาะเมื่อมีมากกว่า 1 โฆษณา -->
+    <div class="ad-carousel-nav" id="adCarouselNav" style="display:none">
+      <button class="ad-nav-btn" id="adNavPrev" onclick="adGo(-1)">◀</button>
+      <div class="ad-dots" id="adDots"></div>
+      <button class="ad-nav-btn" id="adNavNext" onclick="adGo(1)">▶</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -937,6 +1093,13 @@ window.onload = async () => {
 
     // ✅ Auto-load orders ของ customer นี้ (ถ้ามี)
     loadMyOrders();
+
+    // 📢 แสดง Ad Popup (ถ้าตั้งค่าไว้)
+    const adCfg = adGetCfg();
+    if (adCfg.enabled) {
+      const delayMs = Math.max(0, (parseFloat(adCfg.delay) || 1)) * 1000;
+      setTimeout(() => showAdOverlay(adCfg, false), delayMs);
+    }
   } catch(e) {
     console.error('Init error:', e);
   } finally {
@@ -2215,6 +2378,7 @@ function openAdmin() {
     sb.innerHTML='';
     addSzRow('szBuilder');
   }
+  adLoadUI();   // โหลดค่าโฆษณาเข้า UI ทุกครั้งที่เปิด panel
   document.getElementById('adminOv').classList.add('show');
 }
 function closeAdmin() { document.getElementById('adminOv').classList.remove('show'); }
@@ -2248,6 +2412,373 @@ function saveSettings() {
   if (n) { localStorage.setItem('ms_name',n); document.getElementById('shopNameEl').textContent=n; document.title=n; }
   if (logoData) { try { localStorage.setItem('ms_logo',logoData); applyLogo(logoData); } catch(e){} }
   toast('บันทึกแล้ว ✓'); closeAdmin();
+}
+
+// ═══════════════════════════════════════════
+//  AD POPUP — multi-ad carousel
+// ═══════════════════════════════════════════
+const AD_KEY  = 'ms_ad_v2';           // v2 — array format
+let adItems   = [];                    // array of ad objects
+let adEditIdx = -1;                    // -1 = new, >=0 = editing index
+let adFileData = '', adFileMime = '';  // temp for form
+let adCurSlide = 0;                    // current carousel slide
+
+// ── localStorage helpers ─────────────────────────────────
+function adGetCfg() {
+  try { return JSON.parse(localStorage.getItem(AD_KEY)) || { enabled:false, delay:1, freq:'daily', items:[] }; }
+  catch { return { enabled:false, delay:1, freq:'daily', items:[] }; }
+}
+
+// ── Load UI when panel opens ─────────────────────────────
+function adLoadUI() {
+  const c = adGetCfg();
+  document.getElementById('adEnabled').checked = !!c.enabled;
+  document.getElementById('adConfig').style.display = c.enabled ? 'block' : 'none';
+  document.getElementById('adDelay').value = c.delay ?? 1;
+  document.getElementById('adFreq').value  = c.freq  || 'daily';
+  adItems = Array.isArray(c.items) ? c.items : [];
+  adRenderList();
+  adResetForm();
+}
+
+function adToggleChange() {
+  const on = document.getElementById('adEnabled').checked;
+  document.getElementById('adConfig').style.display = on ? 'block' : 'none';
+}
+
+// ── Render ad card list ──────────────────────────────────
+function adRenderList() {
+  const list = document.getElementById('adList');
+  const count = document.getElementById('adListCount');
+  count.textContent = adItems.length ? `(${adItems.length} รายการ)` : '';
+
+  if (!adItems.length) {
+    list.innerHTML = '<div style="text-align:center;padding:16px;color:#aaa;font-size:13px">ยังไม่มีโฆษณา — กรอกฟอร์มด้านล่างแล้วกด บันทึกโฆษณานี้</div>';
+    return;
+  }
+  list.innerHTML = adItems.map((item, i) => {
+    const thumb = adThumbHTML(item);
+    const typeLabel = ({image:'🖼️รูป', video:'🎬วีดิโอ', youtube:'▶️YouTube', url:'🌐URL'})[item.type] || item.type;
+    const cap = item.caption ? `"${item.caption.slice(0,24)}${item.caption.length>24?'…':''}"` : '';
+    return `<div class="ad-card ${adEditIdx===i?'editing':''}" onclick="adEditItem(${i})">
+      <div class="ad-card-thumb">${thumb}</div>
+      <div class="ad-card-info">
+        <div class="ad-card-title">${typeLabel} ${cap||`โฆษณา ${i+1}`}</div>
+        <div class="ad-card-sub">${item.btnTxt ? '🔗 '+item.btnTxt : 'ไม่มีลิงก์'}</div>
+      </div>
+      <span style="font-size:11px;color:#aaa;margin-right:2px">#${i+1}</span>
+      <button class="ad-card-del" onclick="event.stopPropagation();adDeleteItem(${i})" title="ลบ">🗑</button>
+    </div>`;
+  }).join('');
+}
+
+function adThumbHTML(item) {
+  if ((item.type==='image'||item.type==='video') && item.fileData) {
+    if ((item.fileMime||'').startsWith('video') || item.type==='video') {
+      return `<video src="${item.fileData}" muted style="width:100%;height:100%;object-fit:cover"></video>`;
+    }
+    return `<img src="${item.fileData}" style="width:100%;height:100%;object-fit:cover">`;
+  }
+  if (item.type==='youtube') return '▶️';
+  if (item.type==='url' && item.url) return `<img src="${item.url}" style="width:100%;height:100%;object-fit:cover" onerror="this.parentNode.textContent='🌐'">`;
+  return '📁';
+}
+
+// ── Form helpers ─────────────────────────────────────────
+function adResetForm() {
+  adEditIdx = -1; adFileData = ''; adFileMime = '';
+  document.getElementById('adFormTitle').textContent = '➕ เพิ่มโฆษณาใหม่';
+  document.getElementById('adType').value    = 'image';
+  document.getElementById('adCaption').value = '';
+  document.getElementById('adBtnUrl').value  = '';
+  document.getElementById('adBtnTxt').value  = '';
+  document.getElementById('adUrl').value     = '';
+  document.getElementById('adUrlPrev').innerHTML = '';
+  document.getElementById('adFile').value = '';
+  adShowPrev(); adTypeChange();
+  adRenderList();
+}
+
+function adEditItem(i) {
+  const item = adItems[i]; if (!item) return;
+  adEditIdx = i;
+  document.getElementById('adFormTitle').textContent = `✏️ แก้ไขโฆษณา #${i+1}`;
+  document.getElementById('adType').value    = item.type    || 'image';
+  document.getElementById('adCaption').value = item.caption || '';
+  document.getElementById('adBtnUrl').value  = item.btnUrl  || '';
+  document.getElementById('adBtnTxt').value  = item.btnTxt  || '';
+  document.getElementById('adUrl').value     = item.url     || '';
+  adFileData = item.fileData || ''; adFileMime = item.fileMime || '';
+  adShowPrev(); adTypeChange();
+  if (item.type==='youtube'||item.type==='url') adUrlPreview();
+  adRenderList(); // re-render to highlight card
+  document.getElementById('adFormWrap').scrollIntoView({ behavior:'smooth', block:'nearest' });
+}
+
+function adDeleteItem(i) {
+  if (!confirm(`ลบโฆษณา #${i+1}?`)) return;
+  adItems.splice(i, 1);
+  if (adEditIdx === i) adResetForm();
+  else { adEditIdx = -1; adRenderList(); }
+}
+
+function adCancelEdit() { adResetForm(); }
+
+function adSaveItem() {
+  const type    = document.getElementById('adType').value;
+  const caption = document.getElementById('adCaption').value.trim();
+  const btnUrl  = document.getElementById('adBtnUrl').value.trim();
+  const btnTxt  = document.getElementById('adBtnTxt').value.trim();
+  const url     = document.getElementById('adUrl').value.trim();
+
+  // validation
+  if ((type==='image'||type==='video') && !adFileData) { toast('กรุณาเลือกไฟล์ก่อน'); return; }
+  if ((type==='youtube'||type==='url') && !url) { toast('กรุณาใส่ URL ก่อน'); return; }
+
+  const item = { type, caption, btnUrl, btnTxt, url, fileData: adFileData, fileMime: adFileMime };
+  if (adEditIdx >= 0) {
+    adItems[adEditIdx] = item;
+    toast(`แก้ไขโฆษณา #${adEditIdx+1} แล้ว ✓`);
+  } else {
+    adItems.push(item);
+    toast(`เพิ่มโฆษณา #${adItems.length} แล้ว ✓`);
+  }
+  adResetForm();
+}
+
+// ── Type change / file pick / preview ───────────────────
+function adTypeChange() {
+  const t   = document.getElementById('adType').value;
+  const fR  = document.getElementById('adFileRow');
+  const uR  = document.getElementById('adUrlRow');
+  const lbl = document.getElementById('adUrlLbl');
+  const acc = document.getElementById('adFile');
+  if (t==='image') {
+    fR.style.display='block'; uR.style.display='none';
+    acc.accept='image/png,image/jpeg,image/gif,image/webp';
+    document.getElementById('adDropIcon').textContent='🖼️';
+    document.getElementById('adDropText').textContent='PNG / JPG / GIF / WebP';
+  } else if (t==='video') {
+    fR.style.display='block'; uR.style.display='none';
+    acc.accept='video/mp4,video/webm,video/ogg';
+    document.getElementById('adDropIcon').textContent='🎬';
+    document.getElementById('adDropText').textContent='MP4 / WebM';
+  } else if (t==='youtube') {
+    fR.style.display='none'; uR.style.display='block';
+    lbl.textContent='URL YouTube';
+    document.getElementById('adUrl').placeholder='https://www.youtube.com/watch?v=...';
+  } else {
+    fR.style.display='none'; uR.style.display='block';
+    lbl.textContent='URL รูป / วีดิโอ';
+    document.getElementById('adUrl').placeholder='https://example.com/banner.jpg';
+  }
+}
+
+function pickAd(inp) {
+  const f = inp.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = e => { adFileData=e.target.result; adFileMime=f.type; adShowPrev(); };
+  r.readAsDataURL(f);
+}
+function dropAd(e) {
+  e.preventDefault(); unDrag('adDrop');
+  const f = e.dataTransfer.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = ev => { adFileData=ev.target.result; adFileMime=f.type; adShowPrev(); };
+  r.readAsDataURL(f);
+}
+function adShowPrev() {
+  const wrap = document.getElementById('adPrevWrap');
+  const img  = document.getElementById('adPrevImg');
+  const vid  = document.getElementById('adPrevVid');
+  img.style.display='none'; vid.style.display='none';
+  if (!adFileData) { wrap.style.display='none'; return; }
+  wrap.style.display='inline-block';
+  if (adFileMime.startsWith('video')) { vid.src=adFileData; vid.style.display='block'; }
+  else { img.src=adFileData; img.style.display='block'; }
+}
+function clearAdMedia() {
+  adFileData=''; adFileMime='';
+  document.getElementById('adFile').value='';
+  adShowPrev();
+}
+function adUrlPreview() {
+  const url  = document.getElementById('adUrl').value.trim();
+  const type = document.getElementById('adType').value;
+  const prev = document.getElementById('adUrlPrev');
+  if (!url) { prev.innerHTML=''; return; }
+  if (type==='youtube') {
+    const id = ytId(url);
+    prev.innerHTML = id
+      ? `<iframe src="https://www.youtube.com/embed/${id}?autoplay=0" style="width:100%;height:140px;border-radius:8px;border:none" allowfullscreen></iframe>`
+      : '<span style="font-size:12px;color:#e53935">⚠ ไม่พบ YouTube ID</span>';
+  } else {
+    prev.innerHTML = `<img src="${url}" style="max-width:100%;max-height:90px;border-radius:8px" onerror="this.style.display='none'">`;
+  }
+}
+function ytId(url) {
+  const m = url.match(/(?:v=|youtu\.be\/|embed\/)([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+
+// ── Save / Clear all ─────────────────────────────────────
+function saveAdSettings() {
+  if (!adItems.length) { toast('ยังไม่มีโฆษณา — กรุณาเพิ่มอย่างน้อย 1 รายการ'); return; }
+  const cfg = {
+    enabled : document.getElementById('adEnabled').checked,
+    delay   : parseFloat(document.getElementById('adDelay').value) || 1,
+    freq    : document.getElementById('adFreq').value,
+    items   : adItems
+  };
+  try {
+    localStorage.setItem(AD_KEY, JSON.stringify(cfg));
+    toast(`บันทึกโฆษณา ${adItems.length} รายการแล้ว ✓`);
+  } catch(e) {
+    if (e.name==='QuotaExceededError') toast('ข้อมูลใหญ่เกิน 5 MB — ลดจำนวนหรือใช้ URL แทน');
+    else toast('บันทึกไม่ได้: '+e.message);
+  }
+}
+function clearAdSettings() {
+  if (!confirm('ลบโฆษณาทั้งหมด?')) return;
+  localStorage.removeItem(AD_KEY);
+  adItems=[]; adResetForm();
+  document.getElementById('adEnabled').checked=false;
+  document.getElementById('adConfig').style.display='none';
+  toast('ลบโฆษณาทั้งหมดแล้ว');
+}
+function previewAd() {
+  const cfg = adGetCfg();
+  // preview ใช้ items จาก form ปัจจุบัน (ยังไม่ต้อง save)
+  const previewCfg = { ...cfg, items: adItems, enabled:true };
+  if (!previewCfg.items.length) { toast('ยังไม่มีโฆษณา'); return; }
+  showAdOverlay(previewCfg, true);
+}
+
+// ── Carousel overlay ─────────────────────────────────────
+function showAdOverlay(cfg, force) {
+  if (!cfg || !cfg.enabled) return;
+  const items = cfg.items || [];
+  if (!items.length) return;
+
+  // frequency gate
+  if (!force) {
+    const seenKey = 'ms_ad_seen';
+    const freq = cfg.freq || 'daily';
+    if (freq==='session' && sessionStorage.getItem(seenKey)) return;
+    if (freq==='once'    && localStorage.getItem(seenKey)) return;
+    if (freq==='daily') {
+      const last = localStorage.getItem(seenKey);
+      if (last && last.slice(0,10)===new Date().toISOString().slice(0,10)) return;
+    }
+    const now = new Date().toISOString().slice(0,10);
+    localStorage.setItem(seenKey, now+'|'+Date.now());
+    sessionStorage.setItem(seenKey,'1');
+  }
+
+  adCurSlide = 0;
+  adRenderSlide(items, 0);
+  document.getElementById('adOverlay').classList.add('show');
+}
+
+function adRenderSlide(items, idx) {
+  adCurSlide = idx;
+  const item = items[idx];
+  const content = document.getElementById('adBoxContent');
+  content.innerHTML = '';
+
+  // content
+  const t = item.type || 'image';
+  if ((t==='image'||t==='video') && item.fileData) {
+    if ((item.fileMime||'').startsWith('video') || t==='video') {
+      const v = document.createElement('video');
+      v.src=item.fileData; v.controls=true; v.autoplay=true; v.muted=false; v.loop=false;
+      v.style.cssText='width:100%;max-height:55vh;object-fit:contain;background:#000';
+      content.appendChild(v);
+    } else {
+      const img = document.createElement('img');
+      img.src=item.fileData; img.alt=item.caption||'โฆษณา';
+      img.style.cssText='width:100%;max-height:55vh;object-fit:contain;display:block';
+      content.appendChild(img);
+    }
+  } else if (t==='youtube' && item.url) {
+    const id = ytId(item.url);
+    if (id) {
+      const ifr = document.createElement('iframe');
+      ifr.src=`https://www.youtube.com/embed/${id}?autoplay=1`;
+      ifr.allow='autoplay; encrypted-media'; ifr.allowFullscreen=true;
+      ifr.style.cssText='width:100%;height:220px;border:none;display:block';
+      content.appendChild(ifr);
+    }
+  } else if (t==='url' && item.url) {
+    const url = item.url;
+    if (/\.(mp4|webm|ogg)(\?|$)/i.test(url)) {
+      const v = document.createElement('video');
+      v.src=url; v.controls=true; v.autoplay=true; v.muted=false;
+      v.style.cssText='width:100%;max-height:55vh;object-fit:contain;background:#000';
+      content.appendChild(v);
+    } else {
+      const img = document.createElement('img');
+      img.src=url; img.alt=item.caption||'โฆษณา';
+      img.style.cssText='width:100%;max-height:55vh;object-fit:contain;display:block';
+      content.appendChild(img);
+    }
+  } else return;
+
+  // caption
+  const cap = document.getElementById('adBoxCaption');
+  if (item.caption) { cap.textContent=item.caption; cap.style.display='block'; }
+  else cap.style.display='none';
+
+  // button
+  const btn = document.getElementById('adBoxBtn');
+  if (item.btnUrl) { btn.href=item.btnUrl; btn.textContent=item.btnTxt||'ดูเพิ่มเติม'; btn.style.display='block'; }
+  else btn.style.display='none';
+
+  // carousel nav
+  const nav  = document.getElementById('adCarouselNav');
+  const prev = document.getElementById('adNavPrev');
+  const next = document.getElementById('adNavNext');
+  if (items.length > 1) {
+    nav.style.display='flex';
+    prev.disabled = idx===0;
+    next.disabled = idx===items.length-1;
+    // dots
+    document.getElementById('adDots').innerHTML = items.map((_,i) =>
+      `<button class="ad-dot ${i===idx?'on':''}" onclick="adGoTo(${i})" title="โฆษณา ${i+1}"></button>`
+    ).join('');
+  } else {
+    nav.style.display='none';
+  }
+  // store items ref for nav buttons
+  document.getElementById('adBox').dataset.total = items.length;
+  document.getElementById('adBox')._adItems = items;
+}
+
+function adGo(dir) {
+  const items = document.getElementById('adBox')._adItems || [];
+  adStopMedia();
+  const next = adCurSlide + dir;
+  if (next>=0 && next<items.length) adRenderSlide(items, next);
+}
+function adGoTo(i) {
+  const items = document.getElementById('adBox')._adItems || [];
+  adStopMedia();
+  adRenderSlide(items, i);
+}
+
+function adStopMedia() {
+  document.getElementById('adBoxContent').querySelectorAll('video,iframe').forEach(el => {
+    if (el.tagName==='VIDEO') el.pause();
+    else { const s=el.src; el.src=''; el.src=s; }
+  });
+}
+
+function closeAdOverlay() {
+  adStopMedia();
+  document.getElementById('adOverlay').classList.remove('show');
+}
+function adOverlayClick(e) {
+  if (e.target===document.getElementById('adOverlay')) closeAdOverlay();
 }
 function applyLogo(data) {
   const img=document.getElementById('logoImg'),em=document.getElementById('logoEm');
