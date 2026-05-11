@@ -506,6 +506,22 @@ textarea.fi{resize:none;height:70px}
   </div>
 </div>
 
+<!-- ── LOCATION FALLBACK MODAL (แทน prompt() ที่ Android LINE บล็อก) ── -->
+<div id="locOv" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:600;align-items:center;justify-content:center;padding:20px;">
+  <div style="background:#fff;border-radius:18px;padding:24px;width:100%;max-width:420px;box-shadow:0 20px 60px rgba(0,0,0,.3);">
+    <div style="font-family:'Prompt',sans-serif;font-size:17px;font-weight:700;margin-bottom:6px;">📍 ระบุตำแหน่งด้วยตนเอง</div>
+    <div style="font-size:13px;color:#777;margin-bottom:16px;line-height:1.6;">วางลิงค์ Google Maps<br>หรือพิกัด เช่น <b>18.12345, 99.12345</b></div>
+    <input id="locInput" type="text" placeholder="https://maps.google.com/... หรือ lat, lng"
+      style="width:100%;padding:11px 14px;border:1.5px solid #E5E5E5;border-radius:10px;font-size:14px;font-family:'Sarabun',sans-serif;outline:none;margin-bottom:14px;"
+      onfocus="this.style.borderColor='#C0392B'" onblur="this.style.borderColor='#E5E5E5'">
+    <div id="locErr" style="color:#C0392B;font-size:12px;margin-bottom:10px;display:none;">⚠️ รูปแบบไม่ถูกต้อง กรุณากรอกใหม่</div>
+    <div style="display:flex;gap:10px;">
+      <button onclick="closeLocModal()" style="flex:1;padding:12px;background:#F7F7F7;border:1.5px solid #E5E5E5;border-radius:10px;font-size:14px;font-family:'Sarabun',sans-serif;font-weight:600;cursor:pointer;">ยกเลิก</button>
+      <button onclick="confirmLocInput()" style="flex:2;padding:12px;background:#C0392B;color:#fff;border:none;border-radius:10px;font-size:14px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;">✅ ยืนยัน</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── EXCEL IMPORT PREVIEW MODAL ── -->
 <div id="excelOv" onclick="if(event.target===this)closeExcelPreview()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:650;align-items:center;justify-content:center;padding:20px;">
   <div style="background:#fff;border-radius:18px;max-width:900px;width:100%;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
@@ -2001,19 +2017,67 @@ function selCOT(t){
 //  MAP PIN
 // ═══════════════════════════════════════════
 function openMapPick() {
-  if (!navigator.geolocation) { alert('เบราว์เซอร์นี้ไม่รองรับ GPS'); return; }
+  if (!navigator.geolocation) {
+    // ไม่รองรับ GPS เลย → เปิด modal กรอกเอง
+    openLocModal(); return;
+  }
+  // แสดงสถานะกำลังหาตำแหน่ง
+  const btn = document.getElementById('mapBtn');
+  btn.textContent = '⏳ กำลังหาตำแหน่ง...';
+  btn.disabled = true;
+
+  const opts = { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 };
   navigator.geolocation.getCurrentPosition(pos => {
+    btn.disabled = false;
     mapLat = pos.coords.latitude;
     mapLng = pos.coords.longitude;
     showMapPin();
-  }, () => {
-    // fallback: let user type coordinates
-    const inp = prompt('ไม่สามารถเข้าถึง GPS\nกรอกลิงค์ Google Maps หรือ lat,lng:');
-    if (inp) {
-      const m = inp.match(/(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)/);
-      if (m) { mapLat=parseFloat(m[1]); mapLng=parseFloat(m[2]); showMapPin(); }
-    }
-  });
+  }, (err) => {
+    btn.disabled = false;
+    btn.textContent = '📍 ปักหมุดตำแหน่งจัดส่ง (ไม่บังคับ)';
+    // ใช้ custom modal แทน prompt() เพราะ Android LINE บล็อก prompt
+    openLocModal();
+  }, opts);
+}
+
+function openLocModal() {
+  document.getElementById('locInput').value = '';
+  document.getElementById('locErr').style.display = 'none';
+  const ov = document.getElementById('locOv');
+  ov.style.display = 'flex';
+  setTimeout(() => document.getElementById('locInput').focus(), 200);
+}
+
+function closeLocModal() {
+  document.getElementById('locOv').style.display = 'none';
+}
+
+function confirmLocInput() {
+  const inp = document.getElementById('locInput').value.trim();
+  const errEl = document.getElementById('locErr');
+  if (!inp) { errEl.style.display = 'block'; return; }
+
+  // รองรับหลายรูปแบบ: Google Maps URL, พิกัด ทั้ง lat,lng และ lng,lat
+  let lat = null, lng = null;
+
+  // 1) Google Maps short link หรือ URL ที่มี @lat,lng
+  let m = inp.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+  if (m) { lat = parseFloat(m[1]); lng = parseFloat(m[2]); }
+
+  // 2) URL รูปแบบ ?q=lat,lng หรือ /place/lat,lng หรือ maps?ll=
+  if (!lat) { m = inp.match(/[?&/](q|ll)=(-?\d+\.\d+)[,+](-?\d+\.\d+)/); if(m){lat=parseFloat(m[2]);lng=parseFloat(m[3]);} }
+
+  // 3) พิกัดดิบ "lat, lng" หรือ "lat lng"
+  if (!lat) { m = inp.match(/^(-?\d+(?:\.\d+)?)[,\s]+(-?\d+(?:\.\d+)?)$/); if(m){lat=parseFloat(m[1]);lng=parseFloat(m[2]);} }
+
+  if (!lat || isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90) {
+    errEl.style.display = 'block'; return;
+  }
+
+  errEl.style.display = 'none';
+  mapLat = lat; mapLng = lng;
+  closeLocModal();
+  showMapPin();
 }
 function showMapPin() {
   const info = document.getElementById('pinInfo');
