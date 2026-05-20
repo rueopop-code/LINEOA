@@ -531,36 +531,54 @@ textarea.fi{resize:none;height:70px}
     </div>
     <div class="cart-list" id="cartList"></div>
     <div class="cart-foot">
-      <!-- ── AUTO DISCOUNT BANNER ── -->
-      <div id="autoCpnBanner" class="cpn-banner" style="display:none;">
-        <div class="cpn-banner-inner">
-          <div class="cpn-banner-icon">🎉</div>
-          <div class="cpn-banner-text" style="flex:1;">
-            <div class="cpn-banner-title" id="autoCpnTitle">คุณได้รับส่วนลดพิเศษ!</div>
-            <div class="cpn-banner-desc" id="autoCpnDesc"></div>
-            <div id="autoCpnExpiry" style="font-size:10px;color:#bf6000;margin-top:3px;display:none;"></div>
-          </div>
-          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex-shrink:0;">
-            <div class="cpn-banner-amount" id="autoCpnAmount"></div>
-            <div style="font-size:9px;color:#E65100;font-weight:600;">ส่วนลดอัตโนมัติ ⚡</div>
-          </div>
-        </div>
-      </div>
+      <!-- ══ COUPON ZONE — แสดงตลอด ══ -->
+      <div id="cpnZone" style="margin-bottom:10px;">
 
-      <!-- ── MANUAL COUPON INPUT ── -->
-      <div id="manualCpnWrap" class="cpn-input-wrap" style="display:none;">
-        <div class="cpn-input-label" style="justify-content:space-between;">
-          <span>🎟️ คูปองส่วนลด</span>
-          <button class="cpn-picker-btn" onclick="openCouponPicker()">เลือกคูปอง ›</button>
+        <!-- loading state -->
+        <div id="cpnLoading" style="display:none;text-align:center;padding:8px;font-size:12px;color:#aaa;">⏳ กำลังตรวจสอบส่วนลด...</div>
+
+        <!-- AUTO BANNER (เมื่อ auto discount พร้อม) -->
+        <div id="autoCpnBanner" class="cpn-banner" style="display:none;">
+          <div class="cpn-banner-inner">
+            <div class="cpn-banner-icon">🎉</div>
+            <div class="cpn-banner-text" style="flex:1;">
+              <div class="cpn-banner-title" id="autoCpnTitle">คุณได้รับส่วนลดพิเศษ!</div>
+              <div class="cpn-banner-desc" id="autoCpnDesc"></div>
+              <div id="autoCpnExpiry" style="font-size:10px;color:#bf6000;margin-top:3px;display:none;"></div>
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex-shrink:0;">
+              <div class="cpn-banner-amount" id="autoCpnAmount"></div>
+              <div style="font-size:9px;color:#E65100;font-weight:600;">อัตโนมัติ ⚡</div>
+            </div>
+          </div>
         </div>
-        <div class="cpn-input-row">
-          <input id="cpnCodeInput" class="cpn-input-field" type="text"
-            placeholder="หรือกรอกรหัสคูปองเอง" maxlength="32"
-            oninput="this.value=this.value.toUpperCase()"
-            onkeydown="if(event.key==='Enter')applyCouponCode()">
-          <button class="cpn-apply-btn" id="cpnApplyBtn" onclick="applyCouponCode()">ใช้คูปอง</button>
+
+        <!-- COUPON ROW — แสดงตลอดเวลา -->
+        <div id="cpnRow" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#fff;border:1.5px solid #e8e8e8;border-radius:12px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:18px;">🎟️</span>
+            <div id="cpnRowText">
+              <div style="font-size:13px;font-weight:600;color:#333;" id="cpnRowLabel">คูปองและส่วนลด</div>
+              <div style="font-size:11px;color:#aaa;" id="cpnRowSub">กดเพื่อเลือกหรือกรอกโค้ด</div>
+            </div>
+          </div>
+          <button onclick="openCouponPicker()" id="cpnRowBtn"
+            style="background:none;border:none;font-size:13px;font-weight:700;color:var(--c1);cursor:pointer;font-family:'Sarabun',sans-serif;display:flex;align-items:center;gap:3px;white-space:nowrap;">
+            เลือก <span style="font-size:16px;">›</span>
+          </button>
         </div>
-        <div class="cpn-result" id="cpnResult"></div>
+
+        <!-- ช่องกรอกโค้ด (ซ่อนอยู่ เปิดจาก picker หรือกดพิมพ์เอง) -->
+        <div id="manualCpnWrap" style="display:none;margin-top:8px;">
+          <div class="cpn-input-row">
+            <input id="cpnCodeInput" class="cpn-input-field" type="text"
+              placeholder="กรอกรหัสคูปอง" maxlength="32"
+              oninput="this.value=this.value.toUpperCase()"
+              onkeydown="if(event.key==='Enter')applyCouponCode()">
+            <button class="cpn-apply-btn" id="cpnApplyBtn" onclick="applyCouponCode()">ใช้</button>
+          </div>
+          <div class="cpn-result" id="cpnResult"></div>
+        </div>
       </div>
 
       <!-- ── COUPON PICKER OVERLAY ── -->
@@ -2517,7 +2535,7 @@ async function fetchDiscountData() {
 function refreshDiscountUI() {
   const tot = cart.reduce((s,i,idx) => s + getCartLinePrice(idx) * i.qty, 0);
 
-  // เลือก coupon ที่จะใช้: manual (ถ้ากรอกสำเร็จ) > auto
+  // เลือก coupon ที่จะใช้: manual > auto
   const active = _manualDiscount || _autoDiscount;
   _appliedCoupon  = active;
   _discountAmount = calcDiscountAmount(active, tot);
@@ -2530,7 +2548,6 @@ function refreshDiscountUI() {
     document.getElementById('autoCpnTitle').textContent = _autoDiscount.name || 'คุณได้รับส่วนลดพิเศษ!';
     document.getElementById('autoCpnDesc').textContent  = couponDescription(_autoDiscount);
     document.getElementById('autoCpnAmount').textContent = amt > 0 ? `-฿${amt.toLocaleString()}` : '';
-    // วันหมดอายุ
     const expiryEl = document.getElementById('autoCpnExpiry');
     if (_autoDiscount.end_date) {
       const d = new Date(_autoDiscount.end_date);
@@ -2542,9 +2559,28 @@ function refreshDiscountUI() {
     autoBanner.style.display = 'none';
   }
 
-  // MANUAL INPUT (แสดงเฉพาะถ้า server บอกว่ามี manual coupon)
-  const manualWrap = document.getElementById('manualCpnWrap');
-  manualWrap.style.display = _hasManualActive ? 'block' : 'none';
+  // COUPON ROW — อัปเดตข้อความให้สะท้อนสถานะ
+  const rowLabel = document.getElementById('cpnRowLabel');
+  const rowSub   = document.getElementById('cpnRowSub');
+  const rowBtn   = document.getElementById('cpnRowBtn');
+  if (rowLabel && rowSub) {
+    if (active && _discountAmount > 0) {
+      rowLabel.textContent = active.name || 'ส่วนลด';
+      rowLabel.style.color = '#27AE60';
+      rowSub.textContent   = `ประหยัด ฿${_discountAmount.toLocaleString()}`;
+      rowSub.style.color   = '#27AE60';
+      if (rowBtn) rowBtn.textContent = 'เปลี่ยน ›';
+    } else {
+      rowLabel.textContent = 'คูปองและส่วนลด';
+      rowLabel.style.color = '#333';
+      rowSub.textContent   = 'กดเพื่อเลือกหรือกรอกโค้ด';
+      rowSub.style.color   = '#aaa';
+      if (rowBtn) rowBtn.textContent = 'เลือก ›';
+    }
+  }
+
+  // MANUAL INPUT — ซ่อน/แสดง (ไม่บังคับแล้ว เปิดจาก picker)
+  // ไม่ต้อง toggle manualCpnWrap จากที่นี่
 
   // SUMMARY ROWS
   const hasDisc = _discountAmount > 0;
@@ -2594,12 +2630,29 @@ function closeCouponPicker() {
   document.getElementById('cpnPickerOv').classList.remove('show');
 }
 
+function toggleManualInput() {
+  const wrap = document.getElementById('manualCpnWrap');
+  wrap.style.display = wrap.style.display === 'none' ? 'block' : 'none';
+  if (wrap.style.display === 'block') {
+    document.getElementById('cpnCodeInput').focus();
+  }
+}
+
 function renderCouponPicker(coupons, tot) {
   const list = document.getElementById('cpnPickerList');
   if (!coupons.length) {
     list.innerHTML = '<div style="text-align:center;color:#aaa;padding:24px;"><div style="font-size:32px;margin-bottom:8px;">🎟️</div><div style="font-size:13px;">ไม่มีคูปองที่ใช้ได้ตอนนี้</div></div>';
     return;
   }
+  // เพิ่ม option "กรอกโค้ดเอง" ท้ายสุด
+  const manualEntry = `<div class="cpn-pick-item" style="border-style:dashed;background:#fafafa;" onclick="closeCouponPicker();document.getElementById('manualCpnWrap').style.display='block';document.getElementById('cpnCodeInput').focus();">
+    <div class="cpn-pick-top">
+      <div class="cpn-pick-badge" style="background:#888;">🔑 กรอกโค้ด</div>
+      <div class="cpn-pick-name" style="color:#555;">มีรหัสคูปอง?</div>
+    </div>
+    <div class="cpn-pick-desc">กรอกโค้ดที่ได้รับมาเพื่อรับส่วนลด</div>
+  </div>`;
+
   list.innerHTML = coupons.map(c => {
     const disc = calcDiscountAmount(c, tot);
     const discLabel = c.discount_type === 'percent'
@@ -2626,7 +2679,7 @@ function renderCouponPicker(coupons, tot) {
       </div>
       ${disc > 0 ? `<div style="margin-top:6px;font-size:12px;font-weight:700;color:var(--c1);">ประหยัด ฿${disc.toLocaleString()}</div>` : ''}
     </div>`;
-  }).join('');
+  }).join('') + manualEntry;
 }
 
 function pickCoupon(id) {
@@ -2749,9 +2802,12 @@ function shakeCpnInput() {
 async function openCart() {
   document.getElementById('cartOv').classList.add('show');
   renderCart();
-  if (!_discountFetched) {
-    await fetchDiscountData();
-  }
+  // แสดง loading และดึงส่วนลดใหม่ทุกครั้ง
+  const loadEl = document.getElementById('cpnLoading');
+  if (loadEl) loadEl.style.display = 'block';
+  _discountFetched = false; // force refetch
+  await fetchDiscountData();
+  if (loadEl) loadEl.style.display = 'none';
   refreshDiscountUI();
   // pre-fill ข้อมูลเดิม
   const n = localStorage.getItem('ms_customer_name');
