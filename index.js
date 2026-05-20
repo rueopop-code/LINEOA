@@ -482,11 +482,34 @@ app.post('/send-order', async (req, res) => {
   const {
     customerId, customerName, lineName, phone, address, note,
     items, total, orderType, extra,
-    mapLat, mapLng              // 📍 พิกัด GPS จากการปักหมุดบนหน้าร้าน
+    mapLat, mapLng,             // 📍 พิกัด GPS
+    couponId, discountAmount    // 🎟️ ส่วนลด/คูปอง
   } = req.body;
 
   if (!customerId || !customerName || !items?.length || total == null)
     return res.status(400).json({ error: 'ข้อมูลไม่ครบ (customerId/customerName/items/total)' });
+
+  // ── ตรวจสอบและ apply coupon ────────────────────────────
+  let appliedCouponId   = null;
+  let appliedCouponCode = null;
+  let finalDiscount     = 0;
+
+  if (couponId && discountAmount > 0) {
+    const { data: coup } = await supabase
+      .from('coupons').select('*').eq('id', couponId).eq('is_active', true).maybeSingle();
+    if (coup) {
+      if (!coup.usage_limit || coup.used_count < coup.usage_limit) {
+        finalDiscount     = Math.min(Number(discountAmount), total);
+        appliedCouponId   = coup.id;
+        appliedCouponCode = coup.code;
+        await supabase.from('coupons')
+          .update({ used_count: (coup.used_count || 0) + 1 })
+          .eq('id', coup.id);
+      }
+    }
+  }
+
+  const finalTotal = Math.max(0, total - finalDiscount);
 
   // ── parse + validate พิกัด GPS ──
   // 1) ลองรับจาก mapLat/mapLng ก่อน (ทางที่ดีที่สุด — ส่งแยกฟิลด์)
@@ -513,11 +536,15 @@ app.post('/send-order', async (req, res) => {
     customer_name: customerName,             // ชื่อจริง — สำหรับจ่าหน้าพัสดุ
     line_name: lineName || customerName,     // ✨ ชื่อ LINE — สำหรับผูกแชท
     phone: phone || null, address: address || null, note: note || extra || null,
-    items, total, status: 'pending', created_at,
+    items, total: finalTotal, status: 'pending', created_at,
     order_type: orderType || 'pickup',
     // 📍 บันทึกพิกัดจัดส่ง (ถ้ามี) — ให้หน้าแอดมินเห็นปุ่มแผนที่
     map_lat: hasValidPin ? lat : null,
-    map_lng: hasValidPin ? lng : null
+    map_lng: hasValidPin ? lng : null,
+    // 🎟️ ส่วนลด
+    coupon_id: appliedCouponId,
+    coupon_code: appliedCouponCode,
+    discount_amount: finalDiscount
   };
 
   const { error: dbErr } = await supabase.from('orders').insert([order]);
@@ -548,7 +575,8 @@ app.post('/send-order', async (req, res) => {
     `🎉 ขอบคุณสำหรับการสั่งซื้อ คุณ ${customerName}\n\n` +
     `📦 ออเดอร์ #${order_id}\n` +
     items.map(i => `• ${i.emoji||''} ${i.name} ×${i.qty} = ฿${(i.qty*i.price).toLocaleString()}`).join('\n') +
-    `\n\n💰 ยอดรวม: ฿${total.toLocaleString()}\n` +
+    (finalDiscount > 0 ? `\n🎟️ ส่วนลด: -฿${finalDiscount.toLocaleString()}` : '') +
+    `\n\n💰 ยอดรวม: ฿${finalTotal.toLocaleString()}\n` +
     `\nร้านจะยืนยันและแจ้งสถานะให้ทราบเร็วๆ นี้ค่ะ 🙏`;
 
   await supabase.from('messages').insert([{
@@ -1452,6 +1480,191 @@ function getStatusEmoji(s) {
     shipped:'🚚', done:'🎉', cancelled:'❌', failed:'💥'
   })[s] || '📦';
 }
+
+// ══════════════════════════════════════════════════════════
+//  COUPON / DISCOUNT SYSTEM
+// ══════════════════════════════════════════════════════════
+
+// ── helper: คำนวณส่วนลดจาก coupon ──────────────────────────
+function calcDiscount(coupon, orderTotal) {
+  if (!coupon || !coupon.is_active) return 0;
+  if (coupon.min_order && orderTotal < coupon.min_order) return 0;
+  if (coupon.discount_type === 'percent') {
+    const d = (orderTotal * coupon.discount_value) / 100;
+    return coupon.max_discount ? Math.min(d, coupon.max_discount) : d;
+  }
+  return Math.min(coupon.discount_value, orderTotal); // ไม่ลดจนติดลบ
+}
+
+// ── GET /applicable-discounts ─────────────────────────────
+// ส่งคืน auto-discounts ที่ลูกค้านี้ใช้ได้ตอนนี้
+app.get('/applicable-discounts', async (req, res) => {
+  const { customerId, orderTotal } = req.query;
+  if (!customerId) return res.status(400).json({ error: 'customerId required' });
+
+  const total = parseFloat(orderTotal) || 0;
+  const now   = new Date().toISOString();
+
+  // ดึง auto-coupons ที่ active
+  const { data: coupons, error } = await supabase
+    .from('coupons')
+    .select('*')
+    .eq('is_active', true)
+    .eq('apply_type', 'auto')
+    .or(`start_date.is.null,start_date.lte.${now}`)
+    .or(`end_date.is.null,end_date.gte.${now}`)
+    .order('discount_value', { ascending: false });
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  // ตรวจ first_order
+  let isFirstOrder = false;
+  const { data: prevOrders } = await supabase
+    .from('orders')
+    .select('id')
+    .eq('customer_id', customerId)
+    .not('order_id', 'like', 'LINE-%')
+    .not('order_id', 'like', 'LINK-%')
+    .limit(1);
+  isFirstOrder = !prevOrders?.length;
+
+  // กรอง coupons ตาม condition + usage_limit
+  const eligible = (coupons || []).filter(c => {
+    if (c.usage_limit !== null && c.used_count >= c.usage_limit) return false;
+    if (c.condition_type === 'first_order') return isFirstOrder;
+    return true; // 'always' or null
+  });
+
+  // เลือก coupon เดียวที่ให้ส่วนลดมากสุด
+  let best = null;
+  let bestDiscount = 0;
+  for (const c of eligible) {
+    const d = calcDiscount(c, total || 1); // ใช้ 1 ถ้ายังไม่รู้ total
+    if (d > bestDiscount) { best = c; bestDiscount = d; }
+  }
+
+  // ตรวจว่ามี manual coupon active อยู่หรือไม่ (เพื่อให้ frontend แสดง/ซ่อน input field)
+  const { data: manualCoupons } = await supabase
+    .from('coupons')
+    .select('id')
+    .eq('is_active', true)
+    .eq('apply_type', 'manual')
+    .or(`start_date.is.null,start_date.lte.${now}`)
+    .or(`end_date.is.null,end_date.gte.${now}`)
+    .limit(1);
+  const hasManualCoupon = !!(manualCoupons?.length);
+
+  res.json({ isFirstOrder, discount: best, allEligible: eligible, hasManualCoupon });
+});
+
+// ── GET /validate-coupon ──────────────────────────────────
+// ตรวจสอบ manual coupon code ที่ลูกค้ากรอก
+app.get('/validate-coupon', async (req, res) => {
+  const { code, customerId, orderTotal } = req.query;
+  if (!code) return res.status(400).json({ error: 'กรุณากรอกรหัสคูปอง' });
+
+  const total = parseFloat(orderTotal) || 0;
+  const now   = new Date().toISOString();
+
+  // หา coupon ที่ตรงกับ code
+  const { data: coupon, error } = await supabase
+    .from('coupons')
+    .select('*')
+    .eq('is_active', true)
+    .eq('apply_type', 'manual')
+    .ilike('code', code.trim())
+    .or(`start_date.is.null,start_date.lte.${now}`)
+    .or(`end_date.is.null,end_date.gte.${now}`)
+    .maybeSingle();
+
+  if (error) return res.status(500).json({ error: error.message });
+  if (!coupon) return res.status(404).json({ error: 'ไม่พบคูปองนี้ หรือคูปองหมดอายุแล้ว' });
+
+  // ตรวจ usage_limit
+  if (coupon.usage_limit !== null && coupon.used_count >= coupon.usage_limit)
+    return res.status(400).json({ error: 'คูปองนี้ถูกใช้ครบจำนวนแล้ว' });
+
+  // ตรวจ min_order
+  if (coupon.min_order > 0 && total < coupon.min_order)
+    return res.status(400).json({ error: `ต้องสั่งขั้นต่ำ ฿${coupon.min_order.toLocaleString()} ถึงจะใช้คูปองนี้ได้` });
+
+  // ตรวจ first_order condition
+  if (coupon.condition_type === 'first_order' && customerId) {
+    const { data: prev } = await supabase
+      .from('orders').select('id').eq('customer_id', customerId)
+      .not('order_id', 'like', 'LINE-%').not('order_id', 'like', 'LINK-%').limit(1);
+    if (prev?.length)
+      return res.status(400).json({ error: 'คูปองนี้สำหรับการสั่งซื้อครั้งแรกเท่านั้น' });
+  }
+
+  const discount = calcDiscount(coupon, total);
+  res.json({ success: true, coupon, discountAmount: discount });
+});
+
+// ── GET /coupons (admin) ──────────────────────────────────
+app.get('/coupons', async (req, res) => {
+  const { data, error } = await supabase
+    .from('coupons')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ coupons: data || [] });
+});
+
+// ── POST /coupons (admin) ─────────────────────────────────
+app.post('/coupons', async (req, res) => {
+  const {
+    name, description, code, discount_type, discount_value,
+    max_discount, min_order, apply_type, condition_type,
+    start_date, end_date, usage_limit, is_active
+  } = req.body;
+
+  if (!name || discount_value == null)
+    return res.status(400).json({ error: 'name และ discount_value จำเป็น' });
+
+  const { data, error } = await supabase.from('coupons').insert([{
+    name, description: description || null,
+    code: code || null,
+    discount_type: discount_type || 'fixed',
+    discount_value: Number(discount_value),
+    max_discount: max_discount ? Number(max_discount) : null,
+    min_order: Number(min_order || 0),
+    apply_type: apply_type || 'auto',
+    condition_type: condition_type || null,
+    start_date: start_date || null,
+    end_date: end_date || null,
+    usage_limit: usage_limit ? Number(usage_limit) : null,
+    is_active: is_active !== false
+  }]).select().single();
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true, coupon: data });
+});
+
+// ── PATCH /coupons/:id (admin) ────────────────────────────
+app.patch('/coupons/:id', async (req, res) => {
+  const id = parseInt(req.params.id);
+  const updates = {};
+  const fields = [
+    'name','description','code','discount_type','discount_value',
+    'max_discount','min_order','apply_type','condition_type',
+    'start_date','end_date','usage_limit','is_active'
+  ];
+  fields.forEach(f => { if (req.body[f] !== undefined) updates[f] = req.body[f]; });
+
+  const { data, error } = await supabase
+    .from('coupons').update(updates).eq('id', id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true, coupon: data });
+});
+
+// ── DELETE /coupons/:id (admin) ───────────────────────────
+app.delete('/coupons/:id', async (req, res) => {
+  const id = parseInt(req.params.id);
+  const { error } = await supabase.from('coupons').delete().eq('id', id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
 
 // ── GET /orders (admin) ──────────────────────────────────
 app.get('/orders', async (req, res) => {

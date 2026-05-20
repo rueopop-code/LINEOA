@@ -136,6 +136,47 @@ header{background:linear-gradient(120deg,var(--c2) 0%,var(--c1) 55%,var(--c3) 10
 .total-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
 .total-lbl{font-size:15px;font-weight:600}
 .total-price{font-size:22px;font-weight:800;color:var(--c1)}
+/* ── COUPON UI ── */
+.cpn-banner{background:linear-gradient(135deg,#fff8e1,#fffde7);border:1.5px dashed #FFC107;border-radius:12px;padding:10px 14px;margin-bottom:10px;animation:cpnPop .3s ease;}
+.cpn-banner-inner{display:flex;align-items:flex-start;gap:10px;}
+.cpn-banner-icon{font-size:22px;line-height:1;flex-shrink:0;}
+.cpn-banner-text{flex:1;}
+.cpn-banner-title{font-size:13px;font-weight:700;color:#E65100;line-height:1.3;}
+.cpn-banner-desc{font-size:11px;color:#bf6000;margin-top:2px;line-height:1.4;}
+.cpn-banner-amount{font-size:18px;font-weight:800;color:#C0392B;white-space:nowrap;align-self:center;}
+.cpn-input-wrap{background:#fff;border:1.5px solid #e0e0e0;border-radius:12px;padding:12px 14px;margin-bottom:10px;transition:.2s;}
+.cpn-input-wrap.active{border-color:#FFC107;background:#fffef7;}
+.cpn-input-label{font-size:12px;font-weight:700;color:#555;margin-bottom:8px;display:flex;align-items:center;gap:6px;}
+.cpn-input-row{display:flex;gap:8px;align-items:center;}
+.cpn-input-field{flex:1;padding:9px 12px;border:1.5px solid #ddd;border-radius:9px;font-size:14px;font-family:'Sarabun',sans-serif;outline:none;transition:.2s;text-transform:uppercase;}
+.cpn-input-field:focus{border-color:#FFC107;box-shadow:0 0 0 3px rgba(255,193,7,0.12);}
+.cpn-input-field.error{border-color:#e53935;animation:shake .3s ease;}
+.cpn-input-field.success{border-color:#27AE60;}
+.cpn-apply-btn{padding:9px 16px;background:#C0392B;color:#fff;border:none;border-radius:9px;font-size:13px;font-weight:700;font-family:'Sarabun',sans-serif;cursor:pointer;white-space:nowrap;transition:.15s;}
+.cpn-apply-btn:hover{background:#96281B;}
+.cpn-apply-btn:disabled{background:#ccc;cursor:not-allowed;}
+.cpn-result{margin-top:8px;border-radius:10px;font-size:12px;display:none;}
+.cpn-result.err{background:#ffebee;color:#c62828;display:flex;align-items:center;gap:6px;padding:8px 12px;font-weight:600;}
+.cpn-result.ok{display:block;padding:0;}
+.cpn-card{background:linear-gradient(135deg,#f0fff4,#e8f5e9);border:1.5px solid #a5d6a7;border-radius:10px;padding:12px 14px;}
+.cpn-card-top{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+.cpn-card-icon{font-size:20px;flex-shrink:0;}
+.cpn-card-name{font-size:13px;font-weight:700;color:#1b5e20;flex:1;}
+.cpn-card-badge{background:#27AE60;color:#fff;font-size:11px;font-weight:800;padding:2px 8px;border-radius:20px;white-space:nowrap;}
+.cpn-card-desc{font-size:12px;color:#2e7d32;line-height:1.5;margin-bottom:6px;}
+.cpn-card-saving{display:flex;justify-content:space-between;align-items:center;padding-top:6px;border-top:1px dashed #a5d6a7;}
+.cpn-card-save-lbl{font-size:12px;color:#388e3c;font-weight:600;}
+.cpn-card-save-amt{font-size:16px;font-weight:800;color:#C0392B;}
+.cpn-clear-btn{background:none;border:none;color:#aaa;font-size:18px;cursor:pointer;padding:0 4px;line-height:1;}
+.cpn-clear-btn:hover{color:#e53935;}
+.discount-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;padding:6px 10px;background:linear-gradient(135deg,#e8f5e9,#f1f8e9);border-radius:8px;}
+.discount-lbl{font-size:13px;font-weight:600;color:#2e7d32;}
+.discount-val{font-size:14px;font-weight:800;color:#2e7d32;}
+.final-total-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding:10px 0 0;border-top:2px solid var(--border);}
+.final-total-lbl{font-size:15px;font-weight:700;color:var(--text);}
+.final-total-price{font-size:24px;font-weight:800;color:var(--c1);}
+@keyframes cpnPop{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:scale(1)}}
+@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
 .cotype-row{display:flex;gap:8px;margin-bottom:12px}
 .cotype{flex:1;padding:9px;border:1.5px solid var(--border);border-radius:10px;text-align:center;cursor:pointer;font-size:12px;font-family:'Sarabun',sans-serif;transition:.15s;background:#fff}
 .cotype.active{border-color:var(--c1);background:var(--cp);color:var(--c1)}
@@ -469,9 +510,54 @@ textarea.fi{resize:none;height:70px}
     </div>
     <div class="cart-list" id="cartList"></div>
     <div class="cart-foot">
-      <div class="total-row">
+      <!-- ── AUTO DISCOUNT BANNER ── -->
+      <div id="autoCpnBanner" class="cpn-banner" style="display:none;">
+        <div class="cpn-banner-inner">
+          <div class="cpn-banner-icon">🎉</div>
+          <div class="cpn-banner-text" style="flex:1;">
+            <div class="cpn-banner-title" id="autoCpnTitle">คุณได้รับส่วนลดพิเศษ!</div>
+            <div class="cpn-banner-desc" id="autoCpnDesc"></div>
+            <div id="autoCpnExpiry" style="font-size:10px;color:#bf6000;margin-top:3px;display:none;"></div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex-shrink:0;">
+            <div class="cpn-banner-amount" id="autoCpnAmount"></div>
+            <div style="font-size:9px;color:#E65100;font-weight:600;">ส่วนลดอัตโนมัติ ⚡</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── MANUAL COUPON INPUT (แสดงเฉพาะถ้ามี manual coupon active) ── -->
+      <div id="manualCpnWrap" class="cpn-input-wrap" style="display:none;">
+        <div class="cpn-input-label" style="justify-content:space-between;">
+          <span>🎟️ มีโค้ดส่วนลดใช่ไหม?</span>
+          <span style="font-size:11px;color:#aaa;font-weight:400;">กรอกเพื่อรับส่วนลด</span>
+        </div>
+        <div class="cpn-input-row">
+          <input id="cpnCodeInput" class="cpn-input-field" type="text"
+            placeholder="กรอกรหัสคูปอง" maxlength="32"
+            oninput="this.value=this.value.toUpperCase()"
+            onkeydown="if(event.key==='Enter')applyCouponCode()">
+          <button class="cpn-apply-btn" id="cpnApplyBtn" onclick="applyCouponCode()">ใช้คูปอง</button>
+        </div>
+        <div class="cpn-result" id="cpnResult"></div>
+      </div>
+
+      <!-- ── SUMMARY ROWS ── -->
+      <div class="total-row" id="subtotalRow" style="display:none;">
+        <span class="total-lbl" style="font-size:13px;color:var(--sub);">ราคาสินค้า</span>
+        <span style="font-size:15px;font-weight:700;color:var(--sub);" id="cartSubtotal">฿0</span>
+      </div>
+      <div class="discount-row" id="discountRow" style="display:none;">
+        <span class="discount-lbl">✅ <span id="discountName">ส่วนลด</span></span>
+        <span class="discount-val" id="discountVal">-฿0</span>
+      </div>
+      <div class="total-row" id="totalRowNormal">
         <span class="total-lbl">ยอดรวม</span>
         <span class="total-price" id="cartTotal">฿0</span>
+      </div>
+      <div class="final-total-row" id="finalTotalRow" style="display:none;">
+        <span class="final-total-lbl">💰 ยอดที่ต้องชำระ</span>
+        <span class="final-total-price" id="cartFinalTotal">฿0</span>
       </div>
       <!-- order type -->
       <div class="cotype-row">
@@ -610,6 +696,7 @@ textarea.fi{resize:none;height:70px}
       <div class="atab" onclick="showTab('tab-cats',this)">🗂️ หมวด</div>
       <div class="atab" onclick="showTab('tab-add',this)">➕ เพิ่ม</div>
       <div class="atab" onclick="showTab('tab-products',this)">📦 สินค้า</div>
+      <div class="atab" onclick="showTab('tab-coupons',this);loadShopCoupons()">🎟️ คูปอง</div>
     </div>
 
     <!-- SETTINGS -->
@@ -812,6 +899,94 @@ textarea.fi{resize:none;height:70px}
       </div>
       <div class="pm-list" id="pmList"></div>
     </div>
+
+    <!-- ══ TAB COUPONS ══════════════════════════════════════ -->
+    <div class="tab-pane" id="tab-coupons">
+
+      <!-- CREATE / EDIT FORM -->
+      <div id="shopCpnForm" style="background:#f8f9fa;border:1.5px solid #e0e0e0;border-radius:12px;padding:14px;margin-bottom:14px;">
+        <div style="font-size:13px;font-weight:700;color:#2C3E50;margin-bottom:12px;" id="shopCpnFormTitle">➕ สร้างคูปองใหม่</div>
+
+        <div class="s-row">
+          <label class="s-lbl">ชื่อโปรโมชั่น *</label>
+          <input class="s-inp" id="sc_name" placeholder="เช่น ส่วนลดลูกค้าใหม่, Flash Sale">
+        </div>
+        <div class="s-row">
+          <label class="s-lbl">คำอธิบาย</label>
+          <input class="s-inp" id="sc_desc" placeholder="รายละเอียดที่ลูกค้าจะเห็น">
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+          <div>
+            <label class="s-lbl" style="margin-bottom:4px;display:block;">ประเภทส่วนลด</label>
+            <select class="s-inp" id="sc_dtype" onchange="updateShopCpnForm()" style="padding:9px 10px;">
+              <option value="fixed">💰 ลดเป็นบาท</option>
+              <option value="percent">📊 ลดเป็น %</option>
+            </select>
+          </div>
+          <div>
+            <label class="s-lbl" id="sc_dval_lbl" style="margin-bottom:4px;display:block;">จำนวนส่วนลด (บาท) *</label>
+            <input class="s-inp" id="sc_dval" type="number" min="0" placeholder="20" style="padding:9px 10px;">
+          </div>
+          <div id="sc_maxdisc_wrap" style="display:none;">
+            <label class="s-lbl" style="margin-bottom:4px;display:block;">สูงสุด (บาท)</label>
+            <input class="s-inp" id="sc_maxdisc" type="number" min="0" placeholder="ไม่จำกัด" style="padding:9px 10px;">
+          </div>
+          <div>
+            <label class="s-lbl" style="margin-bottom:4px;display:block;">ยอดขั้นต่ำ (บาท)</label>
+            <input class="s-inp" id="sc_minorder" type="number" min="0" placeholder="0 = ไม่มีขั้นต่ำ" style="padding:9px 10px;">
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+          <div>
+            <label class="s-lbl" style="margin-bottom:4px;display:block;">โหมด</label>
+            <select class="s-inp" id="sc_atype" onchange="updateShopCpnForm()" style="padding:9px 10px;">
+              <option value="auto">⚡ อัตโนมัติ</option>
+              <option value="manual">🔧 ต้องกรอกโค้ด</option>
+            </select>
+          </div>
+          <div id="sc_cond_wrap">
+            <label class="s-lbl" style="margin-bottom:4px;display:block;">เงื่อนไข</label>
+            <select class="s-inp" id="sc_cond" style="padding:9px 10px;">
+              <option value="always">🌐 ทุกคำสั่งซื้อ</option>
+              <option value="first_order">🆕 สั่งครั้งแรกเท่านั้น</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+          <div>
+            <label class="s-lbl" style="margin-bottom:4px;display:block;">วันที่เริ่ม</label>
+            <input class="s-inp" id="sc_start" type="datetime-local" style="padding:9px 10px;">
+          </div>
+          <div>
+            <label class="s-lbl" style="margin-bottom:4px;display:block;">วันที่สิ้นสุด</label>
+            <input class="s-inp" id="sc_end" type="datetime-local" style="padding:9px 10px;">
+          </div>
+          <div>
+            <label class="s-lbl" style="margin-bottom:4px;display:block;">จำนวนสิทธิ์</label>
+            <input class="s-inp" id="sc_limit" type="number" min="1" placeholder="ว่าง = ไม่จำกัด" style="padding:9px 10px;">
+          </div>
+          <div style="display:flex;align-items:flex-end;padding-bottom:2px;">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;color:#555;">
+              <input type="checkbox" id="sc_active" checked style="width:16px;height:16px;accent-color:var(--c1);">
+              เปิดใช้งาน
+            </label>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button onclick="saveShopCoupon()" id="shopCpnSaveBtn" class="save-btn" style="margin:0;flex:1;">💾 บันทึก</button>
+          <button onclick="resetShopCpnForm()" style="padding:10px 14px;background:#f0f0f0;color:#555;border:none;border-radius:10px;font-size:13px;font-weight:600;font-family:'Sarabun',sans-serif;cursor:pointer;">ล้าง</button>
+        </div>
+      </div>
+
+      <!-- COUPON LIST -->
+      <div style="font-size:13px;font-weight:700;color:#2C3E50;margin-bottom:10px;">📋 คูปองทั้งหมด</div>
+      <div id="shopCpnList"><div style="text-align:center;color:#aaa;padding:16px;font-size:13px;">⏳ กำลังโหลด...</div></div>
+    </div>
+
   </div>
 </div>
 
@@ -1827,24 +2002,7 @@ function quickAdd(id){
 // ═══════════════════════════════════════════
 //  CART
 // ═══════════════════════════════════════════
-function openCart(){
-  const savedLineName = localStorage.getItem('ms_line_name');     // จาก LINE displayName
-  const savedName = localStorage.getItem('ms_customer_name');     // ชื่อจริง
-  const savedPhone = localStorage.getItem('ms_customer_phone');
-  const cln = document.getElementById('cLineName');
-  const cn = document.getElementById('cName');
-  const cp = document.getElementById('cPhone');
-  if (cln && savedLineName && !cln.value) cln.value = savedLineName;
-  // ✨ FIX: ไม่ auto-fill ชื่อจริงถ้าเป็น garbage value (LINE displayName ที่หลุดเข้ามา)
-  const BAD_SAVED = ['phone','name','ชื่อ','ชื่อจริง','customer','user','test'];
-  const cleanedName = (savedName || '').trim();
-  if (cn && cleanedName && !BAD_SAVED.includes(cleanedName.toLowerCase()) && !cn.value) {
-    cn.value = cleanedName;
-  }
-  if (cp && savedPhone && !cp.value) cp.value = savedPhone;
-  renderCart();
-  document.getElementById('cartOv').classList.add('show');
-}
+// openCart merged into async version above
 function closeCart(){ document.getElementById('cartOv').classList.remove('show'); }
 function updCart(){ document.getElementById('cartBadge').textContent=cart.reduce((s,i)=>s+i.qty,0); }
 function renderCart(){
@@ -1880,6 +2038,9 @@ function renderCart(){
   }).join('');
   const tot = cart.reduce((s,i,idx) => s + getCartLinePrice(idx) * i.qty, 0);
   document.getElementById('cartTotal').textContent=`฿${tot.toLocaleString()}`;
+  document.getElementById('cartSubtotal').textContent=`฿${tot.toLocaleString()}`;
+  // อัพเดต discount + final total
+  applyAutoDiscount(tot);
 }
 function rmCI(i){ cart.splice(i,1); updCart(); renderCart(); }
 
@@ -2026,9 +2187,403 @@ function showMapPin() {
   document.getElementById('mapBtn').textContent = '📍 เปลี่ยนตำแหน่ง';
 }
 
+
+// ══════════════════════════════════════════════════════════
+//  SHOP ADMIN — COUPON MANAGEMENT
+// ══════════════════════════════════════════════════════════
+let _scEditId = null;
+
+function updateShopCpnForm() {
+  const dtype = document.getElementById('sc_dtype').value;
+  const atype = document.getElementById('sc_atype').value;
+  document.getElementById('sc_dval_lbl').textContent =
+    dtype === 'percent' ? 'จำนวนส่วนลด (%) *' : 'จำนวนส่วนลด (บาท) *';
+  document.getElementById('sc_maxdisc_wrap').style.display =
+    dtype === 'percent' ? 'block' : 'none';
+  document.getElementById('sc_cond_wrap').style.display =
+    atype === 'auto' ? 'block' : 'none';
+}
+
+function resetShopCpnForm() {
+  _scEditId = null;
+  document.getElementById('shopCpnFormTitle').textContent = '➕ สร้างคูปองใหม่';
+  document.getElementById('shopCpnSaveBtn').textContent = '💾 บันทึก';
+  ['sc_name','sc_desc','sc_dval','sc_maxdisc','sc_minorder','sc_limit','sc_start','sc_end']
+    .forEach(id => { const el = document.getElementById(id); if(el) el.value=''; });
+  document.getElementById('sc_dtype').value  = 'fixed';
+  document.getElementById('sc_atype').value  = 'auto';
+  document.getElementById('sc_cond').value   = 'always';
+  document.getElementById('sc_active').checked = true;
+  updateShopCpnForm();
+}
+
+function editShopCoupon(c) {
+  _scEditId = c.id;
+  document.getElementById('shopCpnFormTitle').textContent = '✏️ แก้ไขคูปอง';
+  document.getElementById('shopCpnSaveBtn').textContent = '💾 อัปเดต';
+  document.getElementById('sc_name').value     = c.name || '';
+  document.getElementById('sc_desc').value     = c.description || '';
+  document.getElementById('sc_dtype').value    = c.discount_type || 'fixed';
+  document.getElementById('sc_dval').value     = c.discount_value || '';
+  document.getElementById('sc_maxdisc').value  = c.max_discount || '';
+  document.getElementById('sc_minorder').value = c.min_order || '';
+  document.getElementById('sc_atype').value    = c.apply_type || 'auto';
+  document.getElementById('sc_cond').value     = c.condition_type || 'always';
+  document.getElementById('sc_limit').value    = c.usage_limit || '';
+  document.getElementById('sc_active').checked = c.is_active !== false;
+  if (c.start_date) document.getElementById('sc_start').value = c.start_date.slice(0,16);
+  if (c.end_date)   document.getElementById('sc_end').value   = c.end_date.slice(0,16);
+  updateShopCpnForm();
+  document.getElementById('shopCpnForm').scrollIntoView({ behavior:'smooth' });
+}
+
+async function saveShopCoupon() {
+  const name = document.getElementById('sc_name').value.trim();
+  const dval = document.getElementById('sc_dval').value;
+  if (!name) { toast('กรุณากรอกชื่อโปรโมชั่น'); return; }
+  if (!dval) { toast('กรุณากรอกจำนวนส่วนลด'); return; }
+
+  const atype   = document.getElementById('sc_atype').value;
+  const cfstart = document.getElementById('sc_start').value;
+  const cfend   = document.getElementById('sc_end').value;
+  const body = {
+    name,
+    description:    document.getElementById('sc_desc').value.trim() || null,
+    discount_type:  document.getElementById('sc_dtype').value,
+    discount_value: Number(dval),
+    max_discount:   document.getElementById('sc_maxdisc').value ? Number(document.getElementById('sc_maxdisc').value) : null,
+    min_order:      Number(document.getElementById('sc_minorder').value || 0),
+    apply_type:     atype,
+    condition_type: atype === 'auto' ? document.getElementById('sc_cond').value : null,
+    usage_limit:    document.getElementById('sc_limit').value ? Number(document.getElementById('sc_limit').value) : null,
+    start_date:     cfstart ? new Date(cfstart).toISOString() : null,
+    end_date:       cfend   ? new Date(cfend).toISOString()   : null,
+    is_active:      document.getElementById('sc_active').checked
+  };
+
+  const btn = document.getElementById('shopCpnSaveBtn');
+  btn.disabled = true;
+  try {
+    const url    = _scEditId ? `${BACKEND_URL}/coupons/${_scEditId}` : `${BACKEND_URL}/coupons`;
+    const method = _scEditId ? 'PATCH' : 'POST';
+    const r = await fetch(url, {
+      method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'บันทึกไม่ได้');
+    toast(_scEditId ? 'อัปเดตคูปองแล้ว ✓' : 'สร้างคูปองแล้ว ✓');
+    resetShopCpnForm();
+    loadShopCoupons();
+  } catch(e) {
+    toast('❌ ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function toggleShopCoupon(id, current) {
+  await fetch(`${BACKEND_URL}/coupons/${id}`, {
+    method:'PATCH', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ is_active: !current })
+  });
+  loadShopCoupons();
+}
+
+async function deleteShopCoupon(id, name) {
+  if (!confirm(`ลบคูปอง "${name}" จริงหรือไม่?`)) return;
+  await fetch(`${BACKEND_URL}/coupons/${id}`, { method:'DELETE' });
+  toast('ลบคูปองแล้ว');
+  loadShopCoupons();
+}
+
+async function loadShopCoupons() {
+  const el = document.getElementById('shopCpnList');
+  if (!el) return;
+  el.innerHTML = '<div style="text-align:center;color:#aaa;padding:16px;font-size:13px;">⏳ กำลังโหลด...</div>';
+  try {
+    const r = await fetch(`${BACKEND_URL}/coupons`);
+    const d = await r.json();
+    const list = d.coupons || [];
+    if (!list.length) {
+      el.innerHTML = '<div style="text-align:center;color:#aaa;padding:16px;font-size:13px;">ยังไม่มีคูปอง<br><small>กรอกแบบฟอร์มด้านบนเพื่อเพิ่ม</small></div>';
+      return;
+    }
+    el.innerHTML = list.map(c => {
+      const isAuto   = c.apply_type === 'auto';
+      const isActive = c.is_active;
+      const condLbl  = c.condition_type === 'first_order' ? '🆕 ครั้งแรก' : '🌐 ทุกออเดอร์';
+      const discLbl  = c.discount_type === 'percent'
+        ? `${c.discount_value}%${c.max_discount?` (สูงสุด ฿${c.max_discount.toLocaleString()})`:''}`
+        : `฿${(c.discount_value||0).toLocaleString()}`;
+      const usageStr = c.usage_limit
+        ? `${c.used_count}/${c.usage_limit} ครั้ง`
+        : `ใช้ไป ${c.used_count} ครั้ง`;
+      const endStr = c.end_date
+        ? `หมด ${new Date(c.end_date).toLocaleDateString('th-TH',{day:'numeric',month:'short'})}`
+        : '';
+      const safeC   = encodeURIComponent(JSON.stringify(c));
+
+      return `<div style="background:#fff;border:1.5px solid ${isActive?'#e8f5e9':'#f0f0f0'};border-radius:12px;padding:12px 14px;margin-bottom:8px;">
+        <div style="display:flex;align-items:flex-start;gap:8px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:13px;font-weight:700;color:#2C3E50;display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-bottom:4px;">
+              ${c.name}
+              <span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px;${isAuto?'background:#e3f2fd;color:#1565c0;':'background:#f3e5f5;color:#6a1b9a;'}">
+                ${isAuto?'⚡ AUTO':'🔧 MANUAL'}
+              </span>
+            </div>
+            ${c.description?`<div style="font-size:11px;color:#888;margin-bottom:5px;">${c.description}</div>`:''}
+            <div style="display:flex;flex-wrap:wrap;gap:5px;font-size:11px;">
+              <span style="background:#fff8e1;color:#E65100;padding:2px 7px;border-radius:6px;font-weight:700;">ลด ${discLbl}</span>
+              ${isAuto?`<span style="background:#f1f8e9;color:#558b2f;padding:2px 7px;border-radius:6px;">${condLbl}</span>`:''}
+              ${c.min_order>0?`<span style="background:#f3e5f5;color:#6a1b9a;padding:2px 7px;border-radius:6px;">ขั้นต่ำ ฿${c.min_order.toLocaleString()}</span>`:''}
+              <span style="color:#aaa;">${usageStr}${endStr?' · '+endStr:''}</span>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <span style="font-size:11px;font-weight:600;color:${isActive?'#27AE60':'#aaa'};">${isActive?'เปิด':'ปิด'}</span>
+              <span class="sw-wrap" style="transform:scale(0.8);transform-origin:right center;">
+                <input type="checkbox" onchange="toggleShopCoupon(${c.id},${isActive})" ${isActive?'checked':''}>
+                <span class="sw-track"></span>
+              </span>
+            </label>
+            <div style="display:flex;gap:5px;">
+              <button onclick="editShopCoupon(JSON.parse(decodeURIComponent('${safeC}')))"
+                style="padding:4px 10px;background:#e3f2fd;color:#1565c0;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Sarabun',sans-serif;">แก้ไข</button>
+              <button onclick="deleteShopCoupon(${c.id},'${c.name.replace(/'/g,"\'")}')"
+                style="padding:4px 10px;background:#ffebee;color:#c62828;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Sarabun',sans-serif;">ลบ</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    el.innerHTML = `<div style="text-align:center;color:#e53935;padding:12px;font-size:13px;">❌ โหลดไม่ได้: ${e.message}</div>`;
+  }
+}
+
 // ═══════════════════════════════════════════
 //  SEND ORDER
 // ═══════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
+//  COUPON / DISCOUNT SYSTEM — LINE-style
+// ═══════════════════════════════════════════════════════════
+
+// state
+let _autoDiscount    = null;   // auto-coupon จาก server (object)
+let _manualDiscount  = null;   // manual-coupon ที่ลูกค้ากรอกโค้ด
+let _hasManualActive = false;  // มี manual coupon active อยู่ในระบบ
+let _discountFetched = false;
+let _discountAmount  = 0;      // ยอดส่วนลดรวม (ใช้ส่งออเดอร์)
+let _appliedCoupon   = null;   // coupon ที่ใช้จริง (auto หรือ manual)
+
+// ── helper: คำนวณส่วนลด ──────────────────────────────────
+function calcDiscountAmount(coupon, orderTotal) {
+  if (!coupon) return 0;
+  if (orderTotal < (coupon.min_order || 0)) return 0;
+  if (coupon.discount_type === 'percent') {
+    const d = (orderTotal * coupon.discount_value) / 100;
+    return coupon.max_discount ? Math.min(d, coupon.max_discount) : d;
+  }
+  return Math.min(coupon.discount_value, orderTotal);
+}
+
+// ── helper: สร้าง coupon detail card HTML ──────────────────
+function buildCouponCard(c, discountAmount) {
+  if (!c) return '';
+  const discLabel = c.discount_type === 'percent'
+    ? `${c.discount_value}%${c.max_discount ? ` (สูงสุด ฿${c.max_discount.toLocaleString()})` : ''}`
+    : `฿${(c.discount_value||0).toLocaleString()}`;
+  const desc = couponDescription(c);
+  const endDate = c.end_date
+    ? `<span style="font-size:11px;color:#66bb6a;">⏰ หมดอายุ ${new Date(c.end_date).toLocaleDateString('th-TH',{day:'numeric',month:'short',year:'2-digit'})}</span>`
+    : '';
+  return `<div class="cpn-card">
+    <div class="cpn-card-top">
+      <div class="cpn-card-icon">🎟️</div>
+      <div class="cpn-card-name">${c.name}</div>
+      <div class="cpn-card-badge">-${discLabel}</div>
+    </div>
+    <div class="cpn-card-desc">${desc}${endDate ? '<br>' + endDate : ''}</div>
+    <div class="cpn-card-saving">
+      <span class="cpn-card-save-lbl">✅ ใช้คูปองสำเร็จ! ประหยัดได้</span>
+      <span class="cpn-card-save-amt">-฿${(discountAmount||0).toLocaleString()}</span>
+    </div>
+  </div>`;
+}
+
+// ── helper: แปลงคูปองเป็นข้อความอธิบาย ──────────────────
+function couponDescription(c) {
+  if (!c) return '';
+  // ถ้ามี description ใน DB ใช้เลย
+  if (c.description) return c.description;
+  // สร้างอัตโนมัติ
+  let t = '';
+  if (c.discount_type === 'percent') {
+    t = `ลด ${c.discount_value}%`;
+    if (c.max_discount) t += ` สูงสุด ฿${c.max_discount.toLocaleString()}`;
+  } else {
+    t = `ลด ฿${(c.discount_value||0).toLocaleString()}`;
+  }
+  if (c.min_order > 0) t += ` เมื่อซื้อครบ ฿${c.min_order.toLocaleString()}`;
+  if (c.condition_type === 'first_order') t += ' (สำหรับการสั่งซื้อครั้งแรก)';
+  if (c.end_date) {
+    const d = new Date(c.end_date);
+    t += ` · หมดอายุ ${d.toLocaleDateString('th-TH', {day:'numeric',month:'short'})}`;
+  }
+  return t;
+}
+
+// ── โหลด discount data จาก server ───────────────────────
+async function fetchDiscountData() {
+  try {
+    const tot = cart.reduce((s,i,idx) => s + getCartLinePrice(idx) * i.qty, 0);
+    const r = await fetch(`${BACKEND_URL}/applicable-discounts?customerId=${CUSTOMER_ID}&orderTotal=${tot}`);
+    if (!r.ok) return;
+    const d = await r.json();
+    _autoDiscount    = d.discount || null;           // best auto coupon
+    _hasManualActive = (d.hasManualCoupon === true);  // server บอกว่ามี manual หรือไม่
+    _discountFetched = true;
+  } catch(e) {
+    console.warn('fetchDiscount error:', e.message);
+  }
+}
+
+// ── อัปเดต UI ส่วนลดทั้งหมด ─────────────────────────────
+function refreshDiscountUI() {
+  const tot = cart.reduce((s,i,idx) => s + getCartLinePrice(idx) * i.qty, 0);
+
+  // เลือก coupon ที่จะใช้: manual (ถ้ากรอกสำเร็จ) > auto
+  const active = _manualDiscount || _autoDiscount;
+  _appliedCoupon  = active;
+  _discountAmount = calcDiscountAmount(active, tot);
+  const afterDiscount = Math.max(0, tot - _discountAmount);
+
+  // AUTO BANNER
+  const autoBanner = document.getElementById('autoCpnBanner');
+  if (_autoDiscount && !_manualDiscount) {
+    const amt = calcDiscountAmount(_autoDiscount, tot);
+    document.getElementById('autoCpnTitle').textContent = _autoDiscount.name || 'คุณได้รับส่วนลดพิเศษ!';
+    document.getElementById('autoCpnDesc').textContent  = couponDescription(_autoDiscount);
+    document.getElementById('autoCpnAmount').textContent = amt > 0 ? `-฿${amt.toLocaleString()}` : '';
+    // วันหมดอายุ
+    const expiryEl = document.getElementById('autoCpnExpiry');
+    if (_autoDiscount.end_date) {
+      const d = new Date(_autoDiscount.end_date);
+      expiryEl.textContent = `⏰ ใช้ได้ถึง ${d.toLocaleDateString('th-TH',{day:'numeric',month:'short',year:'2-digit'})}`;
+      expiryEl.style.display = 'block';
+    } else { expiryEl.style.display = 'none'; }
+    autoBanner.style.display = 'block';
+  } else {
+    autoBanner.style.display = 'none';
+  }
+
+  // MANUAL INPUT (แสดงเฉพาะถ้า server บอกว่ามี manual coupon)
+  const manualWrap = document.getElementById('manualCpnWrap');
+  manualWrap.style.display = _hasManualActive ? 'block' : 'none';
+
+  // SUMMARY ROWS
+  const hasDisc = _discountAmount > 0;
+  document.getElementById('subtotalRow').style.display   = hasDisc ? 'flex' : 'none';
+  document.getElementById('discountRow').style.display   = hasDisc ? 'flex' : 'none';
+  document.getElementById('totalRowNormal').style.display = hasDisc ? 'none' : 'flex';
+  document.getElementById('finalTotalRow').style.display  = hasDisc ? 'flex' : 'none';
+
+  document.getElementById('cartSubtotal').textContent   = `฿${tot.toLocaleString()}`;
+  document.getElementById('cartTotal').textContent      = `฿${tot.toLocaleString()}`;
+  if (hasDisc) {
+    document.getElementById('discountName').textContent = active.name || 'ส่วนลด';
+    document.getElementById('discountVal').textContent  = `-฿${_discountAmount.toLocaleString()}`;
+    document.getElementById('cartFinalTotal').textContent = `฿${afterDiscount.toLocaleString()}`;
+  }
+}
+
+// เรียกจาก renderCart เมื่อ qty เปลี่ยน
+function applyAutoDiscount(tot) {
+  refreshDiscountUI();
+}
+
+// ── กดปุ่ม "ใช้คูปอง" (manual) ─────────────────────────
+async function applyCouponCode() {
+  const code   = document.getElementById('cpnCodeInput').value.trim().toUpperCase();
+  const input  = document.getElementById('cpnCodeInput');
+  const result = document.getElementById('cpnResult');
+  const btn    = document.getElementById('cpnApplyBtn');
+
+  if (!code) { shakeCpnInput(); return; }
+
+  // ถ้ากด clear (มีคูปองอยู่แล้ว)
+  if (_manualDiscount) {
+    _manualDiscount = null;
+    input.value = '';
+    input.className = 'cpn-input-field';
+    result.className = 'cpn-result';
+    result.style.display = 'none';
+    btn.textContent = 'ใช้คูปอง';
+    document.getElementById('manualCpnWrap').classList.remove('active');
+    refreshDiscountUI();
+    return;
+  }
+
+  btn.disabled = true; btn.textContent = '⏳';
+  result.className = 'cpn-result'; result.style.display = 'none';
+
+  try {
+    const tot = cart.reduce((s,i,idx) => s + getCartLinePrice(idx) * i.qty, 0);
+    const r = await fetch(`${BACKEND_URL}/validate-coupon?code=${encodeURIComponent(code)}&customerId=${CUSTOMER_ID}&orderTotal=${tot}`);
+    const d = await r.json();
+
+    if (!r.ok || d.error) {
+      input.className = 'cpn-input-field error';
+      result.className = 'cpn-result err';
+      result.innerHTML = '❌ ' + (d.error || 'คูปองไม่ถูกต้อง');
+      result.style.display = 'flex';
+      setTimeout(() => { input.className = 'cpn-input-field'; }, 1200);
+    } else {
+      _manualDiscount = d.coupon;
+      input.className = 'cpn-input-field success';
+      result.className = 'cpn-result ok';
+      const disc = calcDiscountAmount(d.coupon, tot);
+      result.innerHTML = buildCouponCard(d.coupon, disc);
+      result.style.display = 'block';
+      btn.textContent = '✕ ยกเลิก';
+      document.getElementById('manualCpnWrap').classList.add('active');
+      refreshDiscountUI();
+    }
+  } catch(e) {
+    result.className = 'cpn-result err';
+    result.innerHTML = '❌ เกิดข้อผิดพลาด กรุณาลองใหม่';
+    result.style.display = 'flex';
+  } finally {
+    btn.disabled = false;
+    if (!_manualDiscount) btn.textContent = 'ใช้คูปอง';
+  }
+}
+
+function shakeCpnInput() {
+  const el = document.getElementById('cpnCodeInput');
+  el.className = 'cpn-input-field error';
+  setTimeout(() => el.className = 'cpn-input-field', 600);
+}
+
+// ── เปิดตะกร้า ───────────────────────────────────────────
+async function openCart() {
+  document.getElementById('cartOv').classList.add('show');
+  renderCart();
+  if (!_discountFetched) {
+    await fetchDiscountData();
+  }
+  refreshDiscountUI();
+  // pre-fill ข้อมูลเดิม
+  const n = localStorage.getItem('ms_customer_name');
+  const p = localStorage.getItem('ms_customer_phone');
+  const l = localStorage.getItem('ms_line_name');
+  if(n && !document.getElementById('cName').value)     document.getElementById('cName').value = n;
+  if(p && !document.getElementById('cPhone').value)    document.getElementById('cPhone').value = p;
+  if(l && !document.getElementById('cLineName').value) document.getElementById('cLineName').value = l;
+}
+
 async function sendOrder() {
   const lineName = document.getElementById('cLineName').value.trim();
   const name  = document.getElementById('cName').value.trim();
@@ -2082,7 +2637,10 @@ async function sendOrder() {
       phone, orderType:cartOT, address:addr, extra, items, total,
       // 📍 พิกัด GPS (ถ้ามี) — สำหรับให้แอดมินดูแผนที่
       mapLat: mapLat || null,
-      mapLng: mapLng || null
+      mapLng: mapLng || null,
+      // 🎟️ ส่วนลด (ถ้ามี)
+      couponId: _appliedCoupon ? _appliedCoupon.id : null,
+      discountAmount: _discountAmount || 0
     };
     console.log('📦 sending order:', JSON.stringify(payload));
 
