@@ -117,7 +117,9 @@ header{background:linear-gradient(120deg,var(--c2) 0%,var(--c1) 55%,var(--c3) 10
 .big-btn:disabled{opacity:.45;cursor:not-allowed}
 
 /* ── CART ── */
-#cartOv .sheet{max-width:500px;display:flex;flex-direction:column;max-height:91vh}
+#cartOv .sheet{max-width:500px;display:flex;flex-direction:column;max-height:85vh}
+#cartOv .cart-list{flex:1;overflow-y:auto;min-height:60px;}
+#cartOv .cart-foot{flex-shrink:0;overflow-y:auto;max-height:55vh;padding-bottom:8px;}
 .cart-list{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;margin-bottom:14px}
 .ci{display:flex;gap:10px;align-items:center;background:var(--bg);border-radius:10px;padding:10px}
 .ci-img{width:52px;height:74px;border-radius:8px;background:var(--border);overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:24px}
@@ -524,7 +526,7 @@ textarea.fi{resize:none;height:70px}
 
 <!-- ── CART ── -->
 <div class="ov" id="cartOv" onclick="if(event.target===this)closeCart()">
-  <div class="sheet" style="display:flex;flex-direction:column;max-height:91vh">
+  <div class="sheet" style="display:flex;flex-direction:column;max-height:85vh;overflow:hidden;">
     <div class="sheet-hdr">
       <div class="sheet-title">🛒 ตะกร้าสินค้า</div>
       <button class="xbtn" onclick="closeCart()">✕</button>
