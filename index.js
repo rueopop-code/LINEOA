@@ -124,7 +124,7 @@ function buildAdminMsg(order) {
 }
 
 // ─── LINE Flex Message Builders ───────────────────────────
-const SHOP_URL = 'https://lineoa-production-a8e8.up.railway.app/';
+const SHOP_URL = process.env.SHOP_URL || 'https://lineoa-u0v2.onrender.com/';
 
 // ─── LINE OA Auto-Reply Keywords ───
 // ถ้าลูกค้าพิมพ์ตรงกับ keyword เหล่านี้ → ระบบไม่แจ้งแอดมิน LINE
@@ -1188,7 +1188,7 @@ app.post('/webhook', async (req, res) => {
       } else {
         await lineReply(replyToken, [{
           type: 'text',
-          text: `🔍 ไม่พบออเดอร์ที่ใช้เบอร์ ${rawText}\n\nกรุณาตรวจสอบเบอร์ที่กรอกตอนสั่ง หรือสั่งสินค้าใหม่ที่:\nhttps://lineoa-production-a8e8.up.railway.app/`
+          text: `🔍 ไม่พบออเดอร์ที่ใช้เบอร์ ${rawText}\n\nกรุณาตรวจสอบเบอร์ที่กรอกตอนสั่ง หรือสั่งสินค้าใหม่ที่:\n${SHOP_URL}`
         }]);
         continue;
       }
@@ -1525,6 +1525,11 @@ app.get('/shop', (req, res) => {
 
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+// ─── Health Check (ป้องกัน Render Sleep) ───────────────────
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // ─── Start ─────────────────────────────────────────────────
