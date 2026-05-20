@@ -1048,7 +1048,16 @@ textarea.fi{resize:none;height:70px}
 // ═══════════════════════════════════════════
 //  CONFIG
 // ═══════════════════════════════════════════
-const BACKEND_URL = window.location.origin;
+// ── BACKEND URL — ถ้า host บน GitHub Pages ให้ใส่ URL ของ Render ──────────
+const BACKEND_URL = (() => {
+  const origin = window.location.origin;
+  // ถ้า host บน GitHub Pages (github.io) → ใช้ Render URL
+  if (origin.includes('github.io') || origin.includes('localhost') || origin.startsWith('file://')) {
+    return 'https://lineoa-u0v2.onrender.com';
+  }
+  // ถ้า host บน Render เอง → ใช้ origin ปกติ
+  return origin;
+})();
 const ADMIN_PIN   = '140326';
 
 // ── CUSTOMER ID — สร้างอัตโนมัติ เก็บใน localStorage ──
