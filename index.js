@@ -1557,6 +1557,39 @@ app.get('/applicable-discounts', async (req, res) => {
   res.json({ isFirstOrder, discount: best, allEligible: eligible, hasManualCoupon });
 });
 
+// ── GET /available-coupons ───────────────────────────────
+// คืนคูปองทั้งหมด (auto + manual) ที่ลูกค้านี้เข้าเงื่อนไข — สำหรับ picker
+app.get('/available-coupons', async (req, res) => {
+  const { customerId, orderTotal } = req.query;
+  const total = parseFloat(orderTotal) || 0;
+  const now   = new Date().toISOString();
+
+  const { data: all } = await supabase
+    .from('coupons')
+    .select('*')
+    .eq('is_active', true)
+    .or(`start_date.is.null,start_date.lte.${now}`)
+    .or(`end_date.is.null,end_date.gte.${now}`)
+    .order('discount_value', { ascending: false });
+
+  // ตรวจ first_order
+  let isFirstOrder = false;
+  if (customerId) {
+    const { data: prev } = await supabase.from('orders').select('id')
+      .eq('customer_id', customerId)
+      .not('order_id', 'like', 'LINE-%').not('order_id', 'like', 'LINK-%').limit(1);
+    isFirstOrder = !prev?.length;
+  }
+
+  const eligible = (all || []).filter(c => {
+    if (c.usage_limit !== null && c.used_count >= c.usage_limit) return false;
+    if (c.condition_type === 'first_order') return isFirstOrder;
+    return true;
+  });
+
+  res.json({ coupons: eligible, isFirstOrder });
+});
+
 // ── GET /validate-coupon ──────────────────────────────────
 // ตรวจสอบ manual coupon code ที่ลูกค้ากรอก
 app.get('/validate-coupon', async (req, res) => {

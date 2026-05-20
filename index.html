@@ -146,6 +146,27 @@ header{background:linear-gradient(120deg,var(--c2) 0%,var(--c1) 55%,var(--c3) 10
 .cpn-banner-amount{font-size:18px;font-weight:800;color:#C0392B;white-space:nowrap;align-self:center;}
 .cpn-input-wrap{background:#fff;border:1.5px solid #e0e0e0;border-radius:12px;padding:12px 14px;margin-bottom:10px;transition:.2s;}
 .cpn-input-wrap.active{border-color:#FFC107;background:#fffef7;}
+.cpn-picker-btn{font-size:12px;color:var(--c1);font-weight:700;background:none;border:none;cursor:pointer;font-family:'Sarabun',sans-serif;padding:0;text-decoration:underline;text-underline-offset:2px;}
+.cpn-picker-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:600;align-items:flex-end;justify-content:center;}
+.cpn-picker-overlay.show{display:flex;}
+.cpn-picker-sheet{background:#fff;border-radius:20px 20px 0 0;width:100%;max-width:480px;max-height:75vh;display:flex;flex-direction:column;overflow:hidden;}
+.cpn-picker-hdr{padding:16px 18px 12px;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;align-items:center;}
+.cpn-picker-title{font-size:15px;font-weight:700;color:#1a1a1a;}
+.cpn-picker-list{overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px;}
+.cpn-pick-item{border:1.5px solid #e0e0e0;border-radius:12px;padding:12px 14px;cursor:pointer;transition:.15s;position:relative;}
+.cpn-pick-item:hover,.cpn-pick-item.selected{border-color:var(--c1);background:#fff5f5;}
+.cpn-pick-item.disabled{opacity:.5;cursor:not-allowed;}
+.cpn-pick-top{display:flex;align-items:center;gap:8px;margin-bottom:5px;}
+.cpn-pick-badge{background:var(--c1);color:#fff;font-size:11px;font-weight:800;padding:2px 9px;border-radius:20px;white-space:nowrap;flex-shrink:0;}
+.cpn-pick-name{font-size:13px;font-weight:700;color:#1a1a1a;flex:1;}
+.cpn-pick-desc{font-size:11px;color:#777;line-height:1.5;}
+.cpn-pick-meta{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;}
+.cpn-pick-tag{font-size:10px;padding:2px 7px;border-radius:6px;font-weight:600;}
+.cpn-pick-check{position:absolute;top:10px;right:12px;width:20px;height:20px;border-radius:50%;border:2px solid #ddd;display:flex;align-items:center;justify-content:center;font-size:11px;transition:.15s;}
+.cpn-pick-item.selected .cpn-pick-check{background:var(--c1);border-color:var(--c1);color:#fff;}
+.cpn-picker-foot{padding:12px 14px;border-top:1px solid #f0f0f0;}
+.cpn-picker-apply{width:100%;padding:12px;background:var(--c1);color:#fff;border:none;border-radius:12px;font-size:14px;font-weight:700;font-family:'Sarabun',sans-serif;cursor:pointer;}
+.cpn-picker-apply:disabled{background:#ccc;}
 .cpn-input-label{font-size:12px;font-weight:700;color:#555;margin-bottom:8px;display:flex;align-items:center;gap:6px;}
 .cpn-input-row{display:flex;gap:8px;align-items:center;}
 .cpn-input-field{flex:1;padding:9px 12px;border:1.5px solid #ddd;border-radius:9px;font-size:14px;font-family:'Sarabun',sans-serif;outline:none;transition:.2s;text-transform:uppercase;}
@@ -526,20 +547,38 @@ textarea.fi{resize:none;height:70px}
         </div>
       </div>
 
-      <!-- ── MANUAL COUPON INPUT (แสดงเฉพาะถ้ามี manual coupon active) ── -->
+      <!-- ── MANUAL COUPON INPUT ── -->
       <div id="manualCpnWrap" class="cpn-input-wrap" style="display:none;">
         <div class="cpn-input-label" style="justify-content:space-between;">
-          <span>🎟️ มีโค้ดส่วนลดใช่ไหม?</span>
-          <span style="font-size:11px;color:#aaa;font-weight:400;">กรอกเพื่อรับส่วนลด</span>
+          <span>🎟️ คูปองส่วนลด</span>
+          <button class="cpn-picker-btn" onclick="openCouponPicker()">เลือกคูปอง ›</button>
         </div>
         <div class="cpn-input-row">
           <input id="cpnCodeInput" class="cpn-input-field" type="text"
-            placeholder="กรอกรหัสคูปอง" maxlength="32"
+            placeholder="หรือกรอกรหัสคูปองเอง" maxlength="32"
             oninput="this.value=this.value.toUpperCase()"
             onkeydown="if(event.key==='Enter')applyCouponCode()">
           <button class="cpn-apply-btn" id="cpnApplyBtn" onclick="applyCouponCode()">ใช้คูปอง</button>
         </div>
         <div class="cpn-result" id="cpnResult"></div>
+      </div>
+
+      <!-- ── COUPON PICKER OVERLAY ── -->
+      <div class="cpn-picker-overlay" id="cpnPickerOv" onclick="if(event.target===this)closeCouponPicker()">
+        <div class="cpn-picker-sheet">
+          <div class="cpn-picker-hdr">
+            <span class="cpn-picker-title">🎟️ เลือกคูปองส่วนลด</span>
+            <button onclick="closeCouponPicker()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#aaa;line-height:1;">✕</button>
+          </div>
+          <div class="cpn-picker-list" id="cpnPickerList">
+            <div style="text-align:center;color:#aaa;padding:20px;font-size:13px;">⏳ กำลังโหลด...</div>
+          </div>
+          <div class="cpn-picker-foot">
+            <button class="cpn-picker-apply" id="cpnPickerApplyBtn" onclick="applyPickedCoupon()" disabled>
+              เลือกคูปอง
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- ── SUMMARY ROWS ── -->
@@ -952,6 +991,13 @@ textarea.fi{resize:none;height:70px}
               <option value="always">🌐 ทุกคำสั่งซื้อ</option>
               <option value="first_order">🆕 สั่งครั้งแรกเท่านั้น</option>
             </select>
+          </div>
+          <div id="sc_code_wrap" style="display:none;grid-column:1/-1;">
+            <label class="s-lbl" style="margin-bottom:4px;display:block;">🔑 รหัสโค้ด * <small style="color:#888;font-weight:400;">(ลูกค้าต้องกรอกโค้ดนี้เพื่อรับส่วนลด)</small></label>
+            <input class="s-inp" id="sc_code" type="text" placeholder="เช่น SAVE20, VIP50, WELCOME"
+              style="padding:9px 10px;text-transform:uppercase;font-weight:700;letter-spacing:1px;"
+              oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')">
+            <div style="font-size:11px;color:#888;margin-top:4px;">ใช้ตัวอักษรภาษาอังกฤษและตัวเลขเท่านั้น</div>
           </div>
         </div>
 
@@ -2211,13 +2257,15 @@ function updateShopCpnForm() {
     dtype === 'percent' ? 'block' : 'none';
   document.getElementById('sc_cond_wrap').style.display =
     atype === 'auto' ? 'block' : 'none';
+  document.getElementById('sc_code_wrap').style.display =
+    atype === 'manual' ? 'block' : 'none';
 }
 
 function resetShopCpnForm() {
   _scEditId = null;
   document.getElementById('shopCpnFormTitle').textContent = '➕ สร้างคูปองใหม่';
   document.getElementById('shopCpnSaveBtn').textContent = '💾 บันทึก';
-  ['sc_name','sc_desc','sc_dval','sc_maxdisc','sc_minorder','sc_limit','sc_start','sc_end']
+  ['sc_name','sc_desc','sc_dval','sc_maxdisc','sc_minorder','sc_limit','sc_start','sc_end','sc_code']
     .forEach(id => { const el = document.getElementById(id); if(el) el.value=''; });
   document.getElementById('sc_dtype').value  = 'fixed';
   document.getElementById('sc_atype').value  = 'auto';
@@ -2240,6 +2288,7 @@ function editShopCoupon(c) {
   document.getElementById('sc_cond').value     = c.condition_type || 'always';
   document.getElementById('sc_limit').value    = c.usage_limit || '';
   document.getElementById('sc_active').checked = c.is_active !== false;
+  document.getElementById('sc_code').value     = c.code || '';
   if (c.start_date) document.getElementById('sc_start').value = c.start_date.slice(0,16);
   if (c.end_date)   document.getElementById('sc_end').value   = c.end_date.slice(0,16);
   updateShopCpnForm();
@@ -2251,6 +2300,10 @@ async function saveShopCoupon() {
   const dval = document.getElementById('sc_dval').value;
   if (!name) { toast('กรุณากรอกชื่อโปรโมชั่น'); return; }
   if (!dval) { toast('กรุณากรอกจำนวนส่วนลด'); return; }
+  const atype2 = document.getElementById('sc_atype').value;
+  if (atype2 === 'manual' && !document.getElementById('sc_code').value.trim()) {
+    toast('กรุณากรอกรหัสโค้ดสำหรับคูปอง Manual'); return;
+  }
 
   const atype   = document.getElementById('sc_atype').value;
   const cfstart = document.getElementById('sc_start').value;
@@ -2263,6 +2316,7 @@ async function saveShopCoupon() {
     max_discount:   document.getElementById('sc_maxdisc').value ? Number(document.getElementById('sc_maxdisc').value) : null,
     min_order:      Number(document.getElementById('sc_minorder').value || 0),
     apply_type:     atype,
+    code:           atype === 'manual' ? (document.getElementById('sc_code').value.trim().toUpperCase() || null) : null,
     condition_type: atype === 'auto' ? document.getElementById('sc_cond').value : null,
     usage_limit:    document.getElementById('sc_limit').value ? Number(document.getElementById('sc_limit').value) : null,
     start_date:     cfstart ? new Date(cfstart).toISOString() : null,
@@ -2510,6 +2564,121 @@ function refreshDiscountUI() {
 
 // เรียกจาก renderCart เมื่อ qty เปลี่ยน
 function applyAutoDiscount(tot) {
+  refreshDiscountUI();
+}
+
+// ── Coupon Picker ────────────────────────────────────────
+let _pickerCoupons  = [];   // รายการคูปองใน picker
+let _pickedCouponId = null; // id ที่เลือกอยู่
+
+async function openCouponPicker() {
+  document.getElementById('cpnPickerOv').classList.add('show');
+  const list = document.getElementById('cpnPickerList');
+  list.innerHTML = '<div style="text-align:center;color:#aaa;padding:24px;font-size:13px;">⏳ กำลังโหลดคูปอง...</div>';
+  _pickedCouponId = null;
+  document.getElementById('cpnPickerApplyBtn').disabled = true;
+  document.getElementById('cpnPickerApplyBtn').textContent = 'เลือกคูปอง';
+
+  try {
+    const tot = cart.reduce((s,i,idx) => s + getCartLinePrice(idx) * i.qty, 0);
+    const r = await fetch(`${BACKEND_URL}/available-coupons?customerId=${CUSTOMER_ID}&orderTotal=${tot}`);
+    const d = await r.json();
+    _pickerCoupons = d.coupons || [];
+    renderCouponPicker(_pickerCoupons, tot);
+  } catch(e) {
+    list.innerHTML = '<div style="text-align:center;color:#e53935;padding:24px;font-size:13px;">โหลดไม่ได้ กรุณาลองใหม่</div>';
+  }
+}
+
+function closeCouponPicker() {
+  document.getElementById('cpnPickerOv').classList.remove('show');
+}
+
+function renderCouponPicker(coupons, tot) {
+  const list = document.getElementById('cpnPickerList');
+  if (!coupons.length) {
+    list.innerHTML = '<div style="text-align:center;color:#aaa;padding:24px;"><div style="font-size:32px;margin-bottom:8px;">🎟️</div><div style="font-size:13px;">ไม่มีคูปองที่ใช้ได้ตอนนี้</div></div>';
+    return;
+  }
+  list.innerHTML = coupons.map(c => {
+    const disc = calcDiscountAmount(c, tot);
+    const discLabel = c.discount_type === 'percent'
+      ? `${c.discount_value}%${c.max_discount?' (สูงสุด ฿'+c.max_discount.toLocaleString()+')':''}`
+      : `฿${(c.discount_value||0).toLocaleString()}`;
+    const ok = disc > 0;
+    const expiry = c.end_date
+      ? `หมด ${new Date(c.end_date).toLocaleDateString('th-TH',{day:'numeric',month:'short'})}`
+      : '';
+    const minStr = c.min_order > 0 ? `ขั้นต่ำ ฿${c.min_order.toLocaleString()}` : '';
+    const isAuto = c.apply_type === 'auto';
+    return `<div class="cpn-pick-item${!ok?' disabled':''}" id="cpnItem_${c.id}" onclick="${ok?`pickCoupon(${c.id})`:''}">
+      <div class="cpn-pick-check" id="cpnCheck_${c.id}">✓</div>
+      <div class="cpn-pick-top">
+        <div class="cpn-pick-badge">ลด ${discLabel}</div>
+        <div class="cpn-pick-name">${c.name}</div>
+      </div>
+      <div class="cpn-pick-desc">${couponDescription(c)}</div>
+      <div class="cpn-pick-meta">
+        ${isAuto ? '<span class="cpn-pick-tag" style="background:#e3f2fd;color:#1565c0;">⚡ อัตโนมัติ</span>' : '<span class="cpn-pick-tag" style="background:#f3e5f5;color:#6a1b9a;">🔧 โค้ด: '+c.code+'</span>'}
+        ${minStr ? `<span class="cpn-pick-tag" style="background:#fff8e1;color:#E65100;">${minStr}</span>` : ''}
+        ${expiry ? `<span class="cpn-pick-tag" style="background:#f5f5f5;color:#888;">⏰ ${expiry}</span>` : ''}
+        ${!ok && c.min_order > 0 && tot < c.min_order ? `<span class="cpn-pick-tag" style="background:#ffebee;color:#c62828;">ยังไม่ถึงขั้นต่ำ</span>` : ''}
+      </div>
+      ${disc > 0 ? `<div style="margin-top:6px;font-size:12px;font-weight:700;color:var(--c1);">ประหยัด ฿${disc.toLocaleString()}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function pickCoupon(id) {
+  // deselect previous
+  if (_pickedCouponId) {
+    const prev = document.getElementById(`cpnItem_${_pickedCouponId}`);
+    if (prev) prev.classList.remove('selected');
+  }
+  if (_pickedCouponId === id) {
+    // toggle off
+    _pickedCouponId = null;
+    document.getElementById('cpnPickerApplyBtn').disabled = true;
+    document.getElementById('cpnPickerApplyBtn').textContent = 'เลือกคูปอง';
+    return;
+  }
+  _pickedCouponId = id;
+  const el = document.getElementById(`cpnItem_${id}`);
+  if (el) el.classList.add('selected');
+  const c = _pickerCoupons.find(x => x.id === id);
+  const tot = cart.reduce((s,i,idx) => s + getCartLinePrice(idx) * i.qty, 0);
+  const disc = calcDiscountAmount(c, tot);
+  document.getElementById('cpnPickerApplyBtn').disabled = false;
+  document.getElementById('cpnPickerApplyBtn').textContent = `ใช้คูปองนี้ (ลด ฿${disc.toLocaleString()})`;
+}
+
+async function applyPickedCoupon() {
+  if (!_pickedCouponId) return;
+  const c = _pickerCoupons.find(x => x.id === _pickedCouponId);
+  if (!c) return;
+
+  closeCouponPicker();
+
+  if (c.apply_type === 'auto') {
+    // auto coupon → set directly
+    _manualDiscount = c;
+    document.getElementById('cpnCodeInput').value = '';
+    const input  = document.getElementById('cpnCodeInput');
+    const result = document.getElementById('cpnResult');
+    const btn    = document.getElementById('cpnApplyBtn');
+    input.className = 'cpn-input-field success';
+    const tot  = cart.reduce((s,i,idx) => s + getCartLinePrice(idx) * i.qty, 0);
+    const disc = calcDiscountAmount(c, tot);
+    result.className = 'cpn-result ok';
+    result.innerHTML = buildCouponCard(c, disc);
+    result.style.display = 'block';
+    btn.textContent = '✕ ยกเลิก';
+    document.getElementById('manualCpnWrap').classList.add('active');
+  } else {
+    // manual coupon → auto-fill code and apply
+    document.getElementById('cpnCodeInput').value = c.code || '';
+    await applyCouponCode();
+  }
   refreshDiscountUI();
 }
 
