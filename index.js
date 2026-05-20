@@ -1742,7 +1742,7 @@ app.get('/', (req, res) => {
 
 // ─── Health Check (ป้องกัน Render Sleep) ───────────────────
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', version: 'v4-coupon', timestamp: new Date().toISOString() });
 });
 
 // ─── Start ─────────────────────────────────────────────────
