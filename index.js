@@ -103,9 +103,10 @@ function statusLabel(s) {
 }
 
 function buildAdminMsg(order) {
-  const { customer_name, items, total, order_id, created_at, phone, address, note } = order;
+  const { customer_name, items, total, order_id, created_at, phone, address, note, ref_code } = order;
   const date = new Date(created_at).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short' });
   let msg = `🛒 ออเดอร์ใหม่! #${order_id}\n`;
+  if (ref_code) msg += `🎁 มาจากลิงก์ชวนเพื่อน (${ref_code})\n`;
   msg += `${'─'.repeat(24)}\n`;
   msg += `👤 ${customer_name}\n`;
   if (phone)   msg += `📞 ${phone}\n`;
@@ -483,7 +484,8 @@ app.post('/send-order', async (req, res) => {
     customerId, customerName, lineName, phone, address, note,
     items, total, orderType, extra,
     mapLat, mapLng,             // 📍 พิกัด GPS
-    couponId, discountAmount    // 🎟️ ส่วนลด/คูปอง
+    couponId, discountAmount,   // 🎟️ ส่วนลด/คูปอง
+    refCode                     // 🎁 referral code (ถ้ามาจากลิงก์ชวน)
   } = req.body;
 
   if (!customerId || !customerName || !items?.length || total == null)
@@ -544,7 +546,9 @@ app.post('/send-order', async (req, res) => {
     // 🎟️ ส่วนลด
     coupon_id: appliedCouponId,
     coupon_code: appliedCouponCode,
-    discount_amount: finalDiscount
+    discount_amount: finalDiscount,
+    // 🎁 referral
+    ref_code: refCode || null
   };
 
   const { error: dbErr } = await supabase.from('orders').insert([order]);
@@ -717,7 +721,17 @@ app.post('/send-order', async (req, res) => {
     const customerLineUid = autoLinkedLineUid || await findLineUserIdByCustomer(customerId);
     if (customerLineUid) {
       const flex = buildOrderSummaryFlex({ ...order, status: 'sent' });
-      linePush(customerLineUid, [flex])
+      const msgs = [flex];
+
+      // 🎁 ถ้า B มาจากลิงก์ชวนเพื่อน → แจ้งให้รู้ว่าคนชวนจะได้รับคูปอง
+      if (refCode) {
+        msgs.push({
+          type: 'text',
+          text: `🎁 คุณมาจากลิงก์แนะนำของเพื่อน!\n\nขอบคุณที่ช่วยสนับสนุนร้านของเรา 🙏\nเพื่อนของคุณจะได้รับคูปองส่วนลดเป็นรางวัลทันทีที่ออเดอร์นี้ยืนยันแล้ว ✨`
+        });
+      }
+
+      linePush(customerLineUid, msgs)
         .then(() => console.log(`📤 order summary → ${customerLineUid.slice(0,12)}…`))
         .catch(e => console.warn('LINE flex to customer failed:', e.message));
     } else {
@@ -1783,6 +1797,29 @@ app.patch('/orders/:orderId/status', async (req, res) => {
 //  REFERRAL SYSTEM
 // ══════════════════════════════════════════════════════════
 
+// ─── GET /my-referral-rewards ────────────────────────────
+// คืนรายการคูปองที่ referrer ได้รับจากการชวนเพื่อน
+// query: customerId หรือ lineUserId
+app.get('/my-referral-rewards', async (req, res) => {
+  let { lineUserId, customerId } = req.query;
+  if (!lineUserId && customerId) {
+    lineUserId = await findLineUserIdByCustomer(customerId).catch(() => null)
+              || `CUST-${customerId}`;
+  }
+  if (!lineUserId) return res.status(400).json({ error: 'customerId required' });
+
+  const { data, error } = await supabase
+    .from('referral_rewards')
+    .select(`id, created_at, order_id, coupon_id,
+             coupons ( id, name, code, discount_type, discount_value,
+                       used_count, usage_limit, end_date, is_active )`)
+    .eq('referrer_uid', lineUserId)
+    .order('created_at', { ascending: false });
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ rewards: data || [], total: data?.length || 0 });
+});
+
 // ─── GET /my-referral ────────────────────────────────────
 // คืน referral link ของลูกค้า (สร้างโค้ดให้อัตโนมัติถ้ายังไม่มี)
 // รับ lineUserId หรือ customerId ก็ได้ — ถ้าไม่มี LINE UID ใช้ CUST-prefix แทน
@@ -2157,9 +2194,15 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// ─── Health Check (ป้องกัน Render Sleep) ───────────────────
+// ─── Health Check (ปลุก Render + keep-alive) ───────────────
+const _startTime = Date.now();
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', version: 'v4-coupon', timestamp: new Date().toISOString() });
+  res.json({
+    status : 'ok',
+    version: 'v4-coupon',
+    uptime : Math.floor((Date.now() - _startTime) / 1000) + 's',
+    time   : new Date().toISOString()
+  });
 });
 
 // ─── Start ─────────────────────────────────────────────────
