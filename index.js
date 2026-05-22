@@ -1933,17 +1933,40 @@ async function processReferralReward(lineUserId, orderId) {
       .eq('referral_code', refCode).maybeSingle();
     if (!referrer) return;
 
-    // สร้างคูปองรางวัลให้ referrer
-    const usePercent    = !!process.env.REFERRAL_REWARD_PERCENT;
-    const discountValue = usePercent
-      ? Number(process.env.REFERRAL_REWARD_PERCENT)
-      : Number(process.env.REFERRAL_REWARD_DISCOUNT || 50);
-    const discountType  = usePercent ? 'percent' : 'fixed';
-    const minOrder      = Number(process.env.REFERRAL_REWARD_MIN_ORDER || 0);
-    const expireDays    = Number(process.env.REFERRAL_REWARD_EXPIRE_DAYS || 30);
+    // ── อ่าน config จาก shop_config (fallback → ENV → default) ──
+    const { data: cfgRows } = await supabase
+      .from('shop_config').select('key, value')
+      .in('key', ['referral_reward_type','referral_reward_value','referral_max_rewards',
+                  'referral_expire_days','referral_min_order']);
+    const cfg = Object.fromEntries((cfgRows || []).map(r => [r.key, r.value]));
+
+    const discountType  = cfg.referral_reward_type  || (process.env.REFERRAL_REWARD_PERCENT ? 'percent' : 'fixed');
+    const discountValue = Number(cfg.referral_reward_value  || process.env.REFERRAL_REWARD_DISCOUNT || 50);
+    const maxRewards    = Number(cfg.referral_max_rewards   || 0); // 0 = ไม่จำกัด
+    const expireDays    = Number(cfg.referral_expire_days   || process.env.REFERRAL_REWARD_EXPIRE_DAYS || 30);
+    const minOrder      = Number(cfg.referral_min_order     || process.env.REFERRAL_REWARD_MIN_ORDER  || 0);
     const expireDate    = expireDays > 0
       ? new Date(Date.now() + expireDays * 86400000).toISOString()
       : null;
+
+    // ── ตรวจ max rewards ของ referrer ──
+    if (maxRewards > 0) {
+      const { count } = await supabase
+        .from('referral_rewards').select('id', { count: 'exact', head: true })
+        .eq('referrer_uid', referrer.user_id);
+      if ((count || 0) >= maxRewards) {
+        // ยังบันทึก is_referred=true ให้ B เพื่อกัน loop แต่ไม่สร้างคูปอง
+        await supabase.from('line_users').update({ is_referred: true }).eq('user_id', lineUserId);
+        console.log(`ℹ️ referrer ${referrer.user_id.slice(0,8)}… ครบ ${maxRewards} สิทธิ์แล้ว — ไม่สร้างคูปอง`);
+        await supabase.from('referral_rewards').insert([{
+          referrer_uid: referrer.user_id,
+          referred_uid: lineUserId,
+          coupon_id   : null,
+          order_id    : orderId
+        }]).catch(() => {});
+        return;
+      }
+    }
 
     const rewardCode = 'RWD-' + referrer.user_id.slice(1, 7).toUpperCase() + '-' +
                        Math.random().toString(36).slice(2, 6).toUpperCase();
@@ -2081,6 +2104,38 @@ app.post('/reveal-coupon', async (req, res) => {
   const discount = calcDiscount(coupon, total);
   const { secret_code: _hidden, ...safeCoupon } = coupon; // ซ่อน secret_code ก่อนส่งกลับ
   res.json({ success: true, coupon: safeCoupon, discountAmount: discount });
+});
+
+// ─── GET /referral-config (admin) ────────────────────────
+app.get('/referral-config', async (req, res) => {
+  const keys = ['referral_reward_type','referral_reward_value','referral_max_rewards',
+                 'referral_expire_days','referral_min_order'];
+  const { data, error } = await supabase.from('shop_config').select('key, value').in('key', keys);
+  if (error) return res.status(500).json({ error: error.message });
+  const cfg = Object.fromEntries((data || []).map(r => [r.key, r.value]));
+  // ใส่ default ถ้าไม่มีใน DB
+  res.json({
+    referral_reward_type  : cfg.referral_reward_type   || 'fixed',
+    referral_reward_value : cfg.referral_reward_value  || '50',
+    referral_max_rewards  : cfg.referral_max_rewards   || '0',
+    referral_expire_days  : cfg.referral_expire_days   || '30',
+    referral_min_order    : cfg.referral_min_order     || '0',
+  });
+});
+
+// ─── POST /referral-config (admin) ───────────────────────
+app.post('/referral-config', async (req, res) => {
+  const allowed = ['referral_reward_type','referral_reward_value','referral_max_rewards',
+                   'referral_expire_days','referral_min_order'];
+  const upserts = allowed
+    .filter(k => req.body[k] !== undefined)
+    .map(k => ({ key: k, value: String(req.body[k]), updated_at: new Date().toISOString() }));
+
+  if (!upserts.length) return res.status(400).json({ error: 'no valid fields' });
+
+  const { error } = await supabase.from('shop_config').upsert(upserts, { onConflict: 'key' });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
 });
 
 app.use(express.static(__dirname));

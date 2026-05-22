@@ -456,6 +456,7 @@ textarea.fi{resize:none;height:70px}
       <div><div class="shop-name" id="shopNameEl">มนชิน ซัพพลาย</div><div class="shop-tagline">สั่งง่าย ส่งไว ใจดี</div></div>
     </div>
     <div class="hdr-actions">
+      <button class="cart-pill" onclick="openReferralSheet()" title="ชวนเพื่อน รับคูปอง">🎁</button>
       <button class="cart-pill" onclick="openMyOrders()" title="ออเดอร์ของฉัน">📋 <span class="badge" id="myOrdersBadge" style="display:none;">0</span></button>
       <button class="cart-pill" onclick="openCart()">🛒 <span class="badge" id="cartBadge">0</span></button>
     </div>
@@ -782,6 +783,50 @@ textarea.fi{resize:none;height:70px}
         </div>
       </div>
       <button class="save-btn" onclick="saveSettings()">💾 บันทึกการตั้งค่า</button>
+
+      <!-- ── ระบบชวนเพื่อน ─────────────────────────────── -->
+      <div style="margin-top:22px;padding-top:18px;border-top:1.5px solid var(--border)">
+        <div style="font-size:14px;font-weight:700;color:#2C3E50;margin-bottom:4px;">🎁 ตั้งค่าระบบชวนเพื่อน</div>
+        <div style="font-size:12px;color:#888;margin-bottom:14px;">เพื่อนสั่งซื้อครั้งแรกสำเร็จ → คนชวนได้รับคูปองอัตโนมัติ</div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+          <div>
+            <label class="s-lbl" style="margin-bottom:4px;display:block;">ประเภทส่วนลดที่ได้รับ</label>
+            <select class="s-inp" id="ref_reward_type" onchange="refTypeChange()" style="padding:9px 10px;">
+              <option value="fixed">💰 ลดเป็นบาท (fixed)</option>
+              <option value="percent">📊 ลดเป็น % (percent)</option>
+            </select>
+          </div>
+          <div>
+            <label class="s-lbl" id="ref_reward_val_lbl" style="margin-bottom:4px;display:block;">มูลค่าส่วนลด (บาท)</label>
+            <input class="s-inp" id="ref_reward_value" type="number" min="1" placeholder="50" style="padding:9px 10px;">
+          </div>
+          <div>
+            <label class="s-lbl" style="margin-bottom:4px;display:block;">จำกัดสิทธิ์ชวน (ครั้ง)</label>
+            <input class="s-inp" id="ref_max_rewards" type="number" min="0" placeholder="0 = ไม่จำกัด" style="padding:9px 10px;">
+            <div style="font-size:11px;color:#aaa;margin-top:3px;">0 = ชวนได้ไม่จำกัด ชวน 10 คน = ใส่ 10</div>
+          </div>
+          <div>
+            <label class="s-lbl" style="margin-bottom:4px;display:block;">คูปองหมดอายุใน (วัน)</label>
+            <input class="s-inp" id="ref_expire_days" type="number" min="0" placeholder="30" style="padding:9px 10px;">
+            <div style="font-size:11px;color:#aaa;margin-top:3px;">0 = ไม่มีวันหมดอายุ</div>
+          </div>
+          <div style="grid-column:1/-1;">
+            <label class="s-lbl" style="margin-bottom:4px;display:block;">ยอดขั้นต่ำในการใช้คูปอง (บาท)</label>
+            <input class="s-inp" id="ref_min_order" type="number" min="0" placeholder="0 = ไม่มีขั้นต่ำ" style="padding:9px 10px;">
+          </div>
+        </div>
+
+        <div id="refConfigStatus" style="font-size:12px;color:#888;min-height:18px;margin-bottom:8px;"></div>
+        <button onclick="saveReferralConfig()"
+          style="width:100%;padding:11px;background:#E8593C;color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;font-family:'Sarabun',sans-serif;cursor:pointer;">
+          💾 บันทึกตั้งค่าชวนเพื่อน
+        </button>
+        <button onclick="loadReferralConfig()"
+          style="width:100%;margin-top:6px;padding:9px;background:none;border:1.5px solid var(--border);border-radius:10px;font-size:13px;font-weight:600;font-family:'Sarabun',sans-serif;cursor:pointer;color:var(--sub);">
+          🔄 โหลดค่าปัจจุบัน
+        </button>
+      </div>
 
       <!-- ── โฆษณา Pop-up ─────────────────────────────── -->
       <div style="margin-top:22px;padding-top:18px;border-top:1.5px solid var(--border)">
@@ -3047,6 +3092,15 @@ async function renderMyOrdersList() {
           <div class="em-icon">📭</div>
           <div>ยังไม่มีออเดอร์</div>
           <div style="font-size:12px;margin-top:6px;">ลองเลือกสินค้าและสั่งซื้อดูค่ะ</div>
+        </div>
+        <div onclick="openReferralSheet()"
+          style="margin-top:10px;background:linear-gradient(135deg,#fff5f0,#fff0f5);border:1.5px solid #ffd0b5;border-radius:14px;padding:16px;cursor:pointer;display:flex;align-items:center;gap:12px;">
+          <div style="font-size:32px;flex-shrink:0;">🎁</div>
+          <div style="flex:1;">
+            <div style="font-weight:700;font-size:14px;color:#c0392b;">ชวนเพื่อน รับคูปองส่วนลด</div>
+            <div style="font-size:12px;color:#888;margin-top:2px;">แนะนำเพื่อนมาซื้อครั้งแรก รับคูปองทันที!</div>
+          </div>
+          <div style="color:#e8593c;font-size:18px;">›</div>
         </div>`;
       return;
     }
@@ -3071,7 +3125,16 @@ async function renderMyOrdersList() {
           </div>
         </div>
       `;
-    }).join('');
+    }).join('') + `
+      <div onclick="openReferralSheet()"
+        style="margin-top:10px;background:linear-gradient(135deg,#fff5f0,#fff0f5);border:1.5px solid #ffd0b5;border-radius:14px;padding:16px;cursor:pointer;display:flex;align-items:center;gap:12px;">
+        <div style="font-size:32px;flex-shrink:0;">🎁</div>
+        <div style="flex:1;">
+          <div style="font-weight:700;font-size:14px;color:#c0392b;">ชวนเพื่อน รับคูปองส่วนลด</div>
+          <div style="font-size:12px;color:#888;margin-top:2px;">แนะนำเพื่อนมาซื้อครั้งแรก รับคูปองทันที!</div>
+        </div>
+        <div style="color:#e8593c;font-size:18px;">›</div>
+      </div>`;
   } catch(e) {
     body.innerHTML = `<div class="mo-empty"><div class="em-icon">⚠️</div><div>โหลดไม่สำเร็จ</div><div style="font-size:12px;margin-top:6px;">${escapeShop(e.message)}</div></div>`;
   }
@@ -3222,13 +3285,13 @@ function updPinDots() {
 // ═══════════════════════════════════════════
 function openAdmin() {
   renderCatTags(); renderPMList();
-  // init size builder ถ้าว่าง
   const sb = document.getElementById('szBuilder');
   if (sb && !sb.querySelector('.sz-row-wrap')) {
     sb.innerHTML='';
     addSzRow('szBuilder');
   }
-  adLoadUI();   // โหลดค่าโฆษณาเข้า UI ทุกครั้งที่เปิด panel
+  adLoadUI();
+  loadReferralConfig(); // โหลด referral config ทุกครั้งที่เปิด
   document.getElementById('adminOv').classList.add('show');
 }
 function closeAdmin() { document.getElementById('adminOv').classList.remove('show'); }
@@ -4306,13 +4369,8 @@ async function handleReferralFromUrl() {
   }
 }
 
-// โหลดลิงก์แนะนำเพื่อน — เรียกหลัง link-line สำเร็จ
+// โหลดลิงก์แนะนำเพื่อน
 async function loadReferralLink() {
-  const isLinked = localStorage.getItem('ms_line_linked') === '1';
-  const section  = document.getElementById('referralSection');
-  if (!section) return;
-  if (!isLinked) { section.style.display = 'none'; return; }
-  section.style.display = 'block';
   try {
     const r    = await fetch(`${BACKEND_URL}/my-referral?customerId=${CUSTOMER_ID}`);
     const data = await r.json();
@@ -4324,6 +4382,23 @@ async function loadReferralLink() {
   } catch(e) {
     console.warn('load referral link failed:', e.message);
   }
+}
+
+async function openReferralSheet() {
+  const ov = document.getElementById('referralOv');
+  if (!ov) return;
+  ov.style.display = 'flex';
+  // โหลดลิงก์ถ้ายังไม่มี
+  if (!window._referralShareUrl) await loadReferralLink();
+  else {
+    const box = document.getElementById('referralLinkBox');
+    if (box) box.textContent = window._referralShareUrl;
+  }
+}
+
+function closeReferralSheet() {
+  const ov = document.getElementById('referralOv');
+  if (ov) ov.style.display = 'none';
 }
 
 function copyReferralLink() {
@@ -4349,12 +4424,105 @@ function toggleSecretCodeField() {
   const isSecret = document.getElementById('sc_is_secret')?.checked;
   const wrap     = document.getElementById('sc_secret_code_wrap');
   if (wrap) wrap.style.display = isSecret ? 'block' : 'none';
-  // ถ้าเปิด secret mode → ล้าง code ปกติออก (เพราะจะใช้ secret_code แทน)
   if (isSecret) {
     const codeInput = document.getElementById('sc_code');
     if (codeInput) codeInput.value = '';
   }
 }
+
+// ── Referral Config (admin) ──────────────────────────────
+function refTypeChange() {
+  const t   = document.getElementById('ref_reward_type')?.value;
+  const lbl = document.getElementById('ref_reward_val_lbl');
+  if (lbl) lbl.textContent = t === 'percent' ? 'มูลค่าส่วนลด (%)' : 'มูลค่าส่วนลด (บาท)';
+}
+
+async function loadReferralConfig() {
+  const bu     = typeof BACKEND_URL !== 'undefined' ? BACKEND_URL : null;
+  if (!bu) return;
+  const status = document.getElementById('refConfigStatus');
+  if (status) status.textContent = '⏳ กำลังโหลด...';
+  try {
+    const r = await fetch(`${bu}/referral-config`);
+    const d = await r.json();
+    document.getElementById('ref_reward_type').value  = d.referral_reward_type  || 'fixed';
+    document.getElementById('ref_reward_value').value = d.referral_reward_value || '50';
+    document.getElementById('ref_max_rewards').value  = d.referral_max_rewards  || '0';
+    document.getElementById('ref_expire_days').value  = d.referral_expire_days  || '30';
+    document.getElementById('ref_min_order').value    = d.referral_min_order    || '0';
+    refTypeChange();
+    if (status) status.textContent = '✅ โหลดค่าแล้ว';
+    setTimeout(() => { if (status) status.textContent = ''; }, 2000);
+  } catch(e) {
+    if (status) status.textContent = '❌ โหลดไม่ได้: ' + e.message;
+  }
+}
+
+async function saveReferralConfig() {
+  const bu = typeof BACKEND_URL !== 'undefined' ? BACKEND_URL : null;
+  if (!bu) { alert('ไม่มี BACKEND URL'); return; }
+  const val = document.getElementById('ref_reward_value').value;
+  if (!val || Number(val) <= 0) { alert('กรุณากรอกมูลค่าส่วนลด'); return; }
+  const status = document.getElementById('refConfigStatus');
+  if (status) status.textContent = '⏳ กำลังบันทึก...';
+  try {
+    const r = await fetch(`${bu}/referral-config`, {
+      method : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body   : JSON.stringify({
+        referral_reward_type : document.getElementById('ref_reward_type').value,
+        referral_reward_value: document.getElementById('ref_reward_value').value,
+        referral_max_rewards : document.getElementById('ref_max_rewards').value  || '0',
+        referral_expire_days : document.getElementById('ref_expire_days').value  || '30',
+        referral_min_order   : document.getElementById('ref_min_order').value    || '0',
+      })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error);
+    if (status) status.textContent = '✅ บันทึกแล้ว!';
+    setTimeout(() => { if (status) status.textContent = ''; }, 2500);
+  } catch(e) {
+    if (status) status.textContent = '❌ ' + e.message;
+  }
+}
 </script>
+<!-- ── REFERRAL SHEET ── -->
+<div id="referralOv" onclick="if(event.target===this)closeReferralSheet()"
+  style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9000;align-items:flex-end;justify-content:center;">
+  <div style="background:#fff;border-radius:20px 20px 0 0;width:100%;max-width:480px;padding:24px 20px 36px;box-shadow:0 -4px 24px rgba(0,0,0,0.12);">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+      <div style="font-size:17px;font-weight:700;color:#2C3E50;">🎁 ชวนเพื่อน รับคูปอง</div>
+      <button onclick="closeReferralSheet()" style="background:none;border:none;font-size:22px;color:#aaa;cursor:pointer;line-height:1;padding:0;">×</button>
+    </div>
+    <div style="font-size:13px;color:#888;margin-bottom:20px;">เพื่อนสั่งซื้อครั้งแรกสำเร็จ → คุณได้รับคูปองส่วนลดทันที!</div>
+
+    <div id="referralLinkWrap">
+      <div style="font-size:12px;font-weight:600;color:#555;margin-bottom:6px;">ลิงก์แนะนำของคุณ</div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <div id="referralLinkBox"
+          style="flex:1;background:#f8f8f8;border:1.5px solid #eee;border-radius:10px;padding:10px 12px;font-size:12px;color:#555;word-break:break-all;min-height:40px;line-height:1.5;">
+          <span style="color:#bbb;">⏳ กำลังโหลด...</span>
+        </div>
+        <button onclick="copyReferralLink()"
+          style="flex-shrink:0;background:#f0f0f0;border:none;border-radius:10px;padding:10px 14px;font-size:13px;font-weight:600;cursor:pointer;color:#555;">
+          📋 คัดลอก
+        </button>
+      </div>
+      <button onclick="shareReferralToLine()"
+        style="margin-top:12px;width:100%;background:#06C755;color:#fff;border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;">
+        📤 แชร์ผ่าน LINE
+      </button>
+    </div>
+
+    <div style="margin-top:16px;background:#fff8f0;border-radius:10px;padding:12px 14px;font-size:12px;color:#888;line-height:1.7;">
+      <div style="font-weight:700;color:#c0392b;margin-bottom:4px;">วิธีรับคูปอง</div>
+      <div>1️⃣ คัดลอกลิงก์และส่งให้เพื่อน</div>
+      <div>2️⃣ เพื่อนเปิดลิงก์และสั่งซื้อสินค้าครั้งแรก</div>
+      <div>3️⃣ คุณได้รับคูปองส่วนลดทาง LINE ทันที!</div>
+      <div style="margin-top:6px;color:#e8593c;">⚠️ เพื่อนแต่ละคนสามารถใช้ลิงก์ได้ครั้งเดียว</div>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
