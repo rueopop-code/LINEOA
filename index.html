@@ -574,29 +574,12 @@ textarea.fi{resize:none;height:70px}
         <div id="manualCpnWrap" style="display:none;margin-top:8px;">
           <div class="cpn-input-row">
             <input id="cpnCodeInput" class="cpn-input-field" type="text"
-              placeholder="กรอกรหัสคูปอง" maxlength="32"
+              placeholder="กรอกรหัสคูปอง" maxlength="64"
               oninput="this.value=this.value.toUpperCase()"
               onkeydown="if(event.key==='Enter')applyCouponCode()">
             <button class="cpn-apply-btn" id="cpnApplyBtn" onclick="applyCouponCode()">ใช้</button>
           </div>
           <div class="cpn-result" id="cpnResult"></div>
-        </div>
-
-        <!-- 🔒 Secret Coupon -->
-        <div id="secretCpnSection" style="margin-top:6px;text-align:right;">
-          <button id="secretCpnToggleBtn" onclick="toggleSecretCouponInput()"
-            style="background:none;border:none;color:#aaa;font-size:12px;cursor:pointer;text-decoration:underline;padding:0;">
-            🔒 มีโค้ดลับ?
-          </button>
-          <div id="secretCpnWrap" style="display:none;margin-top:8px;">
-            <div class="cpn-input-row">
-              <input id="secretCpnInput" class="cpn-input-field" type="password"
-                placeholder="กรอกโค้ดลับ" maxlength="64"
-                onkeydown="if(event.key==='Enter')revealSecretCoupon()">
-              <button class="cpn-apply-btn" onclick="revealSecretCoupon()">ปลดล็อก</button>
-            </div>
-            <div id="secretCpnResult" style="margin-top:6px;"></div>
-          </div>
         </div>
       </div>
 
@@ -2810,16 +2793,13 @@ async function applyCouponCode() {
 
   try {
     const tot = cart.reduce((s,i,idx) => s + getCartLinePrice(idx) * i.qty, 0);
+
+    // ลองคูปองปกติก่อน
     const r = await fetch(`${BACKEND_URL}/validate-coupon?code=${encodeURIComponent(code)}&customerId=${CUSTOMER_ID}&orderTotal=${tot}`);
     const d = await r.json();
 
-    if (!r.ok || d.error) {
-      input.className = 'cpn-input-field error';
-      result.className = 'cpn-result err';
-      result.innerHTML = '❌ ' + (d.error || 'คูปองไม่ถูกต้อง');
-      result.style.display = 'flex';
-      setTimeout(() => { input.className = 'cpn-input-field'; }, 1200);
-    } else {
+    if (r.ok && !d.error) {
+      // ✅ คูปองปกติ
       _manualDiscount = d.coupon;
       input.className = 'cpn-input-field success';
       result.className = 'cpn-result ok';
@@ -2829,6 +2809,36 @@ async function applyCouponCode() {
       btn.textContent = '✕ ยกเลิก';
       document.getElementById('manualCpnWrap').classList.add('active');
       refreshDiscountUI();
+      return;
+    }
+
+    // ❓ ไม่เจอคูปองปกติ → ลอง secret coupon
+    const rs = await fetch(`${BACKEND_URL}/reveal-coupon`, {
+      method : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body   : JSON.stringify({ secretCode: code, customerId: CUSTOMER_ID, orderTotal: tot })
+    });
+    const ds = await rs.json();
+
+    if (rs.ok && !ds.error) {
+      // ✅ โค้ดลับถูกต้อง
+      _manualDiscount = ds.coupon;
+      input.className = 'cpn-input-field success';
+      result.className = 'cpn-result ok';
+      const disc = calcDiscountAmount(ds.coupon, tot);
+      result.innerHTML = buildCouponCard(ds.coupon, disc) +
+        '<div style="font-size:11px;color:#888;margin-top:4px;text-align:center;">🔒 โค้ดลับปลดล็อกแล้ว</div>';
+      result.style.display = 'block';
+      btn.textContent = '✕ ยกเลิก';
+      document.getElementById('manualCpnWrap').classList.add('active');
+      refreshDiscountUI();
+    } else {
+      // ❌ ไม่เจอทั้งคู่
+      input.className = 'cpn-input-field error';
+      result.className = 'cpn-result err';
+      result.innerHTML = '❌ ' + (d.error || 'ไม่พบโค้ดนี้ หรือหมดอายุแล้ว');
+      result.style.display = 'flex';
+      setTimeout(() => { input.className = 'cpn-input-field'; }, 1200);
     }
   } catch(e) {
     result.className = 'cpn-result err';
@@ -4333,86 +4343,6 @@ function shareReferralToLine() {
 // ══════════════════════════════════════════════════════════
 //  SECRET COUPON
 // ══════════════════════════════════════════════════════════
-
-function toggleSecretCouponInput() {
-  const wrap = document.getElementById('secretCpnWrap');
-  const btn  = document.getElementById('secretCpnToggleBtn');
-  if (!wrap) return;
-  const showing = wrap.style.display !== 'none';
-  wrap.style.display = showing ? 'none' : 'block';
-  btn.textContent = showing ? '🔒 มีโค้ดลับ?' : '▲ ซ่อน';
-  if (!showing) document.getElementById('secretCpnInput')?.focus();
-}
-
-async function revealSecretCoupon() {
-  const input      = document.getElementById('secretCpnInput');
-  const resultDiv  = document.getElementById('secretCpnResult');
-  const secretCode = input?.value?.trim();
-  if (!secretCode || !resultDiv) return;
-
-  resultDiv.innerHTML = '<span style="color:#888;font-size:13px;">⏳ กำลังตรวจสอบ…</span>';
-
-  // ดึงยอดรวมปัจจุบันจาก state ที่มีอยู่แล้ว
-  const orderTotal = (typeof _currentTotal !== 'undefined') ? _currentTotal
-                   : (typeof _orderTotal   !== 'undefined') ? _orderTotal
-                   : 0;
-  try {
-    const r = await fetch(`${BACKEND_URL}/reveal-coupon`, {
-      method : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body   : JSON.stringify({ secretCode, customerId: CUSTOMER_ID, orderTotal })
-    });
-    const data = await r.json();
-
-    if (!r.ok) {
-      resultDiv.innerHTML = `<div style="color:#e53e3e;font-size:13px;margin-top:4px;">❌ ${data.error}</div>`;
-      return;
-    }
-
-    const c       = data.coupon;
-    const discStr = c.discount_type === 'percent'
-      ? `${c.discount_value}%`
-      : `฿${Number(c.discount_value).toLocaleString()}`;
-
-    resultDiv.innerHTML = `
-      <div style="background:#f0fff4;border:1.5px solid #9ae6b4;border-radius:10px;padding:12px;margin-top:6px;">
-        <div style="font-weight:700;color:#276749;font-size:14px;">🎉 ${c.name}</div>
-        ${c.description ? `<div style="color:#2d6a4f;font-size:12px;margin-top:2px;">${c.description}</div>` : ''}
-        <div style="font-size:22px;font-weight:700;color:#e8593c;margin:6px 0;">ลด ${discStr}</div>
-        <button onclick="applyRevealedCoupon(${JSON.stringify(JSON.stringify(c))}, ${data.discountAmount})"
-          style="background:#e8593c;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">
-          ✅ ใช้คูปองนี้
-        </button>
-      </div>`;
-  } catch(e) {
-    resultDiv.innerHTML = `<div style="color:#e53e3e;font-size:13px;margin-top:4px;">❌ เกิดข้อผิดพลาด</div>`;
-  }
-}
-
-function applyRevealedCoupon(couponJson, discountAmount) {
-  try {
-    const coupon = typeof couponJson === 'string' ? JSON.parse(couponJson) : couponJson;
-    // เรียก function apply coupon ที่มีอยู่แล้วในระบบ
-    if (typeof applyPickedCouponData === 'function') {
-      applyPickedCouponData(coupon, discountAmount);
-    } else if (typeof _manualDiscount !== 'undefined') {
-      _manualDiscount  = coupon;
-      _manualDiscAmt   = discountAmount;
-      if (typeof renderOrderSummary === 'function') renderOrderSummary();
-      if (typeof updateTotals       === 'function') updateTotals();
-      if (typeof recalcDiscount     === 'function') recalcDiscount();
-    }
-    // ซ่อน section หลังใช้งาน
-    const wrap = document.getElementById('secretCpnWrap');
-    if (wrap) wrap.style.display = 'none';
-    const btn = document.getElementById('secretCpnToggleBtn');
-    if (btn) { btn.textContent = '🔒 มีโค้ดลับ?'; btn.style.display = 'none'; }
-    const result = document.getElementById('secretCpnResult');
-    if (result) result.innerHTML = '';
-  } catch(e) {
-    console.warn('applyRevealedCoupon error:', e.message);
-  }
-}
 
 // toggle field โค้ดลับในฟอร์มแอดมิน
 function toggleSecretCodeField() {
