@@ -4371,15 +4371,19 @@ async function handleReferralFromUrl() {
 
 // โหลดลิงก์แนะนำเพื่อน
 async function loadReferralLink() {
+  const box = document.getElementById('referralLinkBox');
+  const shareBtn = document.getElementById('referralShareBtn');
+  const copyBtn  = document.getElementById('referralCopyBtn');
   try {
     const r    = await fetch(`${BACKEND_URL}/my-referral?customerId=${CUSTOMER_ID}`);
     const data = await r.json();
-    if (data.shareUrl) {
-      window._referralShareUrl = data.shareUrl;
-      const box = document.getElementById('referralLinkBox');
-      if (box) box.textContent = data.shareUrl;
-    }
+    if (!r.ok) throw new Error(data.error || 'โหลดไม่ได้');
+    window._referralShareUrl = data.shareUrl;
+    if (box) box.textContent = data.shareUrl;
+    if (shareBtn) { shareBtn.disabled = false; shareBtn.style.opacity = '1'; }
+    if (copyBtn)  { copyBtn.disabled  = false; copyBtn.style.background = '#f0f0f0'; }
   } catch(e) {
+    if (box) box.innerHTML = '<span style="color:#e53e3e;font-size:12px;">⚠️ โหลดไม่ได้ กรุณาลองใหม่</span>';
     console.warn('load referral link failed:', e.message);
   }
 }
@@ -4388,11 +4392,21 @@ async function openReferralSheet() {
   const ov = document.getElementById('referralOv');
   if (!ov) return;
   ov.style.display = 'flex';
-  // โหลดลิงก์ถ้ายังไม่มี
-  if (!window._referralShareUrl) await loadReferralLink();
-  else {
-    const box = document.getElementById('referralLinkBox');
+
+  // reset state
+  const box      = document.getElementById('referralLinkBox');
+  const shareBtn = document.getElementById('referralShareBtn');
+  const copyBtn  = document.getElementById('referralCopyBtn');
+
+  if (!window._referralShareUrl) {
+    if (box) box.innerHTML = '<span style="color:#aaa;">⏳ กำลังสร้างลิงก์...</span>';
+    if (shareBtn) shareBtn.disabled = true;
+    if (copyBtn)  copyBtn.disabled  = true;
+    await loadReferralLink();
+  } else {
     if (box) box.textContent = window._referralShareUrl;
+    if (shareBtn) { shareBtn.disabled = false; shareBtn.style.opacity = '1'; }
+    if (copyBtn)  { copyBtn.disabled  = false; copyBtn.style.background = '#f0f0f0'; }
   }
 }
 
@@ -4405,13 +4419,19 @@ function copyReferralLink() {
   const url = window._referralShareUrl;
   if (!url) return;
   navigator.clipboard.writeText(url)
-    .then(() => toast('📋 คัดลอกลิงก์แล้ว!'))
-    .catch(() => toast(url));
+    .then(() => {
+      const btn = document.getElementById('referralCopyBtn');
+      if (btn) { const orig = btn.textContent; btn.textContent = '✅ คัดลอกแล้ว!'; setTimeout(() => btn.textContent = orig, 1800); }
+    })
+    .catch(() => alert(url));
 }
 
 function shareReferralToLine() {
   const url = window._referralShareUrl;
   if (!url) return;
+  // enable ปุ่มทันทีที่กด (กันกรณี disabled ค้าง)
+  const btn = document.getElementById('referralShareBtn');
+  if (btn) { btn.style.opacity = '1'; btn.disabled = false; }
   window.open(`https://line.me/R/msg/text/?${encodeURIComponent('👋 มาช้อปด้วยกันเลย! ใช้ลิงก์ของฉันรับส่วนลด\n' + url)}`, '_blank');
 }
 
@@ -4501,15 +4521,16 @@ async function saveReferralConfig() {
       <div style="display:flex;gap:8px;align-items:center;">
         <div id="referralLinkBox"
           style="flex:1;background:#f8f8f8;border:1.5px solid #eee;border-radius:10px;padding:10px 12px;font-size:12px;color:#555;word-break:break-all;min-height:40px;line-height:1.5;">
-          <span style="color:#bbb;">⏳ กำลังโหลด...</span>
+          <span style="color:#bbb;">⏳ กำลังสร้างลิงก์...</span>
         </div>
-        <button onclick="copyReferralLink()"
-          style="flex-shrink:0;background:#f0f0f0;border:none;border-radius:10px;padding:10px 14px;font-size:13px;font-weight:600;cursor:pointer;color:#555;">
+        <button id="referralCopyBtn" onclick="copyReferralLink()" disabled
+          style="flex-shrink:0;background:#f0f0f0;border:none;border-radius:10px;padding:10px 14px;font-size:13px;font-weight:600;cursor:pointer;color:#555;transition:.2s;"
+          onmouseover="if(!this.disabled)this.style.background='#e0e0e0'" onmouseout="this.style.background='#f0f0f0'">
           📋 คัดลอก
         </button>
       </div>
-      <button onclick="shareReferralToLine()"
-        style="margin-top:12px;width:100%;background:#06C755;color:#fff;border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;">
+      <button id="referralShareBtn" onclick="shareReferralToLine()" disabled
+        style="margin-top:12px;width:100%;background:#06C755;color:#fff;border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;opacity:0.6;transition:.2s;">
         📤 แชร์ผ่าน LINE
       </button>
     </div>

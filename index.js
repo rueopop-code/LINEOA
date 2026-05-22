@@ -1785,26 +1785,35 @@ app.patch('/orders/:orderId/status', async (req, res) => {
 
 // ─── GET /my-referral ────────────────────────────────────
 // คืน referral link ของลูกค้า (สร้างโค้ดให้อัตโนมัติถ้ายังไม่มี)
-// รับ lineUserId หรือ customerId ก็ได้
+// รับ lineUserId หรือ customerId ก็ได้ — ถ้าไม่มี LINE UID ใช้ CUST-prefix แทน
 app.get('/my-referral', async (req, res) => {
   let { lineUserId, customerId } = req.query;
 
-  // ถ้าส่งมาแค่ customerId → ค้นหา lineUserId จาก mapping
+  if (!lineUserId && !customerId)
+    return res.status(400).json({ error: 'lineUserId or customerId required' });
+
+  // ถ้าส่งมาแค่ customerId → หา lineUserId จาก mapping
   if (!lineUserId && customerId) {
     lineUserId = await findLineUserIdByCustomer(customerId).catch(() => null);
   }
-  if (!lineUserId) return res.status(400).json({ error: 'lineUserId or customerId required' });
+
+  // ถ้ายังไม่มี LINE UID → ใช้ CUST-prefix เป็น pseudo-ID (ทำงานได้โดยไม่ต้องผูก LINE)
+  const uid = lineUserId || `CUST-${customerId}`;
 
   let { data: user } = await supabase
     .from('line_users')
     .select('user_id, referral_code')
-    .eq('user_id', lineUserId)
+    .eq('user_id', uid)
     .maybeSingle();
 
   let referralCode = user?.referral_code;
   if (!referralCode) {
     referralCode = 'REF' + Math.random().toString(36).slice(2, 10).toUpperCase();
-    await supabase.from('line_users').upsert({ user_id: lineUserId, referral_code: referralCode });
+    await supabase.from('line_users').upsert({
+      user_id      : uid,
+      referral_code: referralCode,
+      last_seen    : new Date().toISOString()
+    });
   }
 
   const shopUrl  = process.env.SHOP_URL || 'https://lineoa-u0v2.onrender.com/';
