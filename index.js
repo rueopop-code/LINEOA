@@ -1164,6 +1164,12 @@ app.post('/webhook', async (req, res) => {
         detailText += `📅 ${date}\n`;
         detailText += `${'─'.repeat(20)}\n`;
         if (itemsList) detailText += `${itemsList}\n${'─'.repeat(20)}\n`;
+        // ส่วนลด + คูปอง
+        if (order.discount_amount > 0 || order.coupon_code) {
+          const subtotal = (order.total||0) + (order.discount_amount||0);
+          detailText += `💴 ยอดก่อนลด: ฿${subtotal.toLocaleString()}\n`;
+          detailText += `🎟️ ส่วนลด${order.coupon_code ? ` (${order.coupon_code})` : ''}: -฿${(order.discount_amount||0).toLocaleString()}\n`;
+        }
         detailText += `💰 ยอดรวม: ฿${(order.total||0).toLocaleString()}`;
         if (order.note) detailText += `\n\n📝 ${order.note}`;
 
