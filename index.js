@@ -1852,6 +1852,29 @@ app.get('/orders', async (req, res) => {
   res.json({ total: count, orders: data });
 });
 
+// ── POST /orders/:orderId/notify-status (admin กดส่งสถานะด้วยตัวเอง) ──
+app.post('/orders/:orderId/notify-status', async (req, res) => {
+  if (!process.env.LINE_TOKEN)
+    return res.status(400).json({ error: 'LINE_TOKEN not set' });
+
+  const { data: order, error } = await supabase
+    .from('orders').select('*').eq('order_id', req.params.orderId).maybeSingle();
+  if (error || !order) return res.status(404).json({ error: 'ไม่พบออเดอร์' });
+
+  let targetUid = order.line_user_id;
+  if (!targetUid) targetUid = await findLineUserIdByCustomer(order.customer_id);
+  if (!targetUid) return res.status(400).json({ error: 'ลูกค้ายังไม่ได้ผูกบัญชี LINE' });
+
+  const flex = buildStatusUpdateFlexFull(order, order.status || 'pending');
+  try {
+    await linePush(targetUid, [flex]);
+    console.log(`📤 notify-status → ${targetUid.slice(0,12)}… [${order.status}]`);
+    res.json({ success: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── PATCH /orders/:orderId/status ─────────────────────────
 app.patch('/orders/:orderId/status', async (req, res) => {
   const { status } = req.body;
