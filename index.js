@@ -2185,40 +2185,52 @@ async function processReferralReward(lineUserId, orderId, customerId, refCodeFro
 
     // แจ้ง A ทาง LINE
     if (process.env.LINE_TOKEN) {
-      const discStr   = discountType === 'percent' ? `${discountValue}%` : `฿${discountValue.toLocaleString()}`;
-      const expireStr = expireDays > 0 ? `ใช้ได้ภายใน ${expireDays} วัน` : 'ไม่มีวันหมดอายุ';
-      const shopUrl   = process.env.SHOP_URL || 'https://lineoa-u0v2.onrender.com/';
-      const flex = {
-        type: 'flex', altText: `🎁 คุณได้รับคูปองรางวัลชวนเพื่อน ลด ${discStr}!`,
-        contents: {
-          type: 'bubble',
-          hero: {
-            type: 'box', layout: 'vertical', paddingAll: 'lg', backgroundColor: '#E8593C',
-            contents: [{ type: 'text', text: '🎁 รางวัลชวนเพื่อน!', weight: 'bold', size: 'xl', align: 'center', color: '#ffffff' }]
-          },
-          body: {
-            type: 'box', layout: 'vertical', spacing: 'md',
-            contents: [
-              { type: 'text', text: 'เพื่อนของคุณสั่งซื้อครั้งแรกแล้ว!', size: 'sm', color: '#666666', wrap: true },
-              { type: 'separator' },
-              { type: 'text', text: `ส่วนลด: ${discStr}`, weight: 'bold', size: 'lg', color: '#333333' },
-              { type: 'box', layout: 'vertical', backgroundColor: '#FFF5F0', paddingAll: 'md', cornerRadius: 'md',
-                contents: [
-                  { type: 'text', text: 'โค้ดคูปองของคุณ', size: 'xs', color: '#888888' },
-                  { type: 'text', text: rewardCode, weight: 'bold', size: 'xl', color: '#E8593C', align: 'center' }
-                ]},
-              { type: 'text', text: expireStr, size: 'xs', color: '#999999', align: 'center' }
-            ]
-          },
-          footer: {
-            type: 'box', layout: 'vertical',
-            contents: [{ type: 'button', style: 'primary', color: '#E8593C',
-              action: { type: 'uri', label: '🛍️ ไปช้อปเลย', uri: shopUrl } }]
+      // หา LINE UID จริงของ A (กรณี referrer.user_id เป็น CUST- prefix)
+      let pushUid = referrer.user_id;
+      if (pushUid.startsWith('CUST-')) {
+        const custId = pushUid.slice(5); // ตัด CUST- ออก
+        const realUid = await findLineUserIdByCustomer(custId).catch(() => null);
+        if (realUid) pushUid = realUid;
+      }
+
+      if (pushUid && !pushUid.startsWith('CUST-')) {
+        const discStr   = discountType === 'percent' ? `${discountValue}%` : `฿${discountValue.toLocaleString()}`;
+        const expireStr = expireDays > 0 ? `ใช้ได้ภายใน ${expireDays} วัน` : 'ไม่มีวันหมดอายุ';
+        const shopUrl   = process.env.SHOP_URL || 'https://lineoa-u0v2.onrender.com/';
+        const flex = {
+          type: 'flex', altText: `คุณได้รับคูปองรางวัลชวนเพื่อน ลด ${discStr}!`,
+          contents: {
+            type: 'bubble',
+            hero: {
+              type: 'box', layout: 'vertical', paddingAll: 'lg', backgroundColor: '#E8593C',
+              contents: [{ type: 'text', text: 'รางวัลชวนเพื่อน!', weight: 'bold', size: 'xl', align: 'center', color: '#ffffff' }]
+            },
+            body: {
+              type: 'box', layout: 'vertical', spacing: 'md',
+              contents: [
+                { type: 'text', text: 'เพื่อนของคุณสั่งซื้อครั้งแรกแล้ว!', size: 'sm', color: '#666666', wrap: true },
+                { type: 'separator' },
+                { type: 'text', text: `ส่วนลด: ${discStr}`, weight: 'bold', size: 'lg', color: '#333333' },
+                { type: 'box', layout: 'vertical', backgroundColor: '#FFF5F0', paddingAll: 'md', cornerRadius: 'md',
+                  contents: [
+                    { type: 'text', text: 'โค้ดคูปองของคุณ', size: 'xs', color: '#888888' },
+                    { type: 'text', text: rewardCode, weight: 'bold', size: 'xl', color: '#E8593C', align: 'center' }
+                  ]},
+                { type: 'text', text: expireStr, size: 'xs', color: '#999999', align: 'center' }
+              ]
+            },
+            footer: {
+              type: 'box', layout: 'vertical',
+              contents: [{ type: 'button', style: 'primary', color: '#E8593C',
+                action: { type: 'uri', label: 'ไปช้อปเลย', uri: shopUrl } }]
+            }
           }
-        }
-      };
-      await linePush(referrer.user_id, [flex]);
-      console.log(`🎁 referral reward sent → ${referrer.user_id.slice(0,12)}…`);
+        };
+        await linePush(pushUid, [flex]);
+        console.log(`🎁 referral reward sent to A → ${pushUid.slice(0,12)}…`);
+      } else {
+        console.log(`ℹ️ referrer ไม่มี LINE UID จริง — ไม่ได้ส่ง push`);
+      }
     }
 
     console.log(`✅ referral reward: A=${referrer.user_id.slice(0,8)}… ← B=${referredUid.slice(0,12)}…`);
