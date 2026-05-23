@@ -3035,11 +3035,11 @@ async function sendOrder() {
     const isLinked = localStorage.getItem('ms_line_linked') === '1';
     document.getElementById('successMsg').textContent = isLinked
       ? (cartOT==='delivery'
-          ? `ออเดอร์ #${orderId} ส่งแล้ว!\nสรุปออเดอร์จะส่งเข้า LINE ของคุณค่ะ ✨`
-          : `ออเดอร์ #${orderId} จองแล้ว!\nสรุปออเดอร์จะส่งเข้า LINE ของคุณค่ะ ✨`)
+          ? `ออเดอร์ #${orderId} ได้ส่งคำสั่งซื้อแล้ว!\nกรุณารอการยืนยันคำสั่งซื้อจากทางร้านค้า\nสรุปออเดอร์จะส่งเข้า LINE ของคุณค่ะ ✨`
+          : `ออเดอร์ #${orderId} ได้ส่งคำสั่งซื้อแล้ว!\nกรุณารอการยืนยันคำสั่งซื้อจากทางร้านค้า\nสรุปออเดอร์จะส่งเข้า LINE ของคุณค่ะ ✨`)
       : (cartOT==='delivery'
-          ? `ออเดอร์ #${orderId} ส่งแล้ว!\nร้านจะยืนยันและแจ้งสถานะค่ะ`
-          : `ออเดอร์ #${orderId} จองแล้ว!\nร้านจะยืนยันและแจ้งสถานะค่ะ`);
+          ? `ออเดอร์ #${orderId} ได้ส่งคำสั่งซื้อแล้ว!\nกรุณารอการยืนยันคำสั่งซื้อจากทางร้านค้า`
+          : `ออเดอร์ #${orderId} ได้ส่งคำสั่งซื้อแล้ว!\nกรุณารอการยืนยันคำสั่งซื้อจากทางร้านค้า`);
     // แสดง LINE banner ถ้ายังไม่ผูก
     document.getElementById('successLineBanner').style.display = isLinked ? 'none' : 'block';
     // แสดง referral banner ถ้ามาจากลิงก์ชวนเพื่อน
