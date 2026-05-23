@@ -331,6 +331,108 @@ function buildStatusUpdateFlex(order, status) {
   };
 }
 
+// Flex: อัปเดตสถานะ พร้อมรายการสินค้า (ส่งจากแอดมิน)
+function buildStatusUpdateFlexFull(order, status) {
+  const labels = {
+    pending  : { emoji:'⏳', text:'รอดำเนินการ',   desc:'ร้านกำลังตรวจสอบออเดอร์ของคุณ',              color:'#F39C12' },
+    sent     : { emoji:'📬', text:'ร้านได้รับแล้ว', desc:'ร้านได้รับออเดอร์ของคุณเรียบร้อยแล้ว',      color:'#2980B9' },
+    confirmed: { emoji:'✅', text:'ยืนยันแล้ว',    desc:'ร้านยืนยันออเดอร์เรียบร้อย กำลังจัดเตรียม', color:'#27AE60' },
+    shipped  : { emoji:'🚚', text:'กำลังจัดส่ง',   desc:'สินค้าออกจากร้านแล้ว รอรับได้เลย',           color:'#8E44AD' },
+    done     : { emoji:'🎉', text:'เสร็จสิ้น',      desc:'ขอบคุณที่อุดหนุนร้านเรา ❤️',               color:'#C0392B' },
+    cancelled: { emoji:'❌', text:'ยกเลิก',         desc:'ออเดอร์ถูกยกเลิก ติดต่อร้านหากมีข้อสงสัย', color:'#7F8C8D' },
+    failed   : { emoji:'⚠️', text:'ผิดพลาด',        desc:'มีข้อผิดพลาดเกิดขึ้น กรุณาติดต่อร้าน',     color:'#E74C3C' }
+  };
+  const lbl = labels[status] || { emoji:'📦', text:status, desc:'', color:'#C0392B' };
+
+  // รายการสินค้า
+  const items = Array.isArray(order.items) ? order.items : [];
+  const itemRows = items.slice(0, 8).map(i => {
+    const qty   = Number(i.qty)   || 1;
+    const price = Number(i.price) || 0;
+    const name  = String(i.name  || 'สินค้า').trim();
+    return {
+      type:'box', layout:'horizontal', margin:'sm',
+      contents: [
+        { type:'text', text: name,              size:'sm', color:'#333', flex:5, wrap:true },
+        { type:'text', text:`×${qty}`,          size:'sm', color:'#888', flex:1, align:'end' },
+        { type:'text', text:`฿${(qty*price).toLocaleString()}`, size:'sm', color:'#333', weight:'bold', flex:2, align:'end' }
+      ]
+    };
+  });
+  if (!itemRows.length) itemRows.push(
+    { type:'text', text:'— ไม่มีรายการสินค้า —', size:'sm', color:'#aaa', align:'center' }
+  );
+  const moreRow = items.length > 8
+    ? [{ type:'text', text:`+${items.length-8} รายการ`, size:'xs', color:'#aaa', margin:'sm' }] : [];
+
+  // ยอดรวม + ส่วนลด
+  const total    = Number(order.total)           || 0;
+  const discount = Number(order.discount_amount) || 0;
+  const totalContents = [];
+  if (discount > 0) {
+    totalContents.push({
+      type:'box', layout:'horizontal', margin:'sm',
+      contents:[
+        { type:'text', text:`🎟️ ส่วนลด${order.coupon_code ? ` (${order.coupon_code})` : ''}`,
+          size:'sm', color:'#e8593c', flex:3 },
+        { type:'text', text:`-฿${discount.toLocaleString()}`,
+          size:'sm', color:'#e8593c', weight:'bold', align:'end', flex:2 }
+      ]
+    });
+  }
+  totalContents.push({
+    type:'box', layout:'horizontal', margin:'sm',
+    contents:[
+      { type:'text', text:'💰 ยอดรวม', size:'md', color:'#333', weight:'bold', flex:1 },
+      { type:'text', text:`฿${total.toLocaleString()}`, size:'lg', color:'#C0392B', weight:'bold', align:'end' }
+    ]
+  });
+
+  return {
+    type:'flex',
+    altText:`${lbl.emoji} ${lbl.text} — #${order.order_id} ฿${total.toLocaleString()}`,
+    contents:{
+      type:'bubble',
+      header:{
+        type:'box', layout:'vertical',
+        backgroundColor: lbl.color, paddingAll:'lg',
+        contents:[
+          { type:'text', text:`${lbl.emoji} อัปเดตสถานะ`, color:'#ffffff', size:'sm' },
+          { type:'text', text: lbl.text, color:'#ffffff', size:'xl', weight:'bold', margin:'sm' }
+        ]
+      },
+      body:{
+        type:'box', layout:'vertical', spacing:'sm', paddingAll:'lg',
+        contents:[
+          { type:'box', layout:'horizontal',
+            contents:[
+              { type:'text', text:'ออเดอร์', size:'sm', color:'#888', flex:1 },
+              { type:'text', text:`#${order.order_id}`, size:'sm', color:'#333', weight:'bold', align:'end', flex:2 }
+            ]
+          },
+          { type:'separator', margin:'md' },
+          ...itemRows,
+          ...moreRow,
+          { type:'separator', margin:'md' },
+          ...totalContents,
+          { type:'separator', margin:'md' },
+          { type:'text', text: lbl.desc, size:'sm', color:'#555', wrap:true, margin:'sm' }
+        ]
+      },
+      footer:{
+        type:'box', layout:'vertical', paddingAll:'lg', paddingTop:'none',
+        contents:[
+          { type:'button', style:'primary', color: lbl.color, height:'sm',
+            action:{ type:'postback', label:'📋 ดูรายละเอียด',
+                     data:`action=view_order&id=${order.order_id}`,
+                     displayText:`📋 ดูรายละเอียด #${order.order_id}` }
+          }
+        ]
+      }
+    }
+  };
+}
+
 // Flex: ข้อความจากร้าน (chat)
 function buildChatFlex(order, text) {
   return {
@@ -1780,7 +1882,7 @@ app.patch('/orders/:orderId/status', async (req, res) => {
         targetUid = await findLineUserIdByCustomer(data.customer_id);
       }
       if (targetUid) {
-        const flex = buildStatusUpdateFlex(data, status);
+        const flex = buildStatusUpdateFlexFull(data, status);
         linePush(targetUid, [flex])
           .then(() => console.log(`📤 status flex → ${targetUid.slice(0,12)}…`))
           .catch(e => console.warn('LINE flex push failed:', e.message));
