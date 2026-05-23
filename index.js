@@ -844,16 +844,9 @@ app.post('/send-order', async (req, res) => {
       if (!e) console.log(`🗑️ cleaned up LINK-${customerId.slice(0,10)}… ghost`);
     });
 
-  // 🎁 ตรวจและให้รางวัล referral (เฉพาะออเดอร์แรกของ B)
+  // 🎁 ตรวจและให้รางวัล referral — unique constraint ใน referral_rewards ป้องกันซ้ำเอง
   const lineUidForReferral = autoLinkedLineUid || await findLineUserIdByCustomer(customerId).catch(() => null);
-  const { data: prevOrders } = await supabase
-    .from('orders').select('id').eq('customer_id', customerId)
-    .not('order_id', 'like', 'LINE-%').not('order_id', 'like', 'LINK-%')
-    .not('order_id', 'like', 'REFVISIT-%');
-  if (!prevOrders?.length || prevOrders.length === 1) {
-    // ส่ง refCode จาก order โดยตรง — ไม่ต้องรอ LINE UID
-    processReferralReward(lineUidForReferral, order_id, customerId, refCode || null).catch(console.warn);
-  }
+  processReferralReward(lineUidForReferral, order_id, customerId, refCode || null).catch(console.warn);
 
   res.json({ success: true, orderId: order_id });
 });
