@@ -2217,12 +2217,11 @@ async function processReferralReward(lineUserId, orderId, customerId, refCodeFro
           }
         }
       };
-      linePush(referrer.user_id, [flex])
-        .then(() => console.log(`🎁 referral reward → ${referrer.user_id.slice(0,12)}…`))
-        .catch(e  => console.warn('referral LINE push failed:', e.message));
+      await linePush(referrer.user_id, [flex]);
+      console.log(`🎁 referral reward sent → ${referrer.user_id.slice(0,12)}…`);
     }
 
-    console.log(`✅ referral reward: A=${referrer.user_id.slice(0,8)}… ← B=${lineUserId.slice(0,8)}…`);
+    console.log(`✅ referral reward: A=${referrer.user_id.slice(0,8)}… ← B=${referredUid.slice(0,12)}…`);
   } catch (e) {
     console.warn('processReferralReward error:', e.message);
   }
