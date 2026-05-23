@@ -846,13 +846,13 @@ app.post('/send-order', async (req, res) => {
 
   // 🎁 ตรวจและให้รางวัล referral (เฉพาะออเดอร์แรกของ B)
   const lineUidForReferral = autoLinkedLineUid || await findLineUserIdByCustomer(customerId).catch(() => null);
-  if (lineUidForReferral) {
-    const { data: prevOrders } = await supabase
-      .from('orders').select('id').eq('customer_id', customerId)
-      .not('order_id', 'like', 'LINE-%').not('order_id', 'like', 'LINK-%');
-    if (!prevOrders?.length || prevOrders.length === 1) {
-      processReferralReward(lineUidForReferral, order_id).catch(console.warn);
-    }
+  const { data: prevOrders } = await supabase
+    .from('orders').select('id').eq('customer_id', customerId)
+    .not('order_id', 'like', 'LINE-%').not('order_id', 'like', 'LINK-%')
+    .not('order_id', 'like', 'REFVISIT-%');
+  if (!prevOrders?.length || prevOrders.length === 1) {
+    // ส่ง refCode จาก order โดยตรง — ไม่ต้องรอ LINE UID
+    processReferralReward(lineUidForReferral, order_id, customerId, refCode || null).catch(console.warn);
   }
 
   res.json({ success: true, orderId: order_id });
@@ -2064,39 +2064,48 @@ app.post('/referral-visit', async (req, res) => {
 
 // ─── processReferralReward() ─────────────────────────────
 // เรียกจากภายใน /send-order หลังออเดอร์แรกของ B บันทึกสำเร็จ
-async function processReferralReward(lineUserId, orderId) {
-  if (!lineUserId) return;
+async function processReferralReward(lineUserId, orderId, customerId, refCodeFromOrder) {
+  const referredUid = lineUserId || (customerId ? `CUST-${customerId}` : null);
+  if (!referredUid) return;
   try {
     const { data: bUser } = await supabase
       .from('line_users').select('user_id, referred_by, is_referred')
       .eq('user_id', lineUserId).maybeSingle();
 
-    // ถ้ายังไม่มี referred_by → ลองดึงจาก REFVISIT ghost row (backfill)
-    let refCode = bUser?.referred_by;
-    if (!refCode && !bUser?.is_referred) {
-      // หา customerId จาก line_users
-      const { data: luRow } = await supabase.from('line_users')
-        .select('customer_id').eq('user_id', lineUserId).maybeSingle();
-      if (luRow?.customer_id) {
-        const ghostId = `REFVISIT-${luRow.customer_id.slice(0, 18)}`;
+    // หา refCode: 1) จาก order โดยตรง  2) จาก line_users  3) จาก ghost row  4) จาก DB
+    let refCode = refCodeFromOrder || null;
+
+    if (!refCode && lineUserId) {
+      const { data: bUser } = await supabase
+        .from('line_users').select('referred_by, is_referred')
+        .eq('user_id', lineUserId).maybeSingle();
+      if (bUser?.is_referred) return;
+      refCode = bUser?.referred_by;
+
+      if (!refCode && customerId) {
+        const ghostId = `REFVISIT-${customerId.slice(0, 18)}`;
         const { data: ghost } = await supabase.from('orders')
           .select('note').eq('order_id', ghostId).maybeSingle();
         if (ghost?.note?.startsWith('REF:')) {
           refCode = ghost.note.slice(4);
-          // บันทึกลง line_users ถาวร
           await supabase.from('line_users')
             .update({ referred_by: refCode }).eq('user_id', lineUserId).catch(() => {});
-          // ลบ ghost row
           await supabase.from('orders').delete().eq('order_id', ghostId).catch(() => {});
         }
       }
     }
 
-    if (!refCode || bUser?.is_referred) return;
+    if (!refCode && orderId) {
+      const { data: ord } = await supabase.from('orders')
+        .select('ref_code').eq('order_id', orderId).maybeSingle();
+      refCode = ord?.ref_code || null;
+    }
+
+    if (!refCode) return;
 
     // ป้องกัน race condition — ตรวจซ้ำที่ DB
     const { data: existReward } = await supabase
-      .from('referral_rewards').select('id').eq('referred_uid', lineUserId).maybeSingle();
+      .from('referral_rewards').select('id').eq('referred_uid', referredUid).maybeSingle();
     if (existReward) return;
 
     // หา referrer
@@ -2128,11 +2137,11 @@ async function processReferralReward(lineUserId, orderId) {
         .eq('referrer_uid', referrer.user_id);
       if ((count || 0) >= maxRewards) {
         // ยังบันทึก is_referred=true ให้ B เพื่อกัน loop แต่ไม่สร้างคูปอง
-        await supabase.from('line_users').update({ is_referred: true }).eq('user_id', lineUserId);
+        if (lineUserId) await supabase.from('line_users').update({ is_referred: true }).eq('user_id', lineUserId);
         console.log(`ℹ️ referrer ${referrer.user_id.slice(0,8)}… ครบ ${maxRewards} สิทธิ์แล้ว — ไม่สร้างคูปอง`);
         await supabase.from('referral_rewards').insert([{
           referrer_uid: referrer.user_id,
-          referred_uid: lineUserId,
+          referred_uid: referredUid,
           coupon_id   : null,
           order_id    : orderId
         }]).catch(() => {});
@@ -2166,7 +2175,7 @@ async function processReferralReward(lineUserId, orderId) {
     // บันทึก reward record
     await supabase.from('referral_rewards').insert([{
       referrer_uid: referrer.user_id,
-      referred_uid: lineUserId,
+      referred_uid: referredUid,
       coupon_id   : newCoupon.id,
       order_id    : orderId
     }]);
