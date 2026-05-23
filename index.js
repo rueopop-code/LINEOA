@@ -258,9 +258,7 @@ function buildOrderSummaryFlex(order) {
         type:'box', layout:'vertical', spacing:'sm', paddingAll:'lg', paddingTop:'none',
         contents: [
           { type:'button', style:'primary', color:'#C0392B', height:'sm',
-            action: { type:'postback', label:'📋 ดูสถานะออเดอร์',
-                      data:`action=view_order&id=${orderId}`,
-                      displayText:`📋 ดูสถานะ #${orderId}` }
+            action: { type:'uri', label:'📋 ดูสถานะออเดอร์', uri: SHOP_URL }
           },
           { type:'button', style:'secondary', height:'sm',
             action: { type:'uri', label:'🛒 สั่งซื้อเพิ่ม', uri: SHOP_URL }
@@ -1375,9 +1373,7 @@ app.post('/webhook', async (req, res) => {
           type:'box', layout:'vertical', paddingAll:'md', paddingTop:'none',
           contents:[
             { type:'button', style:'primary', color:'#C0392B', height:'sm',
-              action:{ type:'postback', label:'📋 ดูรายละเอียด',
-                       data:`action=view_order&id=${o.order_id}`,
-                       displayText:`📋 ดูรายละเอียด #${o.order_id}` }
+              action:{ type:'uri', label:'📋 ดูรายละเอียด', uri: SHOP_URL }
             }
           ]
         }
