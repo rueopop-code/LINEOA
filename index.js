@@ -51,6 +51,13 @@ async function linePush(userId, messages) {
 }
 
 // ส่งให้แอดมินทุกคนพร้อมกัน (ไม่ fail ถ้ามีบางคนล้มเหลว)
+
+// ป้องกัน CUST-CUST- prefix ซ้ำ
+function safeCustId(customerId) {
+  if (!customerId) return null;
+  return customerId.startsWith('CUST-') ? customerId : `CUST-${customerId}`;
+}
+
 async function notifyAllAdmins(messages) {
   const uids = getAdminUids();
   if (!uids.length) {
@@ -1923,7 +1930,7 @@ app.get('/my-referral-rewards', async (req, res) => {
   let { lineUserId, customerId } = req.query;
   if (!lineUserId && customerId) {
     lineUserId = await findLineUserIdByCustomer(customerId).catch(() => null)
-              || `CUST-${customerId}`;
+              || safeCustId(customerId);
   }
   if (!lineUserId) return res.status(400).json({ error: 'customerId required' });
 
@@ -1954,7 +1961,7 @@ app.get('/my-referral', async (req, res) => {
   }
 
   // ถ้ายังไม่มี LINE UID → ใช้ CUST-prefix เป็น pseudo-ID (ทำงานได้โดยไม่ต้องผูก LINE)
-  const uid = lineUserId || `CUST-${customerId}`;
+  const uid = lineUserId || safeCustId(customerId);
 
   let { data: user } = await supabase
     .from('line_users')
@@ -2058,21 +2065,24 @@ app.post('/referral-visit', async (req, res) => {
 // ─── processReferralReward() ─────────────────────────────
 // เรียกจากภายใน /send-order หลังออเดอร์แรกของ B บันทึกสำเร็จ
 async function processReferralReward(lineUserId, orderId, customerId, refCodeFromOrder) {
-  const referredUid = lineUserId || (customerId ? `CUST-${customerId}` : null);
-  if (!referredUid) return;
-  try {
-    const { data: bUser } = await supabase
-      .from('line_users').select('user_id, referred_by, is_referred')
-      .eq('user_id', lineUserId).maybeSingle();
+  const referredUid = lineUserId || (customerId ? safeCustId(customerId) : null);
+  console.log(`🎁 processReferralReward START: referredUid=${referredUid} orderId=${orderId} refCode=${refCodeFromOrder}`);
+  if (!referredUid) { console.log('🎁 SKIP: no referredUid'); return; }
 
-    // หา refCode: 1) จาก order โดยตรง  2) จาก line_users  3) จาก ghost row  4) จาก DB
+  try {
+    // ป้องกันซ้ำ
+    const { data: existReward } = await supabase
+      .from('referral_rewards').select('id').eq('referred_uid', referredUid).maybeSingle();
+    if (existReward) { console.log(`🎁 SKIP: already rewarded (id=${existReward.id})`); return; }
+
+    // หา refCode
     let refCode = refCodeFromOrder || null;
 
     if (!refCode && lineUserId) {
       const { data: bUser } = await supabase
         .from('line_users').select('referred_by, is_referred')
         .eq('user_id', lineUserId).maybeSingle();
-      if (bUser?.is_referred) return;
+      if (bUser?.is_referred) { console.log('🎁 SKIP: B already referred'); return; }
       refCode = bUser?.referred_by;
 
       if (!refCode && customerId) {
@@ -2094,144 +2104,120 @@ async function processReferralReward(lineUserId, orderId, customerId, refCodeFro
       refCode = ord?.ref_code || null;
     }
 
-    if (!refCode) return;
-
-    // ป้องกัน race condition — ตรวจซ้ำที่ DB
-    const { data: existReward } = await supabase
-      .from('referral_rewards').select('id').eq('referred_uid', referredUid).maybeSingle();
-    if (existReward) return;
+    console.log(`🎁 refCode resolved: ${refCode}`);
+    if (!refCode) { console.log('🎁 SKIP: no refCode found'); return; }
 
     // หา referrer
-    const { data: referrer } = await supabase
+    const { data: referrer, error: rErr } = await supabase
       .from('line_users').select('user_id')
       .eq('referral_code', refCode).maybeSingle();
-    if (!referrer) return;
+    console.log(`🎁 referrer: ${referrer?.user_id} err=${rErr?.message}`);
+    if (!referrer) { console.log('🎁 SKIP: referrer not found'); return; }
 
-    // ── อ่าน config จาก shop_config (fallback → ENV → default) ──
-    const { data: cfgRows } = await supabase
-      .from('shop_config').select('key, value')
+    // อ่าน config
+    const { data: cfgRows } = await supabase.from('shop_config').select('key, value')
       .in('key', ['referral_reward_type','referral_reward_value','referral_max_rewards',
                   'referral_expire_days','referral_min_order']);
     const cfg = Object.fromEntries((cfgRows || []).map(r => [r.key, r.value]));
+    const discountType  = cfg.referral_reward_type  || 'fixed';
+    const discountValue = Number(cfg.referral_reward_value  || 50);
+    const maxRewards    = Number(cfg.referral_max_rewards   || 0);
+    const expireDays    = Number(cfg.referral_expire_days   || 30);
+    const minOrder      = Number(cfg.referral_min_order     || 0);
+    const expireDate    = expireDays > 0 ? new Date(Date.now() + expireDays * 86400000).toISOString() : null;
+    console.log(`🎁 config: type=${discountType} value=${discountValue} maxRewards=${maxRewards}`);
 
-    const discountType  = cfg.referral_reward_type  || (process.env.REFERRAL_REWARD_PERCENT ? 'percent' : 'fixed');
-    const discountValue = Number(cfg.referral_reward_value  || process.env.REFERRAL_REWARD_DISCOUNT || 50);
-    const maxRewards    = Number(cfg.referral_max_rewards   || 0); // 0 = ไม่จำกัด
-    const expireDays    = Number(cfg.referral_expire_days   || process.env.REFERRAL_REWARD_EXPIRE_DAYS || 30);
-    const minOrder      = Number(cfg.referral_min_order     || process.env.REFERRAL_REWARD_MIN_ORDER  || 0);
-    const expireDate    = expireDays > 0
-      ? new Date(Date.now() + expireDays * 86400000).toISOString()
-      : null;
-
-    // ── ตรวจ max rewards ของ referrer ──
+    // ตรวจ max rewards
     if (maxRewards > 0) {
-      const { count } = await supabase
-        .from('referral_rewards').select('id', { count: 'exact', head: true })
+      const { count } = await supabase.from('referral_rewards').select('id', { count:'exact', head:true })
         .eq('referrer_uid', referrer.user_id);
+      console.log(`🎁 referrer reward count: ${count}/${maxRewards}`);
       if ((count || 0) >= maxRewards) {
-        // ยังบันทึก is_referred=true ให้ B เพื่อกัน loop แต่ไม่สร้างคูปอง
         if (lineUserId) await supabase.from('line_users').update({ is_referred: true }).eq('user_id', lineUserId);
-        console.log(`ℹ️ referrer ${referrer.user_id.slice(0,8)}… ครบ ${maxRewards} สิทธิ์แล้ว — ไม่สร้างคูปอง`);
         await supabase.from('referral_rewards').insert([{
-          referrer_uid: referrer.user_id,
-          referred_uid: referredUid,
-          coupon_id   : null,
-          order_id    : orderId
+          referrer_uid: referrer.user_id, referred_uid: referredUid,
+          coupon_id: null, order_id: orderId
         }]).catch(() => {});
+        console.log('🎁 SKIP: max rewards reached');
         return;
       }
     }
 
-    const rewardCode = 'RWD-' + referrer.user_id.slice(1, 7).toUpperCase() + '-' +
+    const rewardCode = 'RWD-' + referrer.user_id.replace('CUST-','').slice(0, 6).toUpperCase() + '-' +
                        Math.random().toString(36).slice(2, 6).toUpperCase();
 
+    // สร้างคูปอง
+    console.log(`🎁 creating coupon: code=${rewardCode}`);
     const { data: newCoupon, error: cErr } = await supabase.from('coupons').insert([{
-      name          : '🎁 รางวัลชวนเพื่อน',
-      description   : 'ขอบคุณที่แนะนำเพื่อนมาซื้อ! ใช้ได้ครั้งเดียว',
-      code          : rewardCode,
-      discount_type : discountType,
-      discount_value: discountValue,
-      min_order     : minOrder,
-      apply_type    : 'manual',
-      condition_type: null,
-      start_date    : null,
-      end_date      : expireDate,
-      usage_limit   : 1,
-      used_count    : 0,
-      is_active     : true,
-      is_secret     : false,
-      secret_code   : null
+      name: 'รางวัลชวนเพื่อน', description: 'ขอบคุณที่แนะนำเพื่อนมาซื้อ! ใช้ได้ครั้งเดียว',
+      code: rewardCode, discount_type: discountType, discount_value: discountValue,
+      min_order: minOrder, apply_type: 'manual', condition_type: null,
+      start_date: null, end_date: expireDate, usage_limit: 1, used_count: 0,
+      is_active: true, is_secret: false, secret_code: null
     }]).select().single();
 
-    if (cErr) { console.error('referral coupon create error:', cErr.message); return; }
+    console.log(`🎁 coupon result: id=${newCoupon?.id} err=${cErr?.message}`);
+    if (cErr) { console.error('🎁 FAIL coupon create:', cErr.message); return; }
 
-    // บันทึก reward record
-    await supabase.from('referral_rewards').insert([{
-      referrer_uid: referrer.user_id,
-      referred_uid: referredUid,
-      coupon_id   : newCoupon.id,
-      order_id    : orderId
+    // บันทึก referral_rewards
+    const { error: rrErr } = await supabase.from('referral_rewards').insert([{
+      referrer_uid: referrer.user_id, referred_uid: referredUid,
+      coupon_id: newCoupon.id, order_id: orderId
     }]);
+    console.log(`🎁 referral_rewards insert: err=${rrErr?.message}`);
 
-    // อัปเดต B → is_referred = true (ป้องกันซ้ำถาวร)
-    await supabase.from('line_users').update({ is_referred: true }).eq('user_id', lineUserId);
+    if (lineUserId) await supabase.from('line_users').update({ is_referred: true }).eq('user_id', lineUserId).catch(() => {});
 
     // แจ้ง A ทาง LINE
     if (process.env.LINE_TOKEN) {
-      // หา LINE UID จริงของ A (กรณี referrer.user_id เป็น CUST- prefix)
       let pushUid = referrer.user_id;
       if (pushUid.startsWith('CUST-')) {
-        const custId = pushUid.slice(5); // ตัด CUST- ออก
-        const realUid = await findLineUserIdByCustomer(custId).catch(() => null);
+        const custId = pushUid.slice(5).replace(/^CUST-/,''); // ป้องกัน double CUST-
+        const realUid = await findLineUserIdByCustomer(custId).catch(() => null)
+                     || await findLineUserIdByCustomer(`CUST-${custId}`).catch(() => null);
+        console.log(`🎁 resolved pushUid: ${custId} → ${realUid}`);
         if (realUid) pushUid = realUid;
       }
 
       if (pushUid && !pushUid.startsWith('CUST-')) {
-        const discStr   = discountType === 'percent' ? `${discountValue}%` : `฿${discountValue.toLocaleString()}`;
+        const discStr   = discountType === 'percent' ? `${discountValue}%` : `${discountValue} บาท`;
         const expireStr = expireDays > 0 ? `ใช้ได้ภายใน ${expireDays} วัน` : 'ไม่มีวันหมดอายุ';
         const shopUrl   = process.env.SHOP_URL || 'https://lineoa-u0v2.onrender.com/';
         const flex = {
           type: 'flex', altText: `คุณได้รับคูปองรางวัลชวนเพื่อน ลด ${discStr}!`,
           contents: {
             type: 'bubble',
-            hero: {
-              type: 'box', layout: 'vertical', paddingAll: 'lg', backgroundColor: '#E8593C',
-              contents: [{ type: 'text', text: 'รางวัลชวนเพื่อน!', weight: 'bold', size: 'xl', align: 'center', color: '#ffffff' }]
-            },
-            body: {
-              type: 'box', layout: 'vertical', spacing: 'md',
-              contents: [
-                { type: 'text', text: 'เพื่อนของคุณสั่งซื้อครั้งแรกแล้ว!', size: 'sm', color: '#666666', wrap: true },
-                { type: 'separator' },
-                { type: 'text', text: `ส่วนลด: ${discStr}`, weight: 'bold', size: 'lg', color: '#333333' },
-                { type: 'box', layout: 'vertical', backgroundColor: '#FFF5F0', paddingAll: 'md', cornerRadius: 'md',
-                  contents: [
-                    { type: 'text', text: 'โค้ดคูปองของคุณ', size: 'xs', color: '#888888' },
-                    { type: 'text', text: rewardCode, weight: 'bold', size: 'xl', color: '#E8593C', align: 'center' }
+            hero: { type:'box', layout:'vertical', paddingAll:'lg', backgroundColor:'#E8593C',
+              contents:[{ type:'text', text:'รางวัลชวนเพื่อน!', weight:'bold', size:'xl', align:'center', color:'#ffffff' }] },
+            body: { type:'box', layout:'vertical', spacing:'md',
+              contents:[
+                { type:'text', text:'เพื่อนของคุณสั่งซื้อครั้งแรกแล้ว!', size:'sm', color:'#666666', wrap:true },
+                { type:'separator' },
+                { type:'text', text:`ส่วนลด: ${discStr}`, weight:'bold', size:'lg', color:'#333333' },
+                { type:'box', layout:'vertical', backgroundColor:'#FFF5F0', paddingAll:'md', cornerRadius:'md',
+                  contents:[
+                    { type:'text', text:'โค้ดคูปองของคุณ', size:'xs', color:'#888888' },
+                    { type:'text', text:rewardCode, weight:'bold', size:'xl', color:'#E8593C', align:'center' }
                   ]},
-                { type: 'text', text: expireStr, size: 'xs', color: '#999999', align: 'center' }
-              ]
-            },
-            footer: {
-              type: 'box', layout: 'vertical',
-              contents: [{ type: 'button', style: 'primary', color: '#E8593C',
-                action: { type: 'uri', label: 'ไปช้อปเลย', uri: shopUrl } }]
-            }
+                { type:'text', text:expireStr, size:'xs', color:'#999999', align:'center' }
+              ]},
+            footer: { type:'box', layout:'vertical',
+              contents:[{ type:'button', style:'primary', color:'#E8593C',
+                action:{ type:'uri', label:'ไปช้อปเลย', uri:shopUrl } }] }
           }
         };
         await linePush(pushUid, [flex]);
-        console.log(`🎁 referral reward sent to A → ${pushUid.slice(0,12)}…`);
+        console.log(`🎁 LINE push OK → ${pushUid.slice(0,12)}…`);
       } else {
-        console.log(`ℹ️ referrer ไม่มี LINE UID จริง — ไม่ได้ส่ง push`);
+        console.log(`🎁 SKIP push: referrer has no real LINE UID (pushUid=${pushUid})`);
       }
     }
 
-    console.log(`✅ referral reward: A=${referrer.user_id.slice(0,8)}… ← B=${referredUid.slice(0,12)}…`);
+    console.log(`✅ referral reward DONE: A=${referrer.user_id.slice(0,12)}… ← B=${referredUid.slice(0,12)}…`);
   } catch (e) {
-    console.warn('processReferralReward error:', e.message);
+    console.error('🎁 processReferralReward ERROR:', e.message, e.stack?.slice(0,200));
   }
 }
-
 // ─── GET /referral-stats (admin) ──────────────────────────
 app.get('/referral-stats', async (req, res) => {
   const { data, error } = await supabase
