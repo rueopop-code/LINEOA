@@ -1183,19 +1183,23 @@ app.post('/webhook', async (req, res) => {
     const phoneOnly = normalizePhone(rawText);
     if (phoneOnly.length >= 8 && phoneOnly.length <= 12 && /^\d+$/.test(phoneOnly)) {
       // จับคู่ออเดอร์ที่มีเบอร์นี้ → set line_user_id
-      // ใช้ last 8 หลักเป็น pre-filter ใน Supabase (รองรับเบอร์มีขีด/เว้นวรรค/ไม่มี 0 นำหน้า)
-      const last8 = phoneOnly.slice(-8);
+      // ดึงเฉพาะออเดอร์ที่มีเบอร์ (ไม่ limit — ป้องกัน miss ออเดอร์เก่า)
       const { data: matched } = await supabase.from('orders')
         .select('order_id, phone, customer_name, status, total, customer_id')
-        .ilike('phone', `%${last8}%`)
+        .not('phone', 'is', null)
         .order('created_at', { ascending: false });
 
-      // ตรวจสอบเบอร์แบบละเอียด: รองรับ 0 นำหน้า/ไม่นำหน้า และรูปแบบต่างๆ
+      // เปรียบเทียบด้วย startsWith/endsWith — รองรับทุกกรณี:
+      // • ตรงเป๊ะ           : "0812345678" vs "0812345678" ✅
+      // • มี/ไม่มี 0 นำหน้า : "0812345678" vs "812345678"  ✅ (endsWith)
+      // • หลักต่างกัน 1 หลัก: "1234567890" vs "123456789"  ✅ (startsWith)
       const matches = (matched || []).filter(o => {
         const stored = normalizePhone(o.phone);
-        return stored === phoneOnly ||           // ตรงเป๊ะ
-               stored === '0' + phoneOnly ||     // DB มี 0 นำหน้า แต่ user พิมพ์ไม่มี
-               '0' + stored === phoneOnly;       // user พิมพ์มี 0 นำหน้า แต่ DB ไม่มี
+        if (!stored || stored.length < 8) return false;
+        if (stored === phoneOnly) return true;
+        const shorter = stored.length < phoneOnly.length ? stored : phoneOnly;
+        const longer  = stored.length < phoneOnly.length ? phoneOnly : stored;
+        return longer.startsWith(shorter) || longer.endsWith(shorter);
       });
 
       if (matches.length) {
