@@ -504,7 +504,8 @@ app.post('/send-order', async (req, res) => {
     customerId, customerName, lineName, phone, address, note,
     items, total, orderType, extra,
     mapLat, mapLng,             // 📍 พิกัด GPS
-    couponId, discountAmount    // 🎟️ ส่วนลด/คูปอง
+    couponId, discountAmount,    // 🎟️ ส่วนลด/คูปอง
+    refCode                        // 🎁 referral code
   } = req.body;
 
   if (!customerId || !customerName || !items?.length || total == null)
@@ -753,6 +754,128 @@ app.post('/send-order', async (req, res) => {
     .then(({ error: e }) => {
       if (!e) console.log(`🗑️ cleaned up LINK-${customerId.slice(0,10)}… ghost`);
     });
+
+  // ── 🎁 Referral Reward ─────────────────────────────────
+  // ถ้ามี refCode และนี่คือออเดอร์แรกของลูกค้า → ให้คูปองกับคนชวน
+  if (refCode) {
+    try {
+      // ตรวจว่าเป็นออเดอร์แรกของลูกค้านี้ไหม (ไม่นับ ghost orders)
+      const { data: prevOrders } = await supabase
+        .from('orders').select('id').eq('customer_id', customerId)
+        .not('order_id', 'like', 'LINE-%').not('order_id', 'like', 'LINK-%')
+        .neq('order_id', order_id).limit(1);
+
+      const isFirstOrder = !prevOrders?.length;
+
+      if (isFirstOrder) {
+        // หา referral owner
+        const { data: ref } = await supabase
+          .from('referrals').select('id, customer_id').eq('ref_code', refCode).maybeSingle();
+
+        if (ref && ref.customer_id !== customerId) {
+          // ตรวจว่าคนชวนนี้เคยได้ reward จากคนนี้ยังไม่ได้ (ป้องกัน duplicate)
+          const { data: existingReward } = await supabase
+            .from('referral_rewards').select('id')
+            .eq('referral_id', ref.id).eq('order_id', order_id).maybeSingle();
+
+          if (!existingReward) {
+            // อ่าน referral config
+            const { data: cfgRow } = await supabase
+              .from('settings').select('value').eq('key', 'referral_config').maybeSingle();
+            const cfg = cfgRow?.value || {};
+            const rewardType  = cfg.referral_reward_type  || 'fixed';
+            const rewardValue = parseFloat(cfg.referral_reward_value) || 50;
+            const expireDays  = parseInt(cfg.referral_expire_days)    || 30;
+            const maxRewards  = parseInt(cfg.referral_max_rewards)    || 0;
+
+            // ตรวจ max_rewards ต่อคนชวน
+            let canReward = true;
+            if (maxRewards > 0) {
+              const { count } = await supabase
+                .from('referral_rewards').select('id', { count: 'exact', head: true })
+                .eq('referral_id', ref.id);
+              if ((count || 0) >= maxRewards) canReward = false;
+            }
+
+            if (canReward) {
+              // สร้างคูปองสำหรับคนชวน
+              const expireDate = new Date();
+              expireDate.setDate(expireDate.getDate() + expireDays);
+              const cpnCode = 'RWD-' + Date.now().toString(36).toUpperCase().slice(-6) + '-' +
+                              Math.random().toString(36).slice(2,6).toUpperCase();
+
+              const { data: newCoupon } = await supabase
+                .from('coupons')
+                .insert({
+                  name:           'รางวัลชวนเพื่อน',
+                  description:    'ขอบคุณที่แนะนำเพื่อนมาซื้อ! ใช้ได้ครั้งเดียว',
+                  discount_type:  rewardType,
+                  discount_value: rewardValue,
+                  apply_type:     'manual',
+                  code:           cpnCode,
+                  usage_limit:    1,
+                  used_count:     0,
+                  end_date:       expireDate.toISOString(),
+                  is_active:      true,
+                  is_secret:      false,
+                  condition_type: null,
+                  min_order:      0
+                })
+                .select('id,code').single();
+
+              if (newCoupon) {
+                // บันทึก referral_reward
+                await supabase.from('referral_rewards').insert({
+                  referral_id: ref.id,
+                  order_id:    order_id,
+                  coupon_id:   newCoupon.id
+                });
+
+                // แจ้งเตือนคนชวนผ่าน LINE (ถ้ามี LINE UID)
+                if (process.env.LINE_TOKEN) {
+                  const { data: refUser } = await supabase
+                    .from('line_users').select('user_id')
+                    .eq('customer_id', ref.customer_id).maybeSingle()
+                    .catch(() => ({ data: null }));
+
+                  // fallback: ค้นจาก orders
+                  let refLineUid = refUser?.user_id;
+                  if (!refLineUid) {
+                    const { data: refOrder } = await supabase
+                      .from('orders').select('line_user_id')
+                      .eq('customer_id', ref.customer_id)
+                      .not('line_user_id', 'is', null).limit(1)
+                      .maybeSingle();
+                    refLineUid = refOrder?.line_user_id;
+                  }
+
+                  if (refLineUid) {
+                    const discStr = rewardType === 'percent'
+                      ? `${rewardValue}%` : `฿${rewardValue.toLocaleString()}`;
+                    const expireStr = expireDate.toLocaleDateString('th-TH', {
+                      day:'numeric', month:'long', year:'numeric', timeZone:'Asia/Bangkok'
+                    });
+                    await linePush(refLineUid, [{
+                      type: 'text',
+                      text: `🎁 ยินดีด้วย! เพื่อนของคุณสั่งซื้อครั้งแรกแล้ว\n` +
+                            `คุณได้รับคูปองส่วนลด ${discStr}\n` +
+                            `📋 โค้ด: ${newCoupon.code}\n` +
+                            `⏰ ใช้ได้ถึง: ${expireStr}\n` +
+                            `นำโค้ดไปกรอกตอนสั่งซื้อได้เลยค่ะ 🛍️`
+                    }]).catch(e => console.warn('referral notify failed:', e.message));
+                  }
+                }
+
+                console.log(`🎁 referral reward: ${ref.customer_id} ← ${cpnCode} (เพื่อนสั่ง ${order_id})`);
+              }
+            }
+          }
+        }
+      }
+    } catch(e) {
+      console.warn('referral reward error (non-fatal):', e.message);
+    }
+  }
 
   res.json({ success: true, orderId: order_id });
 });
