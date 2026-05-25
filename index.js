@@ -856,20 +856,55 @@ app.post('/send-order', async (req, res) => {
 
                 // แจ้งเตือนคนชวนผ่าน LINE (ถ้ามี LINE UID)
                 if (process.env.LINE_TOKEN) {
+                  let refLineUid = null;
+
+                  // [1] ค้นจาก line_users.customer_id (ตรงที่สุด)
                   const { data: refUser } = await supabase
                     .from('line_users').select('user_id')
                     .eq('customer_id', ref.customer_id).maybeSingle()
                     .catch(() => ({ data: null }));
+                  refLineUid = refUser?.user_id || null;
+                  console.log(`🔍 [referral] line_users lookup → ${refLineUid || 'ไม่พบ'}`);
 
-                  // fallback: ค้นจาก orders
-                  let refLineUid = refUser?.user_id;
+                  // [2] fallback: orders.line_user_id ที่ผูกไว้แล้ว
                   if (!refLineUid) {
                     const { data: refOrder } = await supabase
                       .from('orders').select('line_user_id')
                       .eq('customer_id', ref.customer_id)
                       .not('line_user_id', 'is', null).limit(1)
                       .maybeSingle();
-                    refLineUid = refOrder?.line_user_id;
+                    refLineUid = refOrder?.line_user_id || null;
+                    console.log(`🔍 [referral] orders lookup → ${refLineUid || 'ไม่พบ'}`);
+                  }
+
+                  // [3] fallback: ค้นจาก line_users ผ่าน customer_name ของ A
+                  if (!refLineUid) {
+                    const { data: refAnyOrder } = await supabase
+                      .from('orders').select('customer_name, line_name')
+                      .eq('customer_id', ref.customer_id).limit(1).maybeSingle();
+                    const refName = refAnyOrder?.line_name || refAnyOrder?.customer_name;
+                    if (refName) {
+                      const { data: luByName } = await supabase
+                        .from('line_users').select('user_id')
+                        .eq('display_name', refName).limit(1).maybeSingle()
+                        .catch(() => ({ data: null }));
+                      refLineUid = luByName?.user_id || null;
+                      console.log(`🔍 [referral] display_name("${refName}") lookup → ${refLineUid || 'ไม่พบ'}`);
+                    }
+                  }
+
+                  // [4] fallback: ค้นจาก line_users ผ่าน LINK ghost order
+                  if (!refLineUid) {
+                    const { data: ghostOrder } = await supabase
+                      .from('orders').select('line_user_id')
+                      .like('order_id', `LINK-${ref.customer_id.slice(0,20)}%`)
+                      .not('line_user_id', 'is', null).limit(1).maybeSingle();
+                    refLineUid = ghostOrder?.line_user_id || null;
+                    console.log(`🔍 [referral] LINK ghost lookup → ${refLineUid || 'ไม่พบ'}`);
+                  }
+
+                  if (!refLineUid) {
+                    console.warn(`⚠️ [referral] หา LINE UID ของ A (${ref.customer_id}) ไม่ได้ — คูปองบันทึกไว้แล้ว จะแจ้งเมื่อ A แชทกับ OA ครั้งถัดไป`);
                   }
 
                   if (refLineUid) {
