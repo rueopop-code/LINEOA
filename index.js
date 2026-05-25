@@ -117,7 +117,8 @@ function statusLabel(s) {
 }
 
 function buildAdminMsg(order) {
-  const { customer_name, items, total, order_id, created_at, phone, address, note } = order;
+  const { customer_name, items, total, order_id, created_at, phone, address, note,
+          coupon_code, discount_amount, ref_code } = order;
   const date = new Date(created_at).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short', timeZone:'Asia/Bangkok' });
   let msg = `🛒 ออเดอร์ใหม่! #${order_id}\n`;
   msg += `${'─'.repeat(24)}\n`;
@@ -125,13 +126,19 @@ function buildAdminMsg(order) {
   if (phone)   msg += `📞 ${phone}\n`;
   if (address) msg += `📍 ${address}\n`;
   msg += `📅 ${date}\n`;
+  if (ref_code) msg += `🎁 ชวนเพื่อน (${ref_code})\n`;
   msg += `${'─'.repeat(24)}\n`;
   (items || []).forEach(i => {
     msg += `${i.emoji || '•'} ${i.name}\n`;
     msg += `   ${i.qty} × ฿${i.price.toLocaleString()} = ฿${(i.qty * i.price).toLocaleString()}\n`;
   });
   msg += `${'─'.repeat(24)}\n`;
-  msg += `💰 ยอดรวม: ฿${total.toLocaleString()}\n`;
+  if (coupon_code && discount_amount > 0) {
+    const subtotal = total + Number(discount_amount);
+    msg += `💲 ราคาก่อนลด: ฿${subtotal.toLocaleString()}\n`;
+    msg += `🎟️ คูปอง [${coupon_code}]: -฿${Number(discount_amount).toLocaleString()}\n`;
+  }
+  msg += `💰 ยอดสุทธิ: ฿${total.toLocaleString()}\n`;
   if (note) msg += `\n📝 ${note}\n`;
   msg += `\n📲 ติดต่อลูกค้าผ่านหน้า Admin Panel ได้เลยค่ะ`;
   return msg;
