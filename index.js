@@ -1237,8 +1237,14 @@ app.post('/webhook', async (req, res) => {
         }
 
         // ใช้ linePush แทน lineReply — ไม่หมดอายุแม้ Render cold start ช้า
-        await linePush(userId, replyMessages)
-          .catch(e => console.warn('push phone-success failed:', e.message));
+        // ถ้า Flex พัง → fallback ส่งแค่ข้อความ text อย่างน้อยลูกค้าได้รับการแจ้ง
+        try {
+          await linePush(userId, replyMessages);
+        } catch (e) {
+          console.warn('push with flex failed:', e.message, '— retrying text only');
+          await linePush(userId, [replyMessages[0]])
+            .catch(e2 => console.warn('push text-only failed:', e2.message));
+        }
         continue;
       } else {
         await linePush(userId, [{
