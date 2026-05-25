@@ -2743,11 +2743,7 @@ function toggleManualInput() {
 
 function renderCouponPicker(coupons, tot) {
   const list = document.getElementById('cpnPickerList');
-  if (!coupons.length) {
-    list.innerHTML = '<div style="text-align:center;color:#aaa;padding:24px;"><div style="font-size:32px;margin-bottom:8px;">🎟️</div><div style="font-size:13px;">ไม่มีคูปองที่ใช้ได้ตอนนี้</div></div>';
-    return;
-  }
-  // เพิ่ม option "กรอกโค้ดเอง" ท้ายสุด
+  // เพิ่ม option "กรอกโค้ดเอง" ท้ายสุดเสมอ (แม้ไม่มีคูปองในระบบ)
   const manualEntry = `<div class="cpn-pick-item" style="border-style:dashed;background:#fafafa;" onclick="closeCouponPicker();document.getElementById('manualCpnWrap').style.display='block';document.getElementById('cpnCodeInput').focus();">
     <div class="cpn-pick-top">
       <div class="cpn-pick-badge" style="background:#888;">🔑 กรอกโค้ด</div>
@@ -2755,6 +2751,10 @@ function renderCouponPicker(coupons, tot) {
     </div>
     <div class="cpn-pick-desc">กรอกโค้ดที่ได้รับมาเพื่อรับส่วนลด</div>
   </div>`;
+  if (!coupons.length) {
+    list.innerHTML = manualEntry;
+    return;
+  }
 
   list.innerHTML = coupons.map(c => {
     const disc = calcDiscountAmount(c, tot);
@@ -2775,7 +2775,7 @@ function renderCouponPicker(coupons, tot) {
       </div>
       <div class="cpn-pick-desc">${couponDescription(c)}</div>
       <div class="cpn-pick-meta">
-        ${isAuto ? '<span class="cpn-pick-tag" style="background:#e3f2fd;color:#1565c0;">⚡ อัตโนมัติ</span>' : '<span class="cpn-pick-tag" style="background:#f3e5f5;color:#6a1b9a;">🔧 โค้ด: '+c.code+'</span>'}
+        ${isAuto ? '<span class="cpn-pick-tag" style="background:#e3f2fd;color:#1565c0;">⚡ อัตโนมัติ</span>' : (c.code ? '<span class="cpn-pick-tag" style="background:#f3e5f5;color:#6a1b9a;">🔧 โค้ด: '+c.code+'</span>' : '')}
         ${minStr ? `<span class="cpn-pick-tag" style="background:#fff8e1;color:#E65100;">${minStr}</span>` : ''}
         ${expiry ? `<span class="cpn-pick-tag" style="background:#f5f5f5;color:#888;">⏰ ${expiry}</span>` : ''}
         ${!ok && c.min_order > 0 && tot < c.min_order ? `<span class="cpn-pick-tag" style="background:#ffebee;color:#c62828;">ยังไม่ถึงขั้นต่ำ</span>` : ''}
@@ -2815,26 +2815,28 @@ async function applyPickedCoupon() {
 
   closeCouponPicker();
 
-  if (c.apply_type === 'auto') {
-    // auto coupon → set directly
-    _manualDiscount = c;
-    document.getElementById('cpnCodeInput').value = '';
-    const input  = document.getElementById('cpnCodeInput');
-    const result = document.getElementById('cpnResult');
-    const btn    = document.getElementById('cpnApplyBtn');
-    input.className = 'cpn-input-field success';
-    const tot  = cart.reduce((s,i,idx) => s + getCartLinePrice(idx) * i.qty, 0);
-    const disc = calcDiscountAmount(c, tot);
-    result.className = 'cpn-result ok';
-    result.innerHTML = buildCouponCard(c, disc);
-    result.style.display = 'block';
-    btn.textContent = '✕ ยกเลิก';
-    document.getElementById('manualCpnWrap').classList.add('active');
-  } else {
-    // manual coupon → auto-fill code and apply
-    document.getElementById('cpnCodeInput').value = c.code || '';
-    await applyCouponCode();
-  }
+  // ทั้ง auto และ manual ที่เลือกจาก picker → set โดยตรง ไม่ต้อง validate ซ้ำ
+  _manualDiscount = c;
+
+  const input  = document.getElementById('cpnCodeInput');
+  const result = document.getElementById('cpnResult');
+  const btn    = document.getElementById('cpnApplyBtn');
+  const wrap   = document.getElementById('manualCpnWrap');
+
+  const tot  = cart.reduce((s,i,idx) => s + getCartLinePrice(idx) * i.qty, 0);
+  const disc = calcDiscountAmount(c, tot);
+
+  // แสดงโค้ด (ถ้ามี) หรือชื่อคูปอง (ถ้า auto ไม่มีโค้ด)
+  input.value = c.code || c.name || '';
+  input.className = 'cpn-input-field success';
+
+  result.className = 'cpn-result ok';
+  result.innerHTML = buildCouponCard(c, disc);
+  result.style.display = 'block';
+
+  btn.textContent = '✕ ยกเลิก';
+  if (wrap) wrap.classList.add('active');
+
   refreshDiscountUI();
 }
 

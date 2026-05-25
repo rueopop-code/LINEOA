@@ -1936,18 +1936,18 @@ app.get('/my-referral-rewards', async (req, res) => {
 });
 
 // ── GET /available-coupons ───────────────────────────────────
-// ดึงรายการ manual coupons ที่ลูกค้าใช้ได้ (สำหรับ coupon picker)
+// ดึงรายการคูปองทั้งหมด (auto + manual) ที่ลูกค้าใช้ได้ใน picker
 app.get('/available-coupons', async (req, res) => {
   const { customerId, orderTotal } = req.query;
   const total = parseFloat(orderTotal) || 0;
   const now   = new Date().toISOString();
 
-  // ดึง manual coupons ทั้งหมดที่ active
+  // ดึงทั้ง auto และ manual ที่ active (ยกเว้น secret)
   const { data: coupons, error } = await supabase
     .from('coupons')
     .select('*')
     .eq('is_active', true)
-    .eq('apply_type', 'manual')
+    .neq('is_secret', true)
     .or(`start_date.is.null,start_date.lte.${now}`)
     .or(`end_date.is.null,end_date.gte.${now}`)
     .order('discount_value', { ascending: false });
