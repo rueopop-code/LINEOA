@@ -1504,13 +1504,14 @@ app.post('/webhook', async (req, res) => {
     // ✨ ไม่ตอบ auto-reply — ปล่อยให้แอดมินตอบเอง ลูกค้าจะไม่เห็น "ได้รับข้อความแล้ว..." spam
     // (ถ้าลูกค้าอยากเปิดร้าน/ดูออเดอร์ → กด Rich Menu หรือพิมพ์ keyword)
     } catch (evErr) {
-      // ถ้า event ใดๆ crash → log แล้วข้ามไป event ถัดไป ไม่ให้กระทบคนอื่น
-      console.error('⚠️ webhook event error:', evErr.message, '| userId:', userId, '| type:', ev.type);
-      // ลอง push error แบบง่ายๆ ให้ลูกค้าทราบ (best-effort)
+      // ถ้า event ใดๆ crash → log + push error จริงๆ ให้เห็น
+      const errMsg = evErr?.message || String(evErr);
+      console.error('⚠️ webhook event error:', errMsg, '| userId:', userId, '| type:', ev.type, '| stack:', evErr?.stack);
       if (userId) {
-        linePush(userId, [{ type:'text', text:'❌ ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้งค่ะ' }])
-          .catch(() => {});
+        linePush(userId, [{ type:'text', text:`❌ Error: ${errMsg.slice(0,200)}` }]).catch(() => {});
       }
+      // แจ้ง admin ด้วยเพื่อ debug
+      notifyAllAdmins([{ type:'text', text:`⚠️ Webhook error\nUser: ${userId}\nError: ${errMsg.slice(0,300)}` }]).catch(() => {});
     }
   }
 });
