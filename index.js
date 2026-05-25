@@ -1817,6 +1817,201 @@ app.patch('/orders/:orderId/status', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════
+//  REFERRAL SYSTEM
+// ═══════════════════════════════════════════════════════════
+
+// ── GET /referral-config ────────────────────────────────────
+// อ่าน config ระบบชวนเพื่อน (แอดมิน)
+app.get('/referral-config', async (req, res) => {
+  const { data, error } = await supabase
+    .from('settings')
+    .select('value')
+    .eq('key', 'referral_config')
+    .maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  const defaults = {
+    referral_reward_type : 'fixed',
+    referral_reward_value: 50,
+    referral_max_rewards : 0,
+    referral_expire_days : 30
+  };
+  res.json(data ? { ...defaults, ...data.value } : defaults);
+});
+
+// ── POST /referral-config ───────────────────────────────────
+// บันทึก config ระบบชวนเพื่อน (แอดมิน)
+app.post('/referral-config', async (req, res) => {
+  const cfg = {
+    referral_reward_type : req.body.referral_reward_type  || 'fixed',
+    referral_reward_value: parseFloat(req.body.referral_reward_value) || 50,
+    referral_max_rewards : parseInt(req.body.referral_max_rewards)    || 0,
+    referral_expire_days : parseInt(req.body.referral_expire_days)    || 30,
+  };
+  const { error } = await supabase
+    .from('settings')
+    .upsert({ key: 'referral_config', value: cfg }, { onConflict: 'key' });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true, config: cfg });
+});
+
+// ── GET /my-referral ─────────────────────────────────────────
+// สร้าง/ดึงลิงก์ referral ของลูกค้า
+app.get('/my-referral', async (req, res) => {
+  const { customerId } = req.query;
+  if (!customerId) return res.status(400).json({ error: 'customerId required' });
+
+  // ดึงหรือสร้าง referral record
+  let { data: ref } = await supabase
+    .from('referrals')
+    .select('ref_code')
+    .eq('customer_id', customerId)
+    .maybeSingle();
+
+  if (!ref) {
+    const ref_code = 'REF' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2,5).toUpperCase();
+    const { data: newRef, error } = await supabase
+      .from('referrals')
+      .insert({ customer_id: customerId, ref_code })
+      .select('ref_code')
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    ref = newRef;
+  }
+
+  const baseUrl = process.env.SHOP_URL || `https://${req.headers.host}`;
+  const shareUrl = `${baseUrl.replace(/\/$/, '')}/?ref=${ref.ref_code}`;
+  res.json({ refCode: ref.ref_code, shareUrl });
+});
+
+// ── POST /referral-visit ─────────────────────────────────────
+// บันทึกการเยี่ยมชมจากลิงก์ referral
+app.post('/referral-visit', async (req, res) => {
+  const { customerId, refCode } = req.body;
+  if (!refCode) return res.status(400).json({ error: 'refCode required' });
+
+  // หา referral owner
+  const { data: ref } = await supabase
+    .from('referrals')
+    .select('id, customer_id')
+    .eq('ref_code', refCode)
+    .maybeSingle();
+
+  if (!ref) return res.status(404).json({ error: 'ไม่พบ referral code นี้' });
+
+  // บันทึก visit (ถ้ายังไม่เคยบันทึก customerId นี้)
+  if (customerId && customerId !== ref.customer_id) {
+    await supabase
+      .from('referral_visits')
+      .upsert(
+        { referral_id: ref.id, visitor_customer_id: customerId },
+        { onConflict: 'referral_id,visitor_customer_id', ignoreDuplicates: true }
+      );
+  }
+
+  res.json({ success: true });
+});
+
+// ── GET /my-referral-rewards ─────────────────────────────────
+// ดูรายการคูปองที่ได้จากการชวนเพื่อน
+app.get('/my-referral-rewards', async (req, res) => {
+  const { customerId } = req.query;
+  if (!customerId) return res.status(400).json({ error: 'customerId required' });
+
+  const { data: ref } = await supabase
+    .from('referrals')
+    .select('id')
+    .eq('customer_id', customerId)
+    .maybeSingle();
+
+  if (!ref) return res.json({ rewards: [] });
+
+  const { data: rewards, error } = await supabase
+    .from('referral_rewards')
+    .select('*, coupons(*)')
+    .eq('referral_id', ref.id)
+    .order('created_at', { ascending: false });
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ rewards: rewards || [] });
+});
+
+// ── GET /available-coupons ───────────────────────────────────
+// ดึงรายการ manual coupons ที่ลูกค้าใช้ได้ (สำหรับ coupon picker)
+app.get('/available-coupons', async (req, res) => {
+  const { customerId, orderTotal } = req.query;
+  const total = parseFloat(orderTotal) || 0;
+  const now   = new Date().toISOString();
+
+  // ดึง manual coupons ทั้งหมดที่ active
+  const { data: coupons, error } = await supabase
+    .from('coupons')
+    .select('*')
+    .eq('is_active', true)
+    .eq('apply_type', 'manual')
+    .or(`start_date.is.null,start_date.lte.${now}`)
+    .or(`end_date.is.null,end_date.gte.${now}`)
+    .order('discount_value', { ascending: false });
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  // ตรวจ first_order
+  let isFirstOrder = false;
+  if (customerId) {
+    const { data: prevOrders } = await supabase
+      .from('orders').select('id').eq('customer_id', customerId)
+      .not('order_id', 'like', 'LINE-%').not('order_id', 'like', 'LINK-%').limit(1);
+    isFirstOrder = !prevOrders?.length;
+  }
+
+  // กรองตาม condition + usage_limit
+  const eligible = (coupons || []).filter(c => {
+    if (c.usage_limit !== null && (c.used_count || 0) >= c.usage_limit) return false;
+    if (c.condition_type === 'first_order') return isFirstOrder;
+    return true;
+  });
+
+  // คำนวณ discount ให้แต่ละ coupon
+  const result = eligible.map(c => ({
+    ...c,
+    discountAmount: calcDiscount(c, total)
+  }));
+
+  res.json({ coupons: result });
+});
+
+// ── POST /reveal-coupon ──────────────────────────────────────
+// เปิดเผยคูปองลับด้วย secretCode
+app.post('/reveal-coupon', async (req, res) => {
+  const { secretCode, customerId, orderTotal } = req.body;
+  if (!secretCode) return res.status(400).json({ error: 'กรุณากรอกโค้ดลับ' });
+
+  const total = parseFloat(orderTotal) || 0;
+  const now   = new Date().toISOString();
+
+  const { data: coupon, error } = await supabase
+    .from('coupons')
+    .select('*')
+    .eq('is_active', true)
+    .eq('is_secret', true)
+    .ilike('secret_code', secretCode.trim())
+    .or(`start_date.is.null,start_date.lte.${now}`)
+    .or(`end_date.is.null,end_date.gte.${now}`)
+    .maybeSingle();
+
+  if (error) return res.status(500).json({ error: error.message });
+  if (!coupon) return res.status(404).json({ error: 'ไม่พบโค้ดลับนี้ หรือหมดอายุแล้ว' });
+
+  if (coupon.usage_limit !== null && (coupon.used_count || 0) >= coupon.usage_limit)
+    return res.status(400).json({ error: 'คูปองนี้ถูกใช้ครบจำนวนแล้ว' });
+
+  if (coupon.min_order > 0 && total < coupon.min_order)
+    return res.status(400).json({ error: `ต้องสั่งขั้นต่ำ ฿${coupon.min_order.toLocaleString()} ถึงจะใช้คูปองนี้ได้` });
+
+  const discountAmount = calcDiscount(coupon, total);
+  res.json({ success: true, coupon, discountAmount });
+});
+
+// ═══════════════════════════════════════════════════════════
 //  STATIC FILES
 // ═══════════════════════════════════════════════════════════
 //  หน้าร้านลูกค้า อยู่ที่ index.html (อยู่บน Railway/GitHub)
