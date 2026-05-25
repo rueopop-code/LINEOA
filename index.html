@@ -4562,7 +4562,10 @@ function shareReferralToLine() {
   // enable ปุ่มทันทีที่กด (กันกรณี disabled ค้าง)
   const btn = document.getElementById('referralShareBtn');
   if (btn) { btn.style.opacity = '1'; btn.disabled = false; }
-  window.open(`https://line.me/R/msg/text/?${encodeURIComponent('👋 มาช้อปด้วยกันเลย! ใช้ลิงก์ของฉันรับส่วนลด\n' + url)}`, '_blank');
+  const msg = '👋 เพื่อนชวนมาช้อปด้วยกัน!\n' +
+             '✨ กดลิงก์นี้ แอด LINE OA + ช้อปได้เลย\n' +
+             '🎁 ช้อปครั้งแรกแล้วเพื่อนจะได้รับคูปองส่วนลดทันที!\n\n' + url;
+  window.open(`https://line.me/R/msg/text/?${encodeURIComponent(msg)}`, '_blank');
 }
 
 // ══════════════════════════════════════════════════════════

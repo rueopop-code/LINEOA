@@ -133,10 +133,11 @@ function buildAdminMsg(order) {
     msg += `   ${i.qty} × ฿${i.price.toLocaleString()} = ฿${(i.qty * i.price).toLocaleString()}\n`;
   });
   msg += `${'─'.repeat(24)}\n`;
-  if (coupon_code && discount_amount > 0) {
-    const subtotal = total + Number(discount_amount);
+  const disc = Number(discount_amount) || 0;
+  if (disc > 0) {
+    const subtotal = total + disc;
     msg += `💲 ราคาก่อนลด: ฿${subtotal.toLocaleString()}\n`;
-    msg += `🎟️ คูปอง [${coupon_code}]: -฿${Number(discount_amount).toLocaleString()}\n`;
+    msg += `🎟️ ${coupon_code ? `คูปอง [${coupon_code}]` : 'ส่วนลด'}: -฿${disc.toLocaleString()}\n`;
   }
   msg += `💰 ยอดสุทธิ: ฿${total.toLocaleString()}\n`;
   if (note) msg += `\n📝 ${note}\n`;
@@ -265,9 +266,31 @@ function buildOrderSummaryFlex(order) {
           ...itemRows,
           ...moreItems,
           { type:'separator', margin:'lg' },
+          // 🎟️ แสดงส่วนลดคูปอง (ถ้ามี)
+          ...(() => {
+            const discount = safeNum(order.discount_amount);
+            const code     = order.coupon_code;
+            if (!code || discount <= 0) return [];
+            const subtotal = total + discount;
+            return [
+              { type:'box', layout:'horizontal', margin:'md',
+                contents:[
+                  { type:'text', text:'ราคาก่อนลด', size:'sm', color:'#888888', flex:1 },
+                  { type:'text', text:`฿${subtotal.toLocaleString()}`, size:'sm', color:'#888888', align:'end' }
+                ]
+              },
+              { type:'box', layout:'horizontal', margin:'xs',
+                contents:[
+                  { type:'text', text:`🎟️ คูปอง [${code}]`, size:'sm', color:'#e8593c', flex:1 },
+                  { type:'text', text:`-฿${discount.toLocaleString()}`, size:'sm', color:'#e8593c', weight:'bold', align:'end' }
+                ]
+              },
+              { type:'separator', margin:'sm' }
+            ];
+          })(),
           { type:'box', layout:'horizontal', margin:'md',
             contents:[
-              { type:'text', text:'ยอดรวม', size:'md', color:'#333333', flex:1 },
+              { type:'text', text:'ยอดสุทธิ', size:'md', color:'#333333', flex:1 },
               { type:'text', text:`฿${total.toLocaleString()}`, size:'lg', color:'#C0392B', weight:'bold', align:'end' }
             ]
           },
@@ -2055,7 +2078,7 @@ app.get('/my-referral', async (req, res) => {
   }
 
   const baseUrl = process.env.SHOP_URL || `https://${req.headers.host}`;
-  const shareUrl = `${baseUrl.replace(/\/$/, '')}/?ref=${ref.ref_code}`;
+  const shareUrl = `${baseUrl.replace(/\/$/, '')}/invite/${ref.ref_code}`;
   res.json({ refCode: ref.ref_code, shareUrl });
 });
 
@@ -2193,6 +2216,109 @@ app.post('/reveal-coupon', async (req, res) => {
 //  หน้าร้านลูกค้า อยู่ที่ index.html (อยู่บน Railway/GitHub)
 //  หน้าแอดมิน admin.html เก็บไว้ในเครื่องเจ้าของร้าน — เปิดจาก browser ตรงๆ
 //  (admin.html จะเรียก API ของ backend ที่นี่ผ่าน CORS)
+
+// ── GET /invite/:refCode ─────────────────────────────────────
+// หน้า Landing Page กลาง — ให้ B แอด LINE OA แล้ว redirect ไปร้านพร้อม ref code
+app.get('/invite/:refCode', (req, res) => {
+  const refCode  = req.params.refCode;
+  const baseUrl  = (process.env.SHOP_URL || `https://${req.headers.host}`).replace(/\/$/, '');
+  const shopUrl  = `${baseUrl}/?ref=${refCode}`;
+  const lineOaId = process.env.LINE_OA_ID || '';                 // เช่น @menshop หรือ @Uxxxxxxxx
+  const lineAddUrl = lineOaId
+    ? `https://line.me/R/ti/p/${encodeURIComponent(lineOaId)}`
+    : null;
+  const shopName = process.env.SHOP_NAME || 'ร้านของเรา';
+
+  // ถ้าไม่มี LINE_OA_ID → redirect ตรงไปร้านเลย
+  if (!lineAddUrl) {
+    return res.redirect(302, shopUrl);
+  }
+
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(`<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>เชิญมาช้อปด้วยกัน — ${shopName}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Helvetica Neue',Arial,'Noto Sans Thai',sans-serif;
+         background:linear-gradient(135deg,#f8f9fa 0%,#e8f5e9 100%);
+         min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+    .card{background:#fff;border-radius:20px;padding:36px 28px 32px;
+          max-width:380px;width:100%;text-align:center;
+          box-shadow:0 8px 40px rgba(0,0,0,.10)}
+    .logo{font-size:48px;margin-bottom:8px}
+    .shop{font-size:20px;font-weight:700;color:#2C3E50;margin-bottom:4px}
+    .tagline{font-size:13px;color:#888;margin-bottom:28px}
+    .divider{border:none;border-top:1px solid #f0f0f0;margin:20px 0}
+    .step{display:flex;align-items:flex-start;gap:12px;text-align:left;margin-bottom:16px}
+    .step-num{min-width:26px;height:26px;border-radius:50%;
+              background:#06C755;color:#fff;font-size:12px;font-weight:700;
+              display:flex;align-items:center;justify-content:center;margin-top:2px}
+    .step-txt{font-size:14px;color:#444;line-height:1.5}
+    .step-txt strong{color:#2C3E50}
+    .btn-line{display:block;background:#06C755;color:#fff;border:none;
+              border-radius:12px;padding:16px;font-size:16px;font-weight:700;
+              text-decoration:none;cursor:pointer;margin-top:24px;
+              font-family:inherit;width:100%;
+              box-shadow:0 4px 14px rgba(6,199,85,.35);
+              transition:transform .15s,box-shadow .15s}
+    .btn-line:active{transform:scale(.97);box-shadow:0 2px 8px rgba(6,199,85,.3)}
+    .btn-skip{display:block;margin-top:12px;font-size:13px;color:#aaa;
+              text-decoration:underline;cursor:pointer;background:none;
+              border:none;font-family:inherit;width:100%;padding:6px}
+    .gift{font-size:13px;color:#e8593c;font-weight:600;
+          background:#fff5f2;border-radius:8px;padding:10px 14px;
+          margin-bottom:20px;border:1px solid #ffd5cc}
+    #status{font-size:13px;color:#06C755;min-height:20px;margin-top:14px;display:none}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">🛍️</div>
+    <div class="shop">${shopName}</div>
+    <div class="tagline">เพื่อนของคุณชวนมาช้อปด้วยกัน!</div>
+
+    <div class="gift">🎁 ช้อปครั้งแรกแล้วเพื่อนของคุณ<br>จะได้รับคูปองส่วนลดทันที!</div>
+
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-txt"><strong>แอด LINE OA ของเรา</strong><br>เพื่อรับการแจ้งเตือนออเดอร์และโปรโมชั่น</div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-txt"><strong>ช้อปสินค้าได้เลย</strong><br>ระบบบันทึกว่าคุณมาจากลิงก์เพื่อนอัตโนมัติ</div>
+    </div>
+
+    <button class="btn-line" onclick="goAddAndShop()">
+      ➕ แอด LINE OA + ไปช้อปเลย
+    </button>
+    <button class="btn-skip" onclick="goShopOnly()">ข้ามขั้นตอนนี้ ไปช้อปเลย →</button>
+    <div id="status">✅ กำลังพาไปหน้าร้าน...</div>
+  </div>
+
+  <script>
+    const SHOP_URL   = ${JSON.stringify(shopUrl)};
+    const LINE_ADD   = ${JSON.stringify(lineAddUrl)};
+
+    function goAddAndShop() {
+      // เปิด LINE เพื่อแอด OA
+      window.open(LINE_ADD, '_blank');
+      // หน้านี้ redirect ไปร้านหลังจาก 1.2 วิ (ให้ LINE app เปิดทัน)
+      document.getElementById('status').style.display = 'block';
+      setTimeout(() => { window.location.href = SHOP_URL; }, 1200);
+    }
+
+    function goShopOnly() {
+      window.location.href = SHOP_URL;
+    }
+  </script>
+</body>
+</html>`);
+});
+
 
 // fallback: ทุก URL ที่ไม่ match route ข้างบน → ส่งหน้าร้าน
 app.use(express.static(__dirname));
