@@ -966,6 +966,59 @@ app.post('/link-line', async (req, res) => {
   // ✨ บันทึก customer_id ลง line_users เพื่อให้ auto-link ได้ 100%
   upsertLineUser(lineUserId, { customer_id }).catch(() => {});
 
+  // ✨ FIX: ตรวจหาคูปองชวนเพื่อนที่ค้างอยู่ (ยังไม่ได้แจ้งเพราะไม่มี LINE UID ตอนนั้น)
+  //   ทำ async แยกต่างหาก ไม่ block response
+  if (process.env.LINE_TOKEN) {
+    (async () => {
+      try {
+        const { data: ref } = await supabase
+          .from('referrals').select('id')
+          .eq('customer_id', customer_id).maybeSingle();
+        if (!ref) return;
+
+        const { data: rewards } = await supabase
+          .from('referral_rewards')
+          .select('*, coupons(*)')
+          .eq('referral_id', ref.id)
+          .order('created_at', { ascending: false });
+        if (!rewards?.length) return;
+
+        // กรองเฉพาะคูปองที่ยังใช้ได้ (active, ไม่หมดอายุ, ยังไม่ได้ใช้)
+        const now = new Date();
+        const activeCoupons = rewards.filter(rw => {
+          const c = rw.coupons;
+          if (!c || !c.is_active) return false;
+          if (c.usage_limit !== null && (c.used_count || 0) >= c.usage_limit) return false;
+          if (c.end_date && new Date(c.end_date) < now) return false;
+          return true;
+        });
+        if (!activeCoupons.length) return;
+
+        // แจ้งเตือนคูปองที่รอมานาน
+        const lines = activeCoupons.map(rw => {
+          const c = rw.coupons;
+          const discStr = c.discount_type === 'percent'
+            ? `${c.discount_value}%` : `฿${Number(c.discount_value).toLocaleString()}`;
+          const expStr = c.end_date
+            ? new Date(c.end_date).toLocaleDateString('th-TH', { day:'numeric', month:'long', year:'numeric', timeZone:'Asia/Bangkok' })
+            : 'ไม่มีวันหมดอายุ';
+          return `🎟️ ${c.code}  ลด ${discStr}\n   ใช้ได้ถึง ${expStr}`;
+        }).join('\n\n');
+
+        await linePush(lineUserId, [{
+          type: 'text',
+          text: `🎁 มีคูปองชวนเพื่อนรอคุณอยู่!\n` +
+                `เพื่อนของคุณสั่งซื้อครั้งแรกแล้ว แต่ตอนนั้นยังไม่ได้ผูก LINE กับร้าน\n\n` +
+                `${lines}\n\n` +
+                `นำโค้ดไปกรอกตอนสั่งซื้อได้เลยค่ะ 🛍️`
+        }]);
+        console.log(`🎁 pending referral notify sent → ${lineUserId.slice(0,12)}… (${activeCoupons.length} coupon)`);
+      } catch(e) {
+        console.warn('pending referral notify failed:', e.message);
+      }
+    })();
+  }
+
   console.log(`🔗 linked customer ${customer_id} ↔ LINE ${lineUserId.slice(0,12)}…`);
   res.json({ success: true, lineUserId: lineUserId.slice(0,12) + '…', displayName });
 });

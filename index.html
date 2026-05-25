@@ -4708,5 +4708,79 @@ async function saveReferralConfig() {
   </div>
 </div>
 
+<!-- ── Pending Referral Coupon Popup ───────────────────────────────── -->
+<div id="pendingRwdOv" onclick="if(event.target===this)closePendingReward()"
+  style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;align-items:center;justify-content:center;padding:16px;">
+  <div style="background:#fff;border-radius:20px;width:100%;max-width:360px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.18);">
+    <div style="background:linear-gradient(135deg,#e8593c,#f39c12);padding:24px 20px 20px;text-align:center;color:#fff;">
+      <div style="font-size:48px;margin-bottom:6px;">🎁</div>
+      <div style="font-size:18px;font-weight:700;margin-bottom:4px;">มีคูปองรอคุณอยู่!</div>
+      <div style="font-size:13px;opacity:.9;">เพื่อนของคุณสั่งซื้อครั้งแรกแล้ว</div>
+    </div>
+    <div id="pendingRwdList" style="padding:16px;max-height:280px;overflow-y:auto;"></div>
+    <div style="padding:0 16px 16px;">
+      <button onclick="closePendingReward()"
+        style="width:100%;background:#e8593c;color:#fff;border:none;border-radius:10px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;">
+        รับทราบ ขอบคุณ! 🛍️
+      </button>
+      <button onclick="closePendingReward();openReferralSheet();switchReferralTab(2)"
+        style="width:100%;background:transparent;color:#888;border:none;padding:10px;font-size:12px;cursor:pointer;font-family:inherit;margin-top:4px;">
+        ดูคูปองทั้งหมดของฉัน →
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+async function checkPendingReferralRewards() {
+  if (!CUSTOMER_ID || !BACKEND_URL) return;
+  const seenKey = 'ms_ref_reward_seen_' + CUSTOMER_ID;
+  if (sessionStorage.getItem(seenKey)) return;
+  try {
+    const r = await fetch(BACKEND_URL + '/my-referral-rewards?customerId=' + CUSTOMER_ID);
+    if (!r.ok) return;
+    const d = await r.json();
+    const now = new Date();
+    const rewards = (d.rewards || []).filter(rw => {
+      const c = rw.coupons;
+      if (!c || !c.is_active) return false;
+      if (c.usage_limit !== null && (c.used_count || 0) >= c.usage_limit) return false;
+      if (c.end_date && new Date(c.end_date) < now) return false;
+      return true;
+    });
+    if (!rewards.length) { sessionStorage.setItem(seenKey, '1'); return; }
+    const el = document.getElementById('pendingRwdList');
+    el.innerHTML = rewards.map(rw => {
+      const c = rw.coupons;
+      const discStr = c.discount_type === 'percent'
+        ? c.discount_value + '%' : '\u0e3f' + Number(c.discount_value).toLocaleString();
+      const expStr = c.end_date
+        ? '\u23f0 \u0e43\u0e0a\u0e49\u0e44\u0e14\u0e49\u0e16\u0e36\u0e07 ' + new Date(c.end_date).toLocaleDateString('th-TH', { day:'numeric', month:'short', year:'numeric' })
+        : '';
+      return '<div style="background:#fff8f6;border:1.5px solid #f5c6b8;border-radius:12px;padding:12px 14px;margin-bottom:10px;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+        '<div style="font-size:13px;font-weight:700;color:#2C3E50;">' + (c.name || '\u0e04\u0e39\u0e1b\u0e2d\u0e07\u0e0a\u0e27\u0e19\u0e40\u0e1e\u0e37\u0e48\u0e2d\u0e19') + '</div>' +
+        '<div style="font-size:14px;font-weight:700;color:#27ae60;">\u0e25\u0e14 ' + discStr + '</div></div>' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;background:#fff;border-radius:8px;padding:8px 12px;">' +
+        '<div><div style="font-size:10px;color:#aaa;margin-bottom:2px;">\u0e42\u0e04\u0e49\u0e14\u0e04\u0e39\u0e1b\u0e2d\u0e07</div>' +
+        '<div style="font-size:17px;font-weight:700;color:#e8593c;letter-spacing:2px;">' + c.code + '</div></div>' +
+        '<button onclick="useReferralCoupon(\'' + c.code + '\');closePendingReward()" ' +
+        'style="background:#e8593c;color:#fff;border:none;border-radius:7px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">' +
+        '\u0e43\u0e0a\u0e49\u0e40\u0e25\u0e22 \u2192</button></div>' +
+        (expStr ? '<div style="font-size:11px;color:#aaa;margin-top:6px;text-align:right;">' + expStr + '</div>' : '') +
+        '</div>';
+    }).join('');
+    setTimeout(() => { document.getElementById('pendingRwdOv').style.display = 'flex'; }, 1500);
+    sessionStorage.setItem(seenKey, '1');
+  } catch(e) { console.warn('checkPendingReferralRewards:', e.message); }
+}
+
+function closePendingReward() {
+  document.getElementById('pendingRwdOv').style.display = 'none';
+}
+
+setTimeout(checkPendingReferralRewards, 2000);
+</script>
+
 </body>
 </html>
