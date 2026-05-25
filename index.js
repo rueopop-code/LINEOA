@@ -1714,6 +1714,41 @@ app.get('/orders', async (req, res) => {
   res.json({ total: count, orders: data });
 });
 
+// ── POST /orders/:orderId/notify-status ───────────────────
+// Admin กด "📣 ส่งสถานะ" → ส่ง LINE Flex ให้ลูกค้าโดยไม่อัปเดต DB ซ้ำ
+app.post('/orders/:orderId/notify-status', async (req, res) => {
+  const { orderId } = req.params;
+
+  const { data: order, error } = await supabase
+    .from('orders').select('*').eq('order_id', orderId).maybeSingle();
+
+  if (error) return res.status(500).json({ error: error.message });
+  if (!order) return res.status(404).json({ error: 'ไม่พบออเดอร์ ' + orderId });
+
+  if (!process.env.LINE_TOKEN) {
+    return res.status(500).json({ error: 'LINE_TOKEN ไม่ได้ตั้งค่า' });
+  }
+
+  // หา LINE user ID จาก order หรือ customer
+  let targetUid = order.line_user_id;
+  if (!targetUid) {
+    targetUid = await findLineUserIdByCustomer(order.customer_id);
+  }
+  if (!targetUid) {
+    return res.status(400).json({ error: 'ไม่พบ LINE user ของลูกค้ารายนี้ (ยังไม่ได้ผูกบัญชี)' });
+  }
+
+  try {
+    const flex = buildStatusUpdateFlex(order, order.status);
+    await linePush(targetUid, [flex]);
+    console.log(`📣 notify-status ${order.status} → ${targetUid.slice(0,12)}…`);
+    res.json({ success: true, status: order.status, sentTo: targetUid.slice(0,12) + '…' });
+  } catch (e) {
+    console.warn('notify-status push failed:', e.message);
+    res.status(500).json({ error: 'ส่ง LINE ไม่ได้: ' + e.message });
+  }
+});
+
 // ── PATCH /orders/:orderId/status ─────────────────────────
 app.patch('/orders/:orderId/status', async (req, res) => {
   const { status } = req.body;
