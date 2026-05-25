@@ -1094,6 +1094,9 @@ app.post('/webhook', async (req, res) => {
     // ✨ บันทึก / อัปเดต line_users อัตโนมัติทุกครั้ง (fire-and-forget)
     upsertLineUser(userId).catch(() => {});
 
+    // ── ครอบทุก event ด้วย try-catch — ป้องกัน crash เงียบ ──
+    try {
+
     // ── FOLLOW EVENT (ลูกค้าเพิ่ม bot เป็นเพื่อน / unblock) ──
     if (ev.type === 'follow') {
       const replyToken = ev.replyToken;
@@ -1180,9 +1183,15 @@ app.post('/webhook', async (req, res) => {
     if (phoneOnly.length >= 8 && phoneOnly.length <= 12 && /^\d+$/.test(phoneOnly)) {
       // จับคู่ออเดอร์ที่มีเบอร์นี้ → set line_user_id
       // ไม่ใช้ limit — ป้องกัน miss ออเดอร์เก่า
-      const { data: matched } = await supabase.from('orders')
+      const { data: matched, error: phoneQueryErr } = await supabase.from('orders')
         .select('order_id, phone, customer_name, status, total, customer_id')
         .order('created_at', { ascending: false });
+
+      if (phoneQueryErr) {
+        console.error('phone lookup DB error:', phoneQueryErr.message);
+        await linePush(userId, [{ type:'text', text:'❌ ระบบค้นหาขัดข้อง กรุณาลองใหม่ค่ะ' }]).catch(() => {});
+        continue;
+      }
 
       // startsWith/endsWith รองรับทุกกรณี:
       // • ตรงเป๊ะ            : "0812345678" vs "0812345678" ✅
@@ -1494,6 +1503,15 @@ app.post('/webhook', async (req, res) => {
 
     // ✨ ไม่ตอบ auto-reply — ปล่อยให้แอดมินตอบเอง ลูกค้าจะไม่เห็น "ได้รับข้อความแล้ว..." spam
     // (ถ้าลูกค้าอยากเปิดร้าน/ดูออเดอร์ → กด Rich Menu หรือพิมพ์ keyword)
+    } catch (evErr) {
+      // ถ้า event ใดๆ crash → log แล้วข้ามไป event ถัดไป ไม่ให้กระทบคนอื่น
+      console.error('⚠️ webhook event error:', evErr.message, '| userId:', userId, '| type:', ev.type);
+      // ลอง push error แบบง่ายๆ ให้ลูกค้าทราบ (best-effort)
+      if (userId) {
+        linePush(userId, [{ type:'text', text:'❌ ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้งค่ะ' }])
+          .catch(() => {});
+      }
+    }
   }
 });
 
@@ -1822,4 +1840,21 @@ app.listen(PORT, () => {
   console.log(`💬 LINE      : ${process.env.LINE_TOKEN     ? '✅' : '❌'}`);
   console.log(`👥 Admins    : ${adminCount} คน`);
   console.log(`📍 Routes    : /shop, /admin, /api`);
+
+  // ── Keep-alive: ping ตัวเองทุก 14 นาที ป้องกัน Render หลับ ──
+  // Render free tier หลับหลังไม่มี request 15 นาที
+  // ping /health ทุก 14 นาที = ไม่หลับตลอดเวลา
+  const SELF_URL = process.env.RENDER_EXTERNAL_URL || process.env.SHOP_URL || ('http://localhost:' + PORT);
+  const PING_INTERVAL = 14 * 60 * 1000; // 14 นาที
+
+  setInterval(async () => {
+    try {
+      const r = await fetch(SELF_URL.replace(/\/+$/, '') + '/health');
+      console.log('🏓 keep-alive ping →', r.status === 200 ? '✅ OK' : '⚠️ ' + r.status);
+    } catch (e) {
+      console.warn('🏓 keep-alive ping failed:', e.message);
+    }
+  }, PING_INTERVAL);
+
+  console.log('🏓 Keep-alive เปิดแล้ว (ping ทุก 14 นาที →', SELF_URL, ')');
 });
