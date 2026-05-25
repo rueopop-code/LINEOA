@@ -104,7 +104,7 @@ function statusLabel(s) {
 
 function buildAdminMsg(order) {
   const { customer_name, items, total, order_id, created_at, phone, address, note, ref_code } = order;
-  const date = new Date(created_at).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short' });
+  const date = new Date(created_at).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short', timeZone:'Asia/Bangkok' });
   let msg = `🛒 ออเดอร์ใหม่! #${order_id}\n`;
   if (ref_code) msg += `🎁 มาจากลิงก์ชวนเพื่อน (${ref_code})\n`;
   msg += `${'─'.repeat(24)}\n`;
@@ -1144,7 +1144,7 @@ app.post('/webhook', async (req, res) => {
         const itemsList = (order.items || []).map(i =>
           `${i.emoji||'•'} ${i.name} ×${i.qty} = ฿${(i.qty*i.price).toLocaleString()}`
         ).join('\n');
-        const date = new Date(order.created_at).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short' });
+        const date = new Date(order.created_at).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short', timeZone:'Asia/Bangkok' });
 
         let detailText =
           `📦 ออเดอร์ #${order.order_id}\n` +
@@ -1183,12 +1183,20 @@ app.post('/webhook', async (req, res) => {
     const phoneOnly = normalizePhone(rawText);
     if (phoneOnly.length >= 8 && phoneOnly.length <= 12 && /^\d+$/.test(phoneOnly)) {
       // จับคู่ออเดอร์ที่มีเบอร์นี้ → set line_user_id
+      // ใช้ last 8 หลักเป็น pre-filter ใน Supabase (รองรับเบอร์มีขีด/เว้นวรรค/ไม่มี 0 นำหน้า)
+      const last8 = phoneOnly.slice(-8);
       const { data: matched } = await supabase.from('orders')
         .select('order_id, phone, customer_name, status, total, customer_id')
-        .order('created_at', { ascending: false })
-        .limit(50);
+        .ilike('phone', `%${last8}%`)
+        .order('created_at', { ascending: false });
 
-      const matches = (matched || []).filter(o => normalizePhone(o.phone) === phoneOnly);
+      // ตรวจสอบเบอร์แบบละเอียด: รองรับ 0 นำหน้า/ไม่นำหน้า และรูปแบบต่างๆ
+      const matches = (matched || []).filter(o => {
+        const stored = normalizePhone(o.phone);
+        return stored === phoneOnly ||           // ตรงเป๊ะ
+               stored === '0' + phoneOnly ||     // DB มี 0 นำหน้า แต่ user พิมพ์ไม่มี
+               '0' + stored === phoneOnly;       // user พิมพ์มี 0 นำหน้า แต่ DB ไม่มี
+      });
 
       if (matches.length) {
         // อัปเดต line_user_id ให้ทุกออเดอร์ที่เบอร์ตรงกัน
@@ -1234,7 +1242,7 @@ app.post('/webhook', async (req, res) => {
       } else {
         await lineReply(replyToken, [{
           type: 'text',
-          text: `🔍 ไม่พบออเดอร์ที่ใช้เบอร์ ${rawText}\n\nกรุณาตรวจสอบเบอร์ที่กรอกตอนสั่ง หรือสั่งสินค้าใหม่ที่:\n${SHOP_URL}`
+          text: `🔍 ไม่พบออเดอร์ที่ใช้เบอร์ ${rawText}\n\n📌 กรุณาตรวจสอบ:\n• เบอร์ที่พิมพ์ตรงกับที่กรอกตอนสั่งไหม?\n• ลองพิมพ์เบอร์ให้ครบ 10 หลัก เช่น 0812345678\n\nหากยังไม่พบ กดลิงก์ด้านล่างเพื่อสั่งสินค้าใหม่ได้เลยค่ะ\n${SHOP_URL}`
         }]);
         continue;
       }
@@ -1326,7 +1334,7 @@ app.post('/webhook', async (req, res) => {
                 { type:'text', text:`฿${(o.total||0).toLocaleString()}`, size:'sm', color:'#C0392B', weight:'bold', align:'end', flex:2 }
               ]
             },
-            { type:'text', text: new Date(o.created_at).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short' }), size:'xxs', color:'#aaaaaa', margin:'xs' }
+            { type:'text', text: new Date(o.created_at).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short', timeZone:'Asia/Bangkok' }), size:'xxs', color:'#aaaaaa', margin:'xs' }
           ]
         },
         footer: {
