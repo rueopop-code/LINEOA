@@ -64,7 +64,21 @@ async function notifyAllAdmins(messages) {
   return { sent, failed };
 }
 
+// safeReply: ลอง lineReply ก่อน ถ้า token หมดอายุ → fallback linePush (ถ้ามี userId)
+async function safeReply(replyToken, userId, messages) {
+  try {
+    await lineReply(replyToken, messages);
+  } catch (e) {
+    console.warn('lineReply failed, falling back to push:', e.message);
+    if (userId) {
+      await linePush(userId, messages).catch(e2 => console.warn('push fallback also failed:', e2.message));
+    }
+  }
+}
+
 // ตอบกลับใน LINE webhook (ใช้ replyToken)
+// ⚠️  replyToken มีอายุ ~1 นาที — ถ้า Render cold start ช้า token อาจหมดอายุ
+// → ใช้ linePush แทนในกรณีที่ userId พร้อมใช้งาน
 async function lineReply(replyToken, messages) {
   const res = await fetch(`${LINE_API}/reply`, {
     method : 'POST',
@@ -76,7 +90,8 @@ async function lineReply(replyToken, messages) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    console.warn('LINE reply failed:', err.message || res.status);
+    console.warn('LINE reply failed:', err.message || res.status, '— replyToken อาจหมดอายุจาก cold start');
+    throw new Error(err.message || `LINE reply HTTP ${res.status}`);
   }
 }
 
@@ -1104,7 +1119,7 @@ app.post('/webhook', async (req, res) => {
       const token = createLinkToken(userId);
       const shopLink = `${SHOP_URL}?lid=${token}`;
 
-      await lineReply(replyToken, [
+      await safeReply(replyToken, userId, [
         {
           type: 'text',
           text: `🛍 สวัสดีค่ะ! ยินดีต้อนรับสู่ มนชิน ซัพพลาย\n\n` +
@@ -1129,13 +1144,13 @@ app.post('/webhook', async (req, res) => {
 
       if (action === 'view_order') {
         const orderId = params.get('id');
-        if (!orderId) { await lineReply(replyToken, [{ type:'text', text:'❌ ไม่พบเลขออเดอร์' }]); continue; }
+        if (!orderId) { await safeReply(replyToken, userId, [{ type:'text', text:'❌ ไม่พบเลขออเดอร์' }]); continue; }
 
         const { data: order } = await supabase.from('orders')
           .select('*').eq('order_id', orderId).maybeSingle();
 
         if (!order) {
-          await lineReply(replyToken, [{ type:'text', text:`❌ ไม่พบออเดอร์ #${orderId}` }]);
+          await safeReply(replyToken, userId, [{ type:'text', text:`❌ ไม่พบออเดอร์ #${orderId}` }]);
           continue;
         }
 
@@ -1165,7 +1180,7 @@ app.post('/webhook', async (req, res) => {
         if (Array.isArray(order.items) && order.items.length > 0) {
           messages.push(buildStatusUpdateFlex(order, st));
         }
-        await lineReply(replyToken, messages);
+        await safeReply(replyToken, userId, messages);
         continue;
       }
 
@@ -1241,13 +1256,14 @@ app.post('/webhook', async (req, res) => {
             .catch(() => {});
         }
 
-        await lineReply(replyToken, replyMessages);
+        // ใช้ linePush (userId) แทน lineReply (replyToken) — ป้องกัน token หมดอายุจาก Render cold start
+        await linePush(userId, replyMessages).catch(e => console.warn('push phone-success failed:', e.message));
         continue;
       } else {
-        await lineReply(replyToken, [{
+        await linePush(userId, [{
           type: 'text',
           text: `🔍 ไม่พบออเดอร์ที่ใช้เบอร์ ${rawText}\n\n📌 กรุณาตรวจสอบ:\n• เบอร์ที่พิมพ์ตรงกับที่กรอกตอนสั่งไหม?\n• ลองพิมพ์เบอร์ให้ครบ 10 หลัก เช่น 0812345678\n\nหากยังไม่พบ กดลิงก์ด้านล่างเพื่อสั่งสินค้าใหม่ได้เลยค่ะ\n${SHOP_URL}`
-        }]);
+        }]).catch(e => console.warn('push phone-notfound failed:', e.message));
         continue;
       }
     }
@@ -1300,7 +1316,7 @@ app.post('/webhook', async (req, res) => {
       }
 
       if (!realOrders.length) {
-        await lineReply(replyToken, [{
+        await safeReply(replyToken, userId, [{
           type: 'text',
           text: `📭 ยังไม่พบออเดอร์ของคุณในระบบ\n\n` +
                 `🔗 วิธีผูกบัญชี: พิมพ์เบอร์โทรที่ใช้ตอนสั่งซื้อมาครับ\n` +
@@ -1353,7 +1369,7 @@ app.post('/webhook', async (req, res) => {
         }
       }));
 
-      await lineReply(replyToken, [
+      await safeReply(replyToken, userId, [
         {
           type:'text',
           text: `📋 ออเดอร์ของคุณ ${realOrders[0].customer_name || ''} (${realOrders.length} รายการล่าสุด)`
@@ -1369,7 +1385,7 @@ app.post('/webhook', async (req, res) => {
 
     // คำสั่ง: id → ส่ง LINE User ID กลับให้ลูกค้า (เพื่อให้แอดมินผูกบัญชีได้)
     if (text === 'id' || text === 'my id' || text === 'userid' || text === 'user id' || text === 'ไอดี') {
-      await lineReply(replyToken, [{
+      await safeReply(replyToken, userId, [{
         type: 'text',
         text: `🆔 LINE User ID ของคุณ:\n\n${userId}\n\n📋 คัดลอกและส่งให้ร้านค้าเพื่อผูกบัญชีค่ะ`
       }]);
@@ -1380,7 +1396,7 @@ app.post('/webhook', async (req, res) => {
     if (text === 'เปิดร้าน' || text === 'shop' || text === 'สั่ง' || text === 'ซื้อ' || text === 'สั่งซื้อ' || text === 'เปิด' || text === 'ร้าน'|| text === 'ผูกบัญชี(สั่งสินค้า)'|| text === 'ผูกบัญชี'|| text === 'สั่งสินค้า') {
       const token = createLinkToken(userId);
       const shopLink = `${SHOP_URL}?lid=${token}`;
-      await lineReply(replyToken, [{
+      await safeReply(replyToken, userId, [{
         type: 'text',
         text: `🛍 กดลิงก์ด้านล่างเพื่อสั่งสินค้า ระบบจะจดจำคุณอัตโนมัติ\n\n${shopLink}\n\n⏰ ลิงก์มีอายุ 30 นาที`
       }]);
@@ -1391,7 +1407,7 @@ app.post('/webhook', async (req, res) => {
     if (text.includes('help') || text.includes('ช่วย') || text === 'เริ่ม' || text === 'start' || text === 'menu' || text === 'เมนู') {
       const token = createLinkToken(userId);
       const shopLink = `${SHOP_URL}?lid=${token}`;
-      await lineReply(replyToken, [{
+      await safeReply(replyToken, userId, [{
         type: 'text',
         text: `🛍 สวัสดีค่ะ! ใช้งานได้ดังนี้:\n\n` +
               `🛒 สั่งสินค้า → ${shopLink}\n` +
