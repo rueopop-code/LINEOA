@@ -64,21 +64,21 @@ async function notifyAllAdmins(messages) {
   return { sent, failed };
 }
 
-// safeReply: ลอง lineReply ก่อน ถ้า token หมดอายุ → fallback linePush (ถ้ามี userId)
+// ตอบกลับใน LINE webhook (ใช้ replyToken)
+// safeReply: ลอง lineReply ก่อน ถ้า token หมดอายุ (Render cold start) → fallback linePush
 async function safeReply(replyToken, userId, messages) {
   try {
     await lineReply(replyToken, messages);
   } catch (e) {
-    console.warn('lineReply failed, falling back to push:', e.message);
+    console.warn('lineReply failed → fallback push:', e.message);
     if (userId) {
-      await linePush(userId, messages).catch(e2 => console.warn('push fallback also failed:', e2.message));
+      await linePush(userId, messages).catch(e2 =>
+        console.warn('push fallback failed:', e2.message)
+      );
     }
   }
 }
 
-// ตอบกลับใน LINE webhook (ใช้ replyToken)
-// ⚠️  replyToken มีอายุ ~1 นาที — ถ้า Render cold start ช้า token อาจหมดอายุ
-// → ใช้ linePush แทนในกรณีที่ userId พร้อมใช้งาน
 async function lineReply(replyToken, messages) {
   const res = await fetch(`${LINE_API}/reply`, {
     method : 'POST',
@@ -90,8 +90,7 @@ async function lineReply(replyToken, messages) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    console.warn('LINE reply failed:', err.message || res.status, '— replyToken อาจหมดอายุจาก cold start');
-    throw new Error(err.message || `LINE reply HTTP ${res.status}`);
+    console.warn('LINE reply failed:', err.message || res.status);
   }
 }
 
@@ -118,10 +117,9 @@ function statusLabel(s) {
 }
 
 function buildAdminMsg(order) {
-  const { customer_name, items, total, order_id, created_at, phone, address, note, ref_code } = order;
+  const { customer_name, items, total, order_id, created_at, phone, address, note } = order;
   const date = new Date(created_at).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short', timeZone:'Asia/Bangkok' });
   let msg = `🛒 ออเดอร์ใหม่! #${order_id}\n`;
-  if (ref_code) msg += `🎁 มาจากลิงก์ชวนเพื่อน (${ref_code})\n`;
   msg += `${'─'.repeat(24)}\n`;
   msg += `👤 ${customer_name}\n`;
   if (phone)   msg += `📞 ${phone}\n`;
@@ -499,8 +497,7 @@ app.post('/send-order', async (req, res) => {
     customerId, customerName, lineName, phone, address, note,
     items, total, orderType, extra,
     mapLat, mapLng,             // 📍 พิกัด GPS
-    couponId, discountAmount,   // 🎟️ ส่วนลด/คูปอง
-    refCode                     // 🎁 referral code (ถ้ามาจากลิงก์ชวน)
+    couponId, discountAmount    // 🎟️ ส่วนลด/คูปอง
   } = req.body;
 
   if (!customerId || !customerName || !items?.length || total == null)
@@ -561,9 +558,7 @@ app.post('/send-order', async (req, res) => {
     // 🎟️ ส่วนลด
     coupon_id: appliedCouponId,
     coupon_code: appliedCouponCode,
-    discount_amount: finalDiscount,
-    // 🎁 referral
-    ref_code: refCode || null
+    discount_amount: finalDiscount
   };
 
   const { error: dbErr } = await supabase.from('orders').insert([order]);
@@ -736,17 +731,7 @@ app.post('/send-order', async (req, res) => {
     const customerLineUid = autoLinkedLineUid || await findLineUserIdByCustomer(customerId);
     if (customerLineUid) {
       const flex = buildOrderSummaryFlex({ ...order, status: 'sent' });
-      const msgs = [flex];
-
-      // 🎁 ถ้า B มาจากลิงก์ชวนเพื่อน → แจ้งให้รู้ว่าคนชวนจะได้รับคูปอง
-      if (refCode) {
-        msgs.push({
-          type: 'text',
-          text: `🎁 คุณมาจากลิงก์แนะนำของเพื่อน!\n\nขอบคุณที่ช่วยสนับสนุนร้านของเรา 🙏\nเพื่อนของคุณจะได้รับคูปองส่วนลดเป็นรางวัลทันทีที่ออเดอร์นี้ยืนยันแล้ว ✨`
-        });
-      }
-
-      linePush(customerLineUid, msgs)
+      linePush(customerLineUid, [flex])
         .then(() => console.log(`📤 order summary → ${customerLineUid.slice(0,12)}…`))
         .catch(e => console.warn('LINE flex to customer failed:', e.message));
     } else {
@@ -761,10 +746,6 @@ app.post('/send-order', async (req, res) => {
     .then(({ error: e }) => {
       if (!e) console.log(`🗑️ cleaned up LINK-${customerId.slice(0,10)}… ghost`);
     });
-
-  // 🎁 ตรวจและให้รางวัล referral (เฉพาะออเดอร์แรกของ B)
-  const lineUidForReferral = autoLinkedLineUid || await findLineUserIdByCustomer(customerId).catch(() => null);
-  processReferralReward(lineUidForReferral, order_id, refCode || null).catch(console.warn);
 
   res.json({ success: true, orderId: order_id });
 });
@@ -1198,16 +1179,15 @@ app.post('/webhook', async (req, res) => {
     const phoneOnly = normalizePhone(rawText);
     if (phoneOnly.length >= 8 && phoneOnly.length <= 12 && /^\d+$/.test(phoneOnly)) {
       // จับคู่ออเดอร์ที่มีเบอร์นี้ → set line_user_id
-      // ดึงเฉพาะออเดอร์ที่มีเบอร์ (ไม่ limit — ป้องกัน miss ออเดอร์เก่า)
+      // ไม่ใช้ limit — ป้องกัน miss ออเดอร์เก่า
       const { data: matched } = await supabase.from('orders')
         .select('order_id, phone, customer_name, status, total, customer_id')
-        .not('phone', 'is', null)
         .order('created_at', { ascending: false });
 
-      // เปรียบเทียบด้วย startsWith/endsWith — รองรับทุกกรณี:
-      // • ตรงเป๊ะ           : "0812345678" vs "0812345678" ✅
-      // • มี/ไม่มี 0 นำหน้า : "0812345678" vs "812345678"  ✅ (endsWith)
-      // • หลักต่างกัน 1 หลัก: "1234567890" vs "123456789"  ✅ (startsWith)
+      // startsWith/endsWith รองรับทุกกรณี:
+      // • ตรงเป๊ะ            : "0812345678" vs "0812345678" ✅
+      // • มี/ไม่มี 0 นำหน้า  : "0812345678" vs "812345678"  ✅
+      // • จำนวนหลักต่างกัน  : "1234567890" vs "123456789"  ✅
       const matches = (matched || []).filter(o => {
         const stored = normalizePhone(o.phone);
         if (!stored || stored.length < 8) return false;
@@ -1256,8 +1236,9 @@ app.post('/webhook', async (req, res) => {
             .catch(() => {});
         }
 
-        // ใช้ linePush (userId) แทน lineReply (replyToken) — ป้องกัน token หมดอายุจาก Render cold start
-        await linePush(userId, replyMessages).catch(e => console.warn('push phone-success failed:', e.message));
+        // ใช้ linePush แทน lineReply — ไม่หมดอายุแม้ Render cold start ช้า
+        await linePush(userId, replyMessages)
+          .catch(e => console.warn('push phone-success failed:', e.message));
         continue;
       } else {
         await linePush(userId, [{
@@ -1551,13 +1532,12 @@ app.get('/applicable-discounts', async (req, res) => {
   const total = parseFloat(orderTotal) || 0;
   const now   = new Date().toISOString();
 
-  // ดึง auto-coupons ที่ active (ซ่อน secret coupon)
+  // ดึง auto-coupons ที่ active
   const { data: coupons, error } = await supabase
     .from('coupons')
     .select('*')
     .eq('is_active', true)
     .eq('apply_type', 'auto')
-    .eq('is_secret', false)
     .or(`start_date.is.null,start_date.lte.${now}`)
     .or(`end_date.is.null,end_date.gte.${now}`)
     .order('discount_value', { ascending: false });
@@ -1602,39 +1582,6 @@ app.get('/applicable-discounts', async (req, res) => {
   const hasManualCoupon = !!(manualCoupons?.length);
 
   res.json({ isFirstOrder, discount: best, allEligible: eligible, hasManualCoupon });
-});
-
-// ── GET /available-coupons ───────────────────────────────
-// คืนคูปองทั้งหมด (auto + manual) ที่ลูกค้านี้เข้าเงื่อนไข — สำหรับ picker
-app.get('/available-coupons', async (req, res) => {
-  const { customerId, orderTotal } = req.query;
-  const total = parseFloat(orderTotal) || 0;
-  const now   = new Date().toISOString();
-
-  const { data: all } = await supabase
-    .from('coupons')
-    .select('*')
-    .eq('is_active', true)
-    .eq('is_secret', false)
-    .or(`start_date.is.null,start_date.lte.${now}`)
-    .or(`end_date.is.null,end_date.gte.${now}`)
-    .order('discount_value', { ascending: false });
-
-  let isFirstOrder = false;
-  if (customerId) {
-    const { data: prev } = await supabase.from('orders').select('id')
-      .eq('customer_id', customerId)
-      .not('order_id', 'like', 'LINE-%').not('order_id', 'like', 'LINK-%').limit(1);
-    isFirstOrder = !prev?.length;
-  }
-
-  const eligible = (all || []).filter(c => {
-    if (c.usage_limit !== null && c.used_count >= c.usage_limit) return false;
-    if (c.condition_type === 'first_order') return isFirstOrder;
-    return true;
-  });
-
-  res.json({ coupons: eligible, isFirstOrder });
 });
 
 // ── GET /validate-coupon ──────────────────────────────────
@@ -1696,8 +1643,7 @@ app.post('/coupons', async (req, res) => {
   const {
     name, description, code, discount_type, discount_value,
     max_discount, min_order, apply_type, condition_type,
-    start_date, end_date, usage_limit, is_active,
-    is_secret, secret_code
+    start_date, end_date, usage_limit, is_active
   } = req.body;
 
   if (!name || discount_value == null)
@@ -1715,9 +1661,7 @@ app.post('/coupons', async (req, res) => {
     start_date: start_date || null,
     end_date: end_date || null,
     usage_limit: usage_limit ? Number(usage_limit) : null,
-    is_active: is_active !== false,
-    is_secret: is_secret === true,
-    secret_code: (is_secret && secret_code) ? secret_code.trim().toUpperCase() : null
+    is_active: is_active !== false
   }]).select().single();
 
   if (error) return res.status(500).json({ error: error.message });
@@ -1731,8 +1675,7 @@ app.patch('/coupons/:id', async (req, res) => {
   const fields = [
     'name','description','code','discount_type','discount_value',
     'max_discount','min_order','apply_type','condition_type',
-    'start_date','end_date','usage_limit','is_active',
-    'is_secret','secret_code'
+    'start_date','end_date','usage_limit','is_active'
   ];
   fields.forEach(f => { if (req.body[f] !== undefined) updates[f] = req.body[f]; });
 
@@ -1814,399 +1757,6 @@ app.patch('/orders/:orderId/status', async (req, res) => {
 //  (admin.html จะเรียก API ของ backend ที่นี่ผ่าน CORS)
 
 // fallback: ทุก URL ที่ไม่ match route ข้างบน → ส่งหน้าร้าน
-// ══════════════════════════════════════════════════════════
-//  REFERRAL SYSTEM
-// ══════════════════════════════════════════════════════════
-
-// ─── GET /my-referral-rewards ────────────────────────────
-// คืนรายการคูปองที่ referrer ได้รับจากการชวนเพื่อน
-// query: customerId หรือ lineUserId
-app.get('/my-referral-rewards', async (req, res) => {
-  let { lineUserId, customerId } = req.query;
-  if (!lineUserId && customerId) {
-    lineUserId = await findLineUserIdByCustomer(customerId).catch(() => null)
-              || `CUST-${customerId}`;
-  }
-  if (!lineUserId) return res.status(400).json({ error: 'customerId required' });
-
-  const { data, error } = await supabase
-    .from('referral_rewards')
-    .select(`id, created_at, order_id, coupon_id,
-             coupons ( id, name, code, discount_type, discount_value,
-                       used_count, usage_limit, end_date, is_active )`)
-    .eq('referrer_uid', lineUserId)
-    .order('created_at', { ascending: false });
-
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ rewards: data || [], total: data?.length || 0 });
-});
-
-// ─── GET /my-referral ────────────────────────────────────
-// คืน referral link ของลูกค้า (สร้างโค้ดให้อัตโนมัติถ้ายังไม่มี)
-// รับ lineUserId หรือ customerId ก็ได้ — ถ้าไม่มี LINE UID ใช้ CUST-prefix แทน
-app.get('/my-referral', async (req, res) => {
-  let { lineUserId, customerId } = req.query;
-
-  if (!lineUserId && !customerId)
-    return res.status(400).json({ error: 'lineUserId or customerId required' });
-
-  // ถ้าส่งมาแค่ customerId → หา lineUserId จาก mapping
-  if (!lineUserId && customerId) {
-    lineUserId = await findLineUserIdByCustomer(customerId).catch(() => null);
-  }
-
-  // ถ้ายังไม่มี LINE UID → ใช้ CUST-prefix เป็น pseudo-ID (ทำงานได้โดยไม่ต้องผูก LINE)
-  const uid = lineUserId || `CUST-${customerId}`;
-
-  let { data: user } = await supabase
-    .from('line_users')
-    .select('user_id, referral_code')
-    .eq('user_id', uid)
-    .maybeSingle();
-
-  let referralCode = user?.referral_code;
-  if (!referralCode) {
-    referralCode = 'REF' + Math.random().toString(36).slice(2, 10).toUpperCase();
-    await supabase.from('line_users').upsert({
-      user_id      : uid,
-      referral_code: referralCode,
-      last_seen    : new Date().toISOString()
-    });
-  }
-
-  const shopUrl  = process.env.SHOP_URL || 'https://lineoa-u0v2.onrender.com/';
-  const shareUrl = `${shopUrl.replace(/\/$/, '')}/?ref=${referralCode}`;
-  res.json({ referralCode, shareUrl });
-});
-
-// ─── POST /referral-visit ─────────────────────────────────
-// บันทึกว่าลูกค้า B เปิดร้านผ่านลิงก์ของ A
-// body: { customerId, refCode }
-app.post('/referral-visit', async (req, res) => {
-  const { customerId, refCode } = req.body;
-  if (!customerId || !refCode) return res.status(400).json({ error: 'customerId and refCode required' });
-
-  // ตรวจ refCode มีจริง
-  const { data: referrer } = await supabase
-    .from('line_users').select('user_id')
-    .eq('referral_code', refCode)
-    .maybeSingle();
-
-  if (!referrer) return res.status(404).json({ error: 'referral code not found' });
-
-  // ค้นหา LINE user ID ของ B จาก customerId
-  const lineUserId = await findLineUserIdByCustomer(customerId).catch(() => null);
-
-  // กันตัวเองชวนตัวเอง
-  if (lineUserId && referrer.user_id === lineUserId)
-    return res.json({ ok: true, self: true });
-
-  if (lineUserId) {
-    const { data: bUser } = await supabase
-      .from('line_users').select('is_referred, referred_by')
-      .eq('user_id', lineUserId).maybeSingle();
-
-    if (bUser?.is_referred) return res.json({ ok: true, already: true });
-
-    // บันทึก referred_by (ยังไม่ให้รางวัล — รอให้ B สั่งซื้อจริง)
-    if (!bUser?.referred_by) {
-      await supabase.from('line_users').upsert({ user_id: lineUserId, referred_by: refCode });
-    }
-  } else {
-    // ยังไม่มี LINE UID → เก็บไว้ใน ghost row เพื่อ backfill ภายหลัง
-    await supabase.from('orders').upsert([{
-      order_id    : `REFVISIT-${customerId.slice(0, 18)}`,
-      customer_id : customerId,
-      customer_name: '',
-      items       : [],
-      total       : 0,
-      status      : 'pending',
-      created_at  : new Date().toISOString(),
-      note        : `REF:${refCode}`
-    }], { onConflict: 'order_id' }).catch(() => {});
-  }
-
-  res.json({ ok: true, referrerFound: true });
-});
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// ─── processReferralReward() ─────────────────────────────
-// เรียกจากภายใน /send-order หลังออเดอร์แรกของ B บันทึกสำเร็จ
-async function processReferralReward(lineUserId, orderId, refCodeFromOrder) {
-  if (!lineUserId && !refCodeFromOrder) return;
-  try {
-    const { data: bUser } = lineUserId ? await supabase
-      .from('line_users').select('user_id, referred_by, is_referred')
-      .eq('user_id', lineUserId).maybeSingle() : { data: null };
-
-    if (bUser?.is_referred) return;
-
-    // refCode: จาก line_users → order โดยตรง → ghost row
-    let refCode = bUser?.referred_by || refCodeFromOrder || null;
-    if (!refCode) {
-      // หา customerId จาก line_users
-      const { data: luRow } = await supabase.from('line_users')
-        .select('customer_id').eq('user_id', lineUserId).maybeSingle();
-      if (luRow?.customer_id) {
-        const ghostId = `REFVISIT-${luRow.customer_id.slice(0, 18)}`;
-        const { data: ghost } = await supabase.from('orders')
-          .select('note').eq('order_id', ghostId).maybeSingle();
-        if (ghost?.note?.startsWith('REF:')) {
-          refCode = ghost.note.slice(4);
-          // บันทึกลง line_users ถาวร
-          await supabase.from('line_users')
-            .update({ referred_by: refCode }).eq('user_id', lineUserId).catch(() => {});
-          // ลบ ghost row
-          await supabase.from('orders').delete().eq('order_id', ghostId).catch(() => {});
-        }
-      }
-    }
-
-    if (!refCode || bUser?.is_referred) return;
-
-    // ป้องกัน race condition — ตรวจซ้ำที่ DB
-    const { data: existReward } = await supabase
-      .from('referral_rewards').select('id').eq('referred_uid', lineUserId || `ORD-${orderId}`).maybeSingle();
-    if (existReward) return;
-
-    // หา referrer
-    const { data: referrer } = await supabase
-      .from('line_users').select('user_id')
-      .eq('referral_code', refCode).maybeSingle();
-    if (!referrer) return;
-
-    // ── อ่าน config จาก shop_config (fallback → ENV → default) ──
-    const { data: cfgRows } = await supabase
-      .from('shop_config').select('key, value')
-      .in('key', ['referral_reward_type','referral_reward_value','referral_max_rewards',
-                  'referral_expire_days','referral_min_order']);
-    const cfg = Object.fromEntries((cfgRows || []).map(r => [r.key, r.value]));
-
-    const discountType  = cfg.referral_reward_type  || (process.env.REFERRAL_REWARD_PERCENT ? 'percent' : 'fixed');
-    const discountValue = Number(cfg.referral_reward_value  || process.env.REFERRAL_REWARD_DISCOUNT || 50);
-    const maxRewards    = Number(cfg.referral_max_rewards   || 0); // 0 = ไม่จำกัด
-    const expireDays    = Number(cfg.referral_expire_days   || process.env.REFERRAL_REWARD_EXPIRE_DAYS || 30);
-    const minOrder      = Number(cfg.referral_min_order     || process.env.REFERRAL_REWARD_MIN_ORDER  || 0);
-    const expireDate    = expireDays > 0
-      ? new Date(Date.now() + expireDays * 86400000).toISOString()
-      : null;
-
-    // ── ตรวจ max rewards ของ referrer ──
-    if (maxRewards > 0) {
-      const { count } = await supabase
-        .from('referral_rewards').select('id', { count: 'exact', head: true })
-        .eq('referrer_uid', referrer.user_id);
-      if ((count || 0) >= maxRewards) {
-        // ยังบันทึก is_referred=true ให้ B เพื่อกัน loop แต่ไม่สร้างคูปอง
-        if (lineUserId) await supabase.from('line_users').update({ is_referred: true }).eq('user_id', lineUserId);
-        console.log(`ℹ️ referrer ${referrer.user_id.slice(0,8)}… ครบ ${maxRewards} สิทธิ์แล้ว — ไม่สร้างคูปอง`);
-        await supabase.from('referral_rewards').insert([{
-          referrer_uid: referrer.user_id,
-          referred_uid: lineUserId || `ORD-${orderId}`,
-          coupon_id   : null,
-          order_id    : orderId
-        }]).catch(() => {});
-        return;
-      }
-    }
-
-    const rewardCode = 'RWD-' + referrer.user_id.slice(1, 7).toUpperCase() + '-' +
-                       Math.random().toString(36).slice(2, 6).toUpperCase();
-
-    const { data: newCoupon, error: cErr } = await supabase.from('coupons').insert([{
-      name          : '🎁 รางวัลชวนเพื่อน',
-      description   : 'ขอบคุณที่แนะนำเพื่อนมาซื้อ! ใช้ได้ครั้งเดียว',
-      code          : rewardCode,
-      discount_type : discountType,
-      discount_value: discountValue,
-      min_order     : minOrder,
-      apply_type    : 'manual',
-      condition_type: null,
-      start_date    : null,
-      end_date      : expireDate,
-      usage_limit   : 1,
-      used_count    : 0,
-      is_active     : true,
-      is_secret     : false,
-      secret_code   : null
-    }]).select().single();
-
-    if (cErr) { console.error('referral coupon create error:', cErr.message); return; }
-
-    // บันทึก reward record
-    await supabase.from('referral_rewards').insert([{
-      referrer_uid: referrer.user_id,
-      referred_uid: lineUserId || `ORD-${orderId}`,
-      coupon_id   : newCoupon.id,
-      order_id    : orderId
-    }]);
-
-    // อัปเดต B → is_referred = true (ป้องกันซ้ำถาวร)
-    if (lineUserId) await supabase.from('line_users').update({ is_referred: true }).eq('user_id', lineUserId);
-
-    // แจ้ง A ทาง LINE
-    if (process.env.LINE_TOKEN) {
-      const discStr   = discountType === 'percent' ? `${discountValue}%` : `฿${discountValue.toLocaleString()}`;
-      const expireStr = expireDays > 0 ? `ใช้ได้ภายใน ${expireDays} วัน` : 'ไม่มีวันหมดอายุ';
-      const shopUrl   = process.env.SHOP_URL || 'https://lineoa-u0v2.onrender.com/';
-      const flex = {
-        type: 'flex', altText: `🎁 คุณได้รับคูปองรางวัลชวนเพื่อน ลด ${discStr}!`,
-        contents: {
-          type: 'bubble',
-          hero: {
-            type: 'box', layout: 'vertical', paddingAll: 'lg', backgroundColor: '#E8593C',
-            contents: [{ type: 'text', text: '🎁 รางวัลชวนเพื่อน!', weight: 'bold', size: 'xl', align: 'center', color: '#ffffff' }]
-          },
-          body: {
-            type: 'box', layout: 'vertical', spacing: 'md',
-            contents: [
-              { type: 'text', text: 'เพื่อนของคุณสั่งซื้อครั้งแรกแล้ว!', size: 'sm', color: '#666666', wrap: true },
-              { type: 'separator' },
-              { type: 'text', text: `ส่วนลด: ${discStr}`, weight: 'bold', size: 'lg', color: '#333333' },
-              { type: 'box', layout: 'vertical', backgroundColor: '#FFF5F0', paddingAll: 'md', cornerRadius: 'md',
-                contents: [
-                  { type: 'text', text: 'โค้ดคูปองของคุณ', size: 'xs', color: '#888888' },
-                  { type: 'text', text: rewardCode, weight: 'bold', size: 'xl', color: '#E8593C', align: 'center' }
-                ]},
-              { type: 'text', text: expireStr, size: 'xs', color: '#999999', align: 'center' }
-            ]
-          },
-          footer: {
-            type: 'box', layout: 'vertical',
-            contents: [{ type: 'button', style: 'primary', color: '#E8593C',
-              action: { type: 'uri', label: '🛍️ ไปช้อปเลย', uri: shopUrl } }]
-          }
-        }
-      };
-      linePush(referrer.user_id, [flex])
-        .then(() => console.log(`🎁 referral reward → ${referrer.user_id.slice(0,12)}…`))
-        .catch(e  => console.warn('referral LINE push failed:', e.message));
-    }
-
-    console.log(`✅ referral reward: A=${referrer.user_id.slice(0,8)}… ← B=${lineUserId.slice(0,8)}…`);
-  } catch (e) {
-    console.warn('processReferralReward error:', e.message);
-  }
-}
-
-// ─── GET /referral-stats (admin) ──────────────────────────
-app.get('/referral-stats', async (req, res) => {
-  const { data, error } = await supabase
-    .from('referral_rewards')
-    .select(`id, created_at, order_id, referrer_uid, referred_uid, coupon_id,
-             coupons ( name, code, discount_type, discount_value )`)
-    .order('created_at', { ascending: false });
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ stats: data || [], total: data?.length || 0 });
-});
-
-// ══════════════════════════════════════════════════════════
-//  SECRET COUPON
-// ══════════════════════════════════════════════════════════
-
-// ─── POST /reveal-coupon ──────────────────────────────────
-// กรอกโค้ดลับ → ตรวจสอบ → คืนข้อมูลคูปอง (ไม่คืน secret_code กลับ)
-// body: { secretCode, customerId, orderTotal }
-app.post('/reveal-coupon', async (req, res) => {
-  const { secretCode, customerId, orderTotal } = req.body;
-  if (!secretCode) return res.status(400).json({ error: 'กรุณากรอกโค้ดลับ' });
-
-  const total = parseFloat(orderTotal) || 0;
-  const now   = new Date().toISOString();
-
-  const { data: coupon, error } = await supabase
-    .from('coupons').select('*')
-    .eq('is_active', true)
-    .eq('is_secret', true)
-    .ilike('secret_code', secretCode.trim())
-    .or(`start_date.is.null,start_date.lte.${now}`)
-    .or(`end_date.is.null,end_date.gte.${now}`)
-    .maybeSingle();
-
-  if (error) return res.status(500).json({ error: error.message });
-  // ตอบเหมือนกันทั้ง "ไม่พบ" และ "หมดอายุ" — ไม่เปิดเผยว่ามีอยู่หรือเปล่า
-  if (!coupon) return res.status(404).json({ error: 'โค้ดไม่ถูกต้อง หรือหมดอายุแล้ว' });
-
-  if (coupon.usage_limit !== null && coupon.used_count >= coupon.usage_limit)
-    return res.status(400).json({ error: 'โค้ดนี้ถูกใช้ครบจำนวนแล้ว' });
-
-  if (coupon.min_order > 0 && total > 0 && total < coupon.min_order)
-    return res.status(400).json({
-      error: `ต้องสั่งขั้นต่ำ ฿${coupon.min_order.toLocaleString()} ถึงจะใช้โค้ดนี้ได้`
-    });
-
-  if (coupon.condition_type === 'first_order' && customerId) {
-    const { data: prev } = await supabase.from('orders').select('id')
-      .eq('customer_id', customerId)
-      .not('order_id', 'like', 'LINE-%').not('order_id', 'like', 'LINK-%').limit(1);
-    if (prev?.length)
-      return res.status(400).json({ error: 'โค้ดนี้สำหรับการสั่งซื้อครั้งแรกเท่านั้น' });
-  }
-
-  const discount = calcDiscount(coupon, total);
-  const { secret_code: _hidden, ...safeCoupon } = coupon; // ซ่อน secret_code ก่อนส่งกลับ
-  res.json({ success: true, coupon: safeCoupon, discountAmount: discount });
-});
-
-// ─── GET /referral-config (admin) ────────────────────────
-app.get('/referral-config', async (req, res) => {
-  const keys = ['referral_reward_type','referral_reward_value','referral_max_rewards',
-                 'referral_expire_days','referral_min_order'];
-  const { data, error } = await supabase.from('shop_config').select('key, value').in('key', keys);
-  if (error) return res.status(500).json({ error: error.message });
-  const cfg = Object.fromEntries((data || []).map(r => [r.key, r.value]));
-  // ใส่ default ถ้าไม่มีใน DB
-  res.json({
-    referral_reward_type  : cfg.referral_reward_type   || 'fixed',
-    referral_reward_value : cfg.referral_reward_value  || '50',
-    referral_max_rewards  : cfg.referral_max_rewards   || '0',
-    referral_expire_days  : cfg.referral_expire_days   || '30',
-    referral_min_order    : cfg.referral_min_order     || '0',
-  });
-});
-
-// ─── POST /referral-config (admin) ───────────────────────
-app.post('/referral-config', async (req, res) => {
-  const allowed = ['referral_reward_type','referral_reward_value','referral_max_rewards',
-                   'referral_expire_days','referral_min_order'];
-  const upserts = allowed
-    .filter(k => req.body[k] !== undefined)
-    .map(k => ({ key: k, value: String(req.body[k]), updated_at: new Date().toISOString() }));
-
-  if (!upserts.length) return res.status(400).json({ error: 'no valid fields' });
-
-  const { error } = await supabase.from('shop_config').upsert(upserts, { onConflict: 'key' });
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ success: true });
-});
-
 app.use(express.static(__dirname));
 
 app.get('/shop', (req, res) => {
@@ -2217,15 +1767,9 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// ─── Health Check (ปลุก Render + keep-alive) ───────────────
-const _startTime = Date.now();
+// ─── Health Check (ป้องกัน Render Sleep) ───────────────────
 app.get('/health', (req, res) => {
-  res.json({
-    status : 'ok',
-    version: 'v4-coupon',
-    uptime : Math.floor((Date.now() - _startTime) / 1000) + 's',
-    time   : new Date().toISOString()
-  });
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // ─── Start ─────────────────────────────────────────────────
