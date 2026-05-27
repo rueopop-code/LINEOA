@@ -1735,7 +1735,7 @@ app.post('/webhook', async (req, res) => {
       if (isAutoReplyKeyword(rawText)) {
         console.log(`💬 ${displayName} ส่ง "${rawText.slice(0,30)}" ตรงกับ auto-reply keyword — ไม่แจ้งแอดมิน`);
       } else {
-        const notifyText = `💬 ${displayName} ส่งข้อความใน LINE (#${latest.order_id}):\n\n${rawText.slice(0,500)}`;
+        const notifyText = rawText.slice(0,500);
         notifyAllAdmins([{ type:'text', text: notifyText }]).catch(console.error);
       }
     } else {
