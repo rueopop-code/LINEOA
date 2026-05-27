@@ -51,7 +51,7 @@ header{background:linear-gradient(120deg,var(--c2) 0%,var(--c1) 55%,var(--c3) 10
 /* mobile cats bar (shown only on mobile) */
 .mobile-cats-bar{display:none;overflow-x:auto;scrollbar-width:none;gap:6px;padding:10px 16px 6px;background:#fff;border-bottom:1px solid var(--border);}
 .mobile-cats-bar::-webkit-scrollbar{display:none}
-@media(max-width:768px){
+@media(max-width:1024px){
   .sidebar{display:none;}
   .mobile-cats-bar{display:flex;}
   .shop-layout{max-width:100%;}
@@ -542,6 +542,22 @@ textarea.fi{resize:none;height:70px}
 .ad-no-today{display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 14px 4px;cursor:pointer;user-select:none;}
 .ad-no-today input[type=checkbox]{width:16px;height:16px;accent-color:var(--c1);cursor:pointer;flex-shrink:0;}
 .ad-no-today span{font-size:12px;color:#666;font-family:'Sarabun',sans-serif;}
+
+
+/* ── MOBILE HEADER ── */
+@media(max-width:480px){
+  .hdr{height:54px;padding:0 10px;gap:8px;}
+  .logo-circle{width:36px;height:36px;flex-shrink:0;}
+  .shop-name{font-size:15px;letter-spacing:0;}
+  .shop-tagline{font-size:9px;letter-spacing:.8px;}
+  .hdr-actions{gap:4px;}
+  /* ซ่อน label เหลือแค่ icon บน mobile */
+  .hdr-btn-label{display:none;}
+  .hdr-btn{padding:7px 10px;border-radius:12px;gap:0;}
+  .hdr-btn-icon{font-size:19px;}
+  /* ปุ่มตะกร้า — badge ไม่หลุด */
+  .hdr-btn-cart{padding:7px 10px;}
+}
 
 </style>
 </head>
