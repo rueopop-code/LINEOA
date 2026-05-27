@@ -1280,19 +1280,6 @@ textarea.fi{resize:none;height:70px}
           </div>
         </div>
 
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;color:#555;background:#fff7f0;border:1.5px solid #ffd0b5;border-radius:8px;padding:8px 12px;flex:1;">
-            <input type="checkbox" id="sc_is_secret" style="width:16px;height:16px;accent-color:#E8593C;" onchange="toggleSecretCodeField()">
-            🔒 คูปองลับ (ไม่แสดงในรายการ — ต้องกรอกโค้ดลับถึงเปิดเผยได้)
-          </label>
-        </div>
-        <div id="sc_secret_code_wrap" style="display:none;margin-bottom:10px;">
-          <label class="s-lbl" style="margin-bottom:4px;display:block;">🗝️ โค้ดลับ * <small style="color:#888;font-weight:400;">(ลูกค้าต้องกรอกโค้ดนี้เพื่อเปิดเผยคูปอง — แตกต่างจากโค้ดคูปองปกติ)</small></label>
-          <input class="s-inp" id="sc_secret_code" type="text" placeholder="เช่น VIP2024, FLASH50, SPECIAL"
-            style="padding:9px 10px;text-transform:uppercase;font-weight:700;letter-spacing:1px;"
-            oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')">
-          <div style="font-size:11px;color:#888;margin-top:4px;">ใช้ตัวอักษรภาษาอังกฤษและตัวเลขเท่านั้น • ลูกค้าจะไม่เห็นโค้ดนี้ จนกว่าจะกรอกถูกต้อง</div>
-        </div>
 
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button onclick="saveShopCoupon()" id="shopCpnSaveBtn" class="save-btn" style="margin:0;flex:1;">💾 บันทึก</button>
@@ -2616,14 +2603,13 @@ function resetShopCpnForm() {
   _scEditId = null;
   document.getElementById('shopCpnFormTitle').textContent = '➕ สร้างคูปองใหม่';
   document.getElementById('shopCpnSaveBtn').textContent = '💾 บันทึก';
-  ['sc_name','sc_desc','sc_dval','sc_maxdisc','sc_minorder','sc_limit','sc_start','sc_end','sc_code','sc_secret_code']
+  ['sc_name','sc_desc','sc_dval','sc_maxdisc','sc_minorder','sc_limit','sc_start','sc_end','sc_code']
     .forEach(id => { const el = document.getElementById(id); if(el) el.value=''; });
   document.getElementById('sc_dtype').value  = 'fixed';
   document.getElementById('sc_atype').value  = 'auto';
   document.getElementById('sc_cond').value   = 'always';
   document.getElementById('sc_active').checked    = true;
-  document.getElementById('sc_is_secret').checked = false;
-  document.getElementById('sc_secret_code_wrap').style.display = 'none';
+
   updateShopCpnForm();
 }
 
@@ -2642,9 +2628,6 @@ function editShopCoupon(c) {
   document.getElementById('sc_limit').value    = c.usage_limit || '';
   document.getElementById('sc_active').checked = c.is_active !== false;
   document.getElementById('sc_code').value     = c.code || '';
-  document.getElementById('sc_is_secret').checked = c.is_secret === true;
-  document.getElementById('sc_secret_code').value  = c.secret_code || '';
-  document.getElementById('sc_secret_code_wrap').style.display = c.is_secret ? 'block' : 'none';
   if (c.start_date) document.getElementById('sc_start').value = c.start_date.slice(0,16);
   if (c.end_date)   document.getElementById('sc_end').value   = c.end_date.slice(0,16);
   updateShopCpnForm();
@@ -2657,13 +2640,8 @@ async function saveShopCoupon() {
   if (!name) { toast('กรุณากรอกชื่อโปรโมชั่น'); return; }
   if (!dval) { toast('กรุณากรอกจำนวนส่วนลด'); return; }
   const atype2    = document.getElementById('sc_atype').value;
-  const isSecret  = document.getElementById('sc_is_secret').checked;
-  const secretCode = document.getElementById('sc_secret_code').value.trim();
-  if (atype2 === 'manual' && !isSecret && !document.getElementById('sc_code').value.trim()) {
+  if (atype2 === 'manual' && !document.getElementById('sc_code').value.trim()) {
     toast('กรุณากรอกรหัสโค้ดสำหรับคูปอง Manual'); return;
-  }
-  if (isSecret && !secretCode) {
-    toast('กรุณากรอกโค้ดลับสำหรับคูปองลับ'); return;
   }
 
   const atype   = document.getElementById('sc_atype').value;
@@ -2677,14 +2655,12 @@ async function saveShopCoupon() {
     max_discount:   document.getElementById('sc_maxdisc').value ? Number(document.getElementById('sc_maxdisc').value) : null,
     min_order:      Number(document.getElementById('sc_minorder').value || 0),
     apply_type:     atype,
-    code:           (!isSecret && atype === 'manual') ? (document.getElementById('sc_code').value.trim().toUpperCase() || null) : null,
+    code:           atype === 'manual' ? (document.getElementById('sc_code').value.trim().toUpperCase() || null) : null,
     condition_type: atype === 'auto' ? document.getElementById('sc_cond').value : null,
     usage_limit:    document.getElementById('sc_limit').value ? Number(document.getElementById('sc_limit').value) : null,
     start_date:     cfstart ? new Date(cfstart).toISOString() : null,
     end_date:       cfend   ? new Date(cfend).toISOString()   : null,
-    is_active:      document.getElementById('sc_active').checked,
-    is_secret:      isSecret,
-    secret_code:    isSecret ? secretCode.toUpperCase() : null
+    is_active:      document.getElementById('sc_active').checked
   };
 
   const btn = document.getElementById('shopCpnSaveBtn');
@@ -2985,6 +2961,8 @@ function toggleManualInput() {
 
 function renderCouponPicker(coupons, tot) {
   const list = document.getElementById('cpnPickerList');
+  // กรองเฉพาะคูปองโหมด "อัตโนมัติ" — โหมด "ต้องกรอกโค้ด" ต้องพิมพ์โค้ดเท่านั้น ไม่แสดงในรายการ
+  const visibleCoupons = coupons.filter(c => c.apply_type !== 'manual');
   // เพิ่ม option "กรอกโค้ดเอง" ท้ายสุดเสมอ (แม้ไม่มีคูปองในระบบ)
   const manualEntry = `<div class="cpn-pick-item" style="border-style:dashed;background:#fafafa;" onclick="closeCouponPicker();document.getElementById('manualCpnWrap').style.display='block';document.getElementById('cpnCodeInput').focus();">
     <div class="cpn-pick-top">
@@ -2993,12 +2971,12 @@ function renderCouponPicker(coupons, tot) {
     </div>
     <div class="cpn-pick-desc">กรอกโค้ดที่ได้รับมาเพื่อรับส่วนลด</div>
   </div>`;
-  if (!coupons.length) {
+  if (!visibleCoupons.length) {
     list.innerHTML = manualEntry;
     return;
   }
 
-  list.innerHTML = coupons.map(c => {
+  list.innerHTML = visibleCoupons.map(c => {
     const disc = calcDiscountAmount(c, tot);
     const discLabel = c.discount_type === 'percent'
       ? `${c.discount_value}%${c.max_discount?' (สูงสุด ฿'+c.max_discount.toLocaleString()+')':''}`
@@ -4878,20 +4856,6 @@ function shareReferralToLine() {
   window.open(`https://line.me/R/msg/text/?${encodeURIComponent(msg)}`, '_blank');
 }
 
-// ══════════════════════════════════════════════════════════
-//  SECRET COUPON
-// ══════════════════════════════════════════════════════════
-
-// toggle field โค้ดลับในฟอร์มแอดมิน
-function toggleSecretCodeField() {
-  const isSecret = document.getElementById('sc_is_secret')?.checked;
-  const wrap     = document.getElementById('sc_secret_code_wrap');
-  if (wrap) wrap.style.display = isSecret ? 'block' : 'none';
-  if (isSecret) {
-    const codeInput = document.getElementById('sc_code');
-    if (codeInput) codeInput.value = '';
-  }
-}
 
 // ── Referral Config (admin) ──────────────────────────────
 function refTypeChange() {
