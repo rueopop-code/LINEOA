@@ -15,6 +15,7 @@
 
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700;800&family=Prompt:wght@500;600;700;800;900&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js" defer>
+</script>
 <!-- xlsx ใช้แค่ตอน admin เปิด — defer ไม่บล็อกการโหลด -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
 <style>
@@ -396,12 +397,12 @@ textarea.fi{resize:none;height:70px}
 .ad-form-wrap{border:1.5px solid var(--c1);border-radius:12px;padding:14px;background:var(--cp);margin-bottom:12px}
 .ad-form-title{font-size:13px;font-weight:700;margin-bottom:12px;color:var(--c1)}
 /* Popup overlay + carousel */
-#adOverlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:2000;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(3px)}
+#adOverlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:2000;align-items:center;justify-content:center;padding:12px;backdrop-filter:blur(3px)}
 #adOverlay.show{display:flex;animation:fadein .3s ease}
-.ad-box{background:#fff;border-radius:18px;max-width:440px;width:100%;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.4);position:relative;animation:popscale .3s cubic-bezier(.34,1.56,.64,1)}
+.ad-box{background:#fff;border-radius:18px;max-width:600px;width:calc(100% - 32px);overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.4);position:relative;animation:popscale .3s cubic-bezier(.34,1.56,.64,1)}
 .ad-box-close{position:absolute;top:10px;right:10px;width:32px;height:32px;border-radius:50%;background:rgba(0,0,0,.45);color:#fff;border:none;font-size:17px;line-height:32px;text-align:center;cursor:pointer;z-index:10;transition:.15s}
 .ad-box-close:hover{background:rgba(0,0,0,.7)}
-.ad-box img,.ad-box video{width:100%;max-height:60vh;object-fit:contain;display:block;background:#000}
+.ad-box img,.ad-box video{width:100%;max-height:72vh;object-fit:contain;display:block;background:#000}
 .ad-box iframe{width:100%;height:240px;border:none;display:block}
 .ad-caption{padding:14px 18px;font-size:15px;font-weight:700;line-height:1.4;color:var(--ink)}
 .ad-link-btn{display:block;margin:0 18px 16px;padding:11px;background:var(--c1);color:#fff;text-align:center;border-radius:10px;font-weight:700;font-size:14px;text-decoration:none;transition:.15s}
@@ -514,6 +515,33 @@ textarea.fi{resize:none;height:70px}
 .qe-inp:focus{outline:none;border-color:var(--c1);}
 .qe-save-all{width:100%;margin-top:14px;padding:13px;background:linear-gradient(120deg,var(--c2),var(--c1));color:#fff;border:none;border-radius:12px;font-size:14px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;transition:.2s;box-shadow:0 3px 12px rgba(192,57,43,.3);}
 .qe-save-all:hover{transform:translateY(-1px);box-shadow:0 6px 18px rgba(192,57,43,.4);}
+
+
+/* ── AD PRODUCT TAG ── */
+.ad-tag-wrap{margin-bottom:7px;}
+.ad-tag-lbl{font-size:12px;font-weight:700;color:var(--c1);margin-bottom:5px;display:flex;align-items:center;gap:5px;}
+.ad-tag-sel{width:100%;padding:9px 12px;border:1.5px solid #ffc0b8;border-radius:9px;font-size:13px;font-family:'Sarabun',sans-serif;background:#fff9f8;color:#1a1a1a;cursor:pointer;outline:none;}
+.ad-tag-sel:focus{border-color:var(--c1);}
+.ad-tag-badge{display:inline-flex;align-items:center;gap:5px;background:var(--cp);border:1.5px solid #ffc0b8;border-radius:20px;padding:3px 10px;font-size:12px;font-weight:700;color:var(--c1);margin-top:4px;}
+
+
+/* ── FAVORITE STAR ── */
+.fav-btn{position:absolute;top:8px;left:8px;width:30px;height:30px;background:rgba(255,255,255,.9);border:none;border-radius:50%;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,.15);z-index:10;transition:.2s;line-height:1;}
+.fav-btn:hover{transform:scale(1.2);}
+.fav-btn.starred{background:linear-gradient(135deg,#FFD700,#FFA000);box-shadow:0 2px 10px rgba(255,160,0,.4);}
+/* bnew ต้องเลื่อนไปขวา เมื่อมีดาวอยู่ซ้าย */
+.pcard .bnew{left:auto;right:10px;}
+/* ── NEW BADGE DAYS INPUT ── */
+.new-days-wrap{display:flex;align-items:center;gap:8px;margin-top:6px;padding:8px 10px;background:#fff9f8;border:1.5px dashed #ffc0b8;border-radius:9px;}
+.new-days-wrap label{font-size:12px;color:#555;white-space:nowrap;}
+.new-days-inp{width:60px;padding:5px 8px;border:1.5px solid var(--border);border-radius:7px;font-size:13px;font-family:'Sarabun',sans-serif;text-align:center;}
+.new-days-inp:focus{outline:none;border-color:var(--c1);}
+
+
+/* ── AD NO-SHOW-TODAY ── */
+.ad-no-today{display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 14px 4px;cursor:pointer;user-select:none;}
+.ad-no-today input[type=checkbox]{width:16px;height:16px;accent-color:var(--c1);cursor:pointer;flex-shrink:0;}
+.ad-no-today span{font-size:12px;color:#666;font-family:'Sarabun',sans-serif;}
 
 </style>
 </head>
@@ -1013,7 +1041,18 @@ textarea.fi{resize:none;height:70px}
 
             <input class="s-inp" id="adCaption" placeholder="ข้อความ (ไม่บังคับ)" style="margin-bottom:7px">
             <input class="s-inp" id="adBtnUrl"  placeholder="ลิงก์ปุ่ม เช่น https://..." style="margin-bottom:7px">
-            <input class="s-inp" id="adBtnTxt"  placeholder="ข้อความปุ่ม เช่น ดูเพิ่มเติม" style="margin-bottom:12px">
+            <input class="s-inp" id="adBtnTxt"  placeholder="ข้อความปุ่ม เช่น ดูเพิ่มเติม" style="margin-bottom:7px">
+
+            <!-- 🏷️ แท็กสินค้า (ใหม่) -->
+            <div class="ad-tag-wrap">
+              <div class="ad-tag-lbl">🏷️ แท็กสินค้า <span style="font-weight:400;color:#888;font-size:11px">(กดโฆษณาแล้วไปที่สินค้านี้)</span></div>
+              <select class="ad-tag-sel" id="adTagProd">
+                <option value="">— ไม่แท็กสินค้า —</option>
+              </select>
+              <div id="adTagBadge" style="display:none;" class="ad-tag-badge">
+                <span>🏷️</span><span id="adTagBadgeName"></span>
+              </div>
+            </div>
 
             <div style="display:flex;gap:8px">
               <button class="save-btn" style="flex:1;margin-top:0;padding:11px" onclick="adSaveItem()">💾 บันทึกโฆษณานี้</button>
@@ -1078,7 +1117,12 @@ textarea.fi{resize:none;height:70px}
           </div>
         </div>
         <div class="form-full">
-          <label class="chk-row"><input type="checkbox" id="fIsNew" checked> ติด badge NEW</label>
+          <label class="chk-row"><input type="checkbox" id="fIsNew" onchange="toggleNewDays('fNewDaysWrap',this)"> ติด badge NEW</label>
+          <div class="new-days-wrap" id="fNewDaysWrap" style="display:none;">
+            <label>🕐 แสดง NEW นาน</label>
+            <input class="new-days-inp" type="number" id="fNewDays" min="1" max="365" value="7" placeholder="7">
+            <label>วัน (0 = ตลอดไป)</label>
+          </div>
         </div>
       </div>
       <button class="save-btn" style="margin-top:14px" onclick="saveProduct(false)">✅ บันทึกสินค้า</button>
@@ -1265,7 +1309,14 @@ textarea.fi{resize:none;height:70px}
         <div class="sizes-builder" id="eSzBuilder"></div>
         <button class="addsz-btn" onclick="addESzRow()">+ เพิ่มขนาด</button>
       </div>
-      <div class="form-full"><label class="chk-row"><input type="checkbox" id="eIsNew"> ติด badge NEW</label></div>
+      <div class="form-full">
+        <label class="chk-row"><input type="checkbox" id="eIsNew" onchange="toggleNewDays('eNewDaysWrap',this)"> ติด badge NEW</label>
+        <div class="new-days-wrap" id="eNewDaysWrap" style="display:none;">
+          <label>🕐 แสดง NEW นาน</label>
+          <input class="new-days-inp" type="number" id="eNewDays" min="1" max="365" value="7" placeholder="7">
+          <label>วัน (0 = ตลอดไป)</label>
+        </div>
+      </div>
     </div>
     <button class="save-btn" style="margin-top:14px" onclick="saveProduct(true)">💾 บันทึกการแก้ไข</button>
   </div>
@@ -1282,6 +1333,11 @@ textarea.fi{resize:none;height:70px}
     <div id="adBoxContent"></div>
     <div id="adBoxCaption" class="ad-caption" style="display:none"></div>
     <a id="adBoxBtn" class="ad-link-btn" href="#" target="_blank" rel="noopener" style="display:none"></a>
+    <!-- ไม่แสดงวันนี้อีก -->
+    <label class="ad-no-today">
+      <input type="checkbox" id="adNoToday" onchange="adHandleNoToday(this)">
+      <span>ไม่แสดงโฆษณาของวันนี้อีก</span>
+    </label>
     <!-- carousel nav — แสดงเฉพาะเมื่อมีมากกว่า 1 โฆษณา -->
     <div class="ad-carousel-nav" id="adCarouselNav" style="display:none">
       <button class="ad-nav-btn" id="adNavPrev" onclick="adGo(-1)">◀</button>
@@ -1867,6 +1923,7 @@ async function saveProduct(isEdit) {
     p.desc  = document.getElementById('eDesc').value.trim();
     p.emoji = document.getElementById('eEmoji').value.trim() || p.emoji;
     p.isNew = document.getElementById('eIsNew').checked;
+    p.newDays = p.isNew ? (parseInt(document.getElementById('eNewDays')?.value)||0) : 0;
     if (editImgFile) {
       try {
         toast('⏳ กำลังอัปโหลดรูป...');
@@ -1930,12 +1987,14 @@ async function saveProduct(isEdit) {
     img: imgUrl,
     sizes,
     isNew: document.getElementById('fIsNew').checked,
+        newDays: document.getElementById('fIsNew').checked ? (parseInt(document.getElementById('fNewDays')?.value)||0) : 0,
     ts: Date.now()
   };
   products.unshift(newP);
   bulkQueue=[]; renderBulkThumbs();
   ['fName','fDesc','fEmoji'].forEach(id=>document.getElementById(id).value='');
-  document.getElementById('fIsNew').checked=true;
+  document.getElementById('fIsNew').checked=false;
+  const fWrap=document.getElementById('fNewDaysWrap'); if(fWrap) fWrap.style.display='none';
   // reset size builder → 1 แถวว่าง
   document.getElementById('szBuilder').innerHTML='';
   addSzRow('szBuilder');
@@ -1965,9 +2024,33 @@ function applyFilter() {
   else if (srt==='price_asc') list.sort((a,b)=>Math.min(...a.sizes.map(s=>s.p))-Math.min(...b.sizes.map(s=>s.p)));
   else if (srt==='price_desc') list.sort((a,b)=>Math.min(...b.sizes.map(s=>s.p))-Math.min(...a.sizes.map(s=>s.p)));
   else if (srt==='new') list.sort((a,b)=>(b.ts||0)-(a.ts||0));
+  // ⭐ starred สินค้าโปรดขึ้นก่อนเสมอ (stable sort)
   renderGrid(list);
   document.getElementById('countBadge').textContent = list.length+' รายการ';
 }
+
+// ══════════════════════════════════════════════════
+//  FAVOURITE STAR (in-memory Set + localStorage)
+// ══════════════════════════════════════════════════
+const MS_FAV_KEY = 'ms_favs_v1';
+let _msFavSet = new Set();
+try {
+  const _savedFavs = JSON.parse(localStorage.getItem(MS_FAV_KEY) || '[]');
+  _savedFavs.forEach(id => _msFavSet.add(String(id)));
+} catch(_e) {}
+function msGetFavs() { return _msFavSet; }
+function msSetFavs() {
+  try { localStorage.setItem(MS_FAV_KEY, JSON.stringify([..._msFavSet])); } catch(_e){}
+}
+function msToggleFav(productId) {
+  const pid = String(productId);
+  const adding = !_msFavSet.has(pid);
+  if (adding) { _msFavSet.add(pid); toast('⭐ เพิ่มในรายการโปรดแล้ว'); }
+  else         { _msFavSet.delete(pid); toast('เอาออกจากรายการโปรดแล้ว ☆'); }
+  msSetFavs();
+  applyFilter();
+}
+
 function renderGrid(list) {
   if (!list) { applyFilter(); return; }
   const g = document.getElementById('prodGrid');
@@ -1981,14 +2064,20 @@ function renderGrid(list) {
 
   // 🔽 จัดเรียง: สินค้าหมด (stock = 0) → ดันลงล่างสุด
   // สินค้าที่ไม่ track stock (null) หรือมีของ → อยู่บน, รักษาลำดับเดิม
+  const favIds = msGetFavs();
   const sortedList = [...list].sort((a, b) => {
+    // ⭐ fav ขึ้นก่อนเสมอ (priority 1)
+    const af = favIds.has(String(a.id)) ? 0 : 1;
+    const bf = favIds.has(String(b.id)) ? 0 : 1;
+    if (af !== bf) return af - bf;
+    // 🚫 out-of-stock ลงล่าง (priority 2)
     const aStock = totalStock(a);
     const bStock = totalStock(b);
-    const aOut = (aStock === 0);   // หมดเฉพาะตอน stock = 0 จริงๆ
+    const aOut = (aStock === 0);
     const bOut = (bStock === 0);
-    if (aOut && !bOut) return 1;   // a หมด → ลงล่าง
-    if (!aOut && bOut) return -1;  // b หมด → ลงล่าง
-    return 0;                      // เท่าเทียม → ลำดับเดิม
+    if (aOut && !bOut) return 1;
+    if (!aOut && bOut) return -1;
+    return 0;
   });
 
   g.innerHTML = sortedList.map((p, idx) => {
@@ -2021,8 +2110,13 @@ function renderGrid(list) {
     const wholesaleBadge = hasWholesale(p)
       ? `<span style="display:inline-block;background:#27AE60;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:6px;margin-left:4px;">มีราคาส่ง</span>`
       : '';
-    return `<div class="pcard" style="${cardOpacity}" ${cardClick}>
-      <div class="pcard-img" style="position:relative;">${imgH}${p.isNew?'<div class="bnew">NEW</div>':''}${stockBadge}</div>
+    const isFav = msGetFavs().has(String(p.id));
+    const newVisible = msIsNewVisible(p);
+    return `<div class="pcard" data-id="${p.id}" style="${cardOpacity}" ${cardClick}>
+      <div class="pcard-img" style="position:relative;">
+        <button class="fav-btn ${isFav?'starred':''}" onclick="event.stopPropagation();msToggleFav(${p.id})" title="${isFav?'เอาออกจากโปรด':'เพิ่มในโปรด'}">${isFav?'⭐':'☆'}</button>
+        ${imgH}${newVisible?'<div class="bnew">NEW</div>':''}${stockBadge}
+      </div>
       <div class="pcard-body">
         <div class="pcard-cat">${p.cat}${wholesaleBadge}</div>
         <div class="pcard-name">${p.name}</div>
@@ -3508,11 +3602,19 @@ function adLoadUI() {
   adItems = Array.isArray(c.items) ? c.items : [];
   adRenderList();
   adResetForm();
+  adFillTagDropdown('');
 }
 
 function adToggleChange() {
   const on = document.getElementById('adEnabled').checked;
   document.getElementById('adConfig').style.display = on ? 'block' : 'none';
+  // บันทึกสถานะ enabled/disabled ลง localStorage ทันที
+  try {
+    const c = adGetCfg();
+    c.enabled = on;
+    localStorage.setItem(AD_KEY, JSON.stringify(c));
+    toast(on ? '📢 เปิดโฆษณาแล้ว' : '🔕 ปิดโฆษณาแล้ว — จะไม่แสดงจนกว่าจะเปิดใหม่');
+  } catch(_e) {}
 }
 
 // ── Render ad card list ──────────────────────────────────
@@ -3564,6 +3666,7 @@ function adResetForm() {
   document.getElementById('adUrl').value     = '';
   document.getElementById('adUrlPrev').innerHTML = '';
   document.getElementById('adFile').value = '';
+  adFillTagDropdown('');
   adShowPrev(); adTypeChange();
   adRenderList();
 }
@@ -3579,6 +3682,7 @@ function adEditItem(i) {
   document.getElementById('adUrl').value     = item.url     || '';
   adFileData = item.fileData || ''; adFileMime = item.fileMime || '';
   adShowPrev(); adTypeChange();
+  adFillTagDropdown(item.tagProductId || '');
   if (item.type==='youtube'||item.type==='url') adUrlPreview();
   adRenderList(); // re-render to highlight card
   document.getElementById('adFormWrap').scrollIntoView({ behavior:'smooth', block:'nearest' });
@@ -3587,8 +3691,15 @@ function adEditItem(i) {
 function adDeleteItem(i) {
   if (!confirm(`ลบโฆษณา #${i+1}?`)) return;
   adItems.splice(i, 1);
+  // บันทึกลง localStorage ทันทีหลังลบ
+  try {
+    const c = adGetCfg();
+    c.items = adItems;
+    localStorage.setItem(AD_KEY, JSON.stringify(c));
+  } catch(_e) {}
   if (adEditIdx === i) adResetForm();
   else { adEditIdx = -1; adRenderList(); }
+  toast('ลบโฆษณาแล้ว 🗑️');
 }
 
 function adCancelEdit() { adResetForm(); }
@@ -3604,7 +3715,8 @@ function adSaveItem() {
   if ((type==='image'||type==='video') && !adFileData) { toast('กรุณาเลือกไฟล์ก่อน'); return; }
   if ((type==='youtube'||type==='url') && !url) { toast('กรุณาใส่ URL ก่อน'); return; }
 
-  const item = { type, caption, btnUrl, btnTxt, url, fileData: adFileData, fileMime: adFileMime };
+  const tagProductId = document.getElementById('adTagProd')?.value || '';
+  const item = { type, caption, btnUrl, btnTxt, url, fileData: adFileData, fileMime: adFileMime, tagProductId };
   if (adEditIdx >= 0) {
     adItems[adEditIdx] = item;
     toast(`แก้ไขโฆษณา #${adEditIdx+1} แล้ว ✓`);
@@ -3724,10 +3836,26 @@ function previewAd() {
 }
 
 // ── Carousel overlay ─────────────────────────────────────
+function adHandleNoToday(chk) {
+  if (chk.checked) {
+    localStorage.setItem('ms_ad_no_today', new Date().toISOString().slice(0,10));
+    closeAdOverlay();
+    toast('จะไม่แสดงโฆษณาวันนี้อีก');
+  } else {
+    localStorage.removeItem('ms_ad_no_today');
+  }
+}
+function adIsHiddenToday() {
+  try { return localStorage.getItem('ms_ad_no_today')===new Date().toISOString().slice(0,10); }
+  catch { return false; }
+}
 function showAdOverlay(cfg, force) {
   if (!cfg || !cfg.enabled) return;
   const items = cfg.items || [];
   if (!items.length) return;
+
+  // ตรวจว่าผู้ใช้ติ๊ก "ไม่แสดงวันนี้อีก" ไว้ไหม
+  if (!force && adIsHiddenToday()) return;
 
   // frequency gate
   if (!force) {
@@ -3753,6 +3881,9 @@ function adRenderSlide(items, idx) {
   adCurSlide = idx;
   const item = items[idx];
   const content = document.getElementById('adBoxContent');
+  // reset checkbox (อย่าค้างจากครั้งก่อน)
+  const noTodayChk = document.getElementById('adNoToday');
+  if (noTodayChk) noTodayChk.checked = false;
   content.innerHTML = '';
 
   // content
@@ -3767,6 +3898,7 @@ function adRenderSlide(items, idx) {
       const img = document.createElement('img');
       img.src=item.fileData; img.alt=item.caption||'โฆษณา';
       img.style.cssText='width:100%;max-height:55vh;object-fit:contain;display:block';
+      if (item.tagProductId) img.style.cursor='pointer';
       content.appendChild(img);
     }
   } else if (t==='youtube' && item.url) {
@@ -3789,6 +3921,7 @@ function adRenderSlide(items, idx) {
       const img = document.createElement('img');
       img.src=url; img.alt=item.caption||'โฆษณา';
       img.style.cssText='width:100%;max-height:55vh;object-fit:contain;display:block';
+      if (item.tagProductId) img.style.cursor='pointer';
       content.appendChild(img);
     }
   } else return;
@@ -3797,6 +3930,32 @@ function adRenderSlide(items, idx) {
   const cap = document.getElementById('adBoxCaption');
   if (item.caption) { cap.textContent=item.caption; cap.style.display='block'; }
   else cap.style.display='none';
+
+  // product tag badge
+  let tagBadgeEl = document.getElementById('adBoxTagBadge');
+  if (!tagBadgeEl) {
+    tagBadgeEl = document.createElement('div');
+    tagBadgeEl.id = 'adBoxTagBadge';
+    tagBadgeEl.style.cssText = 'text-align:center;padding:6px 0 2px;';
+    document.getElementById('adBoxBtn').parentNode.insertBefore(tagBadgeEl, document.getElementById('adBoxBtn'));
+  }
+  if (item.tagProductId) {
+    const tp = products.find(x => String(x.id)===String(item.tagProductId));
+    if (tp) {
+      tagBadgeEl.innerHTML = `<button onclick="closeAdOverlay();adGoToTaggedProduct('${item.tagProductId}')" style="background:linear-gradient(120deg,var(--c2),var(--c1));color:#fff;border:none;border-radius:20px;padding:8px 18px;font-size:13px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">🏷️ ดูสินค้า: ${tp.name}</button>`;
+      tagBadgeEl.style.display='block';
+      // ทำให้รูปคลิกได้ด้วย
+      content.style.cursor='pointer';
+      content.onclick = ()=>{ closeAdOverlay(); adGoToTaggedProduct('${item.tagProductId}'); };
+      content.onclick = (()=>{const pid=item.tagProductId; return ()=>{ closeAdOverlay(); adGoToTaggedProduct(pid); }})();
+    } else {
+      tagBadgeEl.style.display='none';
+      content.onclick=null; content.style.cursor='';
+    }
+  } else {
+    tagBadgeEl.style.display='none';
+    content.onclick=null; content.style.cursor='';
+  }
 
   // button
   const btn = document.getElementById('adBoxBtn');
@@ -3866,6 +4025,9 @@ function openEdit(id) {
   document.getElementById('eDesc').value=p.desc||'';
   document.getElementById('eEmoji').value=p.emoji||'';
   document.getElementById('eIsNew').checked=p.isNew||false;
+  if(document.getElementById('eNewDays')) document.getElementById('eNewDays').value = p.newDays||7;
+  const eWrap = document.getElementById('eNewDaysWrap');
+  if(eWrap) eWrap.style.display = (p.isNew) ? 'flex' : 'none';
   const eCat=document.getElementById('eCat');
   for(let i=0;i<eCat.options.length;i++) if(eCat.options[i].value===p.cat){eCat.selectedIndex=i;break;}
   const sb=document.getElementById('eSzBuilder');
@@ -5032,6 +5194,91 @@ async function saveQE() {
 document.getElementById('qeModal').addEventListener('click', function(e){
   if (e.target === this) closeQE();
 });
+
+// ══════════════════════════════════════════════════════════
+//  AD PRODUCT TAG — ฟังก์ชันใหม่ ไม่แก้โค้ดเดิม
+// ══════════════════════════════════════════════════════════
+
+// เติม dropdown ด้วยสินค้าปัจจุบัน
+function adFillTagDropdown(selectedId) {
+  const sel = document.getElementById('adTagProd');
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">— ไม่แท็กสินค้า —</option>';
+  const sorted = [...products].sort((a,b) => a.name.localeCompare(b.name,'th'));
+  sorted.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.name + (p.cat ? ` (${p.cat})` : '');
+    if (String(p.id) === String(selectedId || cur)) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  adUpdateTagBadge();
+}
+
+// แสดง badge ชื่อสินค้าที่แท็กไว้
+function adUpdateTagBadge() {
+  const sel  = document.getElementById('adTagProd');
+  const wrap = document.getElementById('adTagBadge');
+  const name = document.getElementById('adTagBadgeName');
+  if (!sel || !wrap) return;
+  const pid = sel.value;
+  if (!pid) { wrap.style.display='none'; return; }
+  const p = products.find(x => String(x.id) === String(pid));
+  if (p) { name.textContent = p.name; wrap.style.display='inline-flex'; }
+  else   { wrap.style.display='none'; }
+}
+
+// hook onchange ให้ select
+document.addEventListener('DOMContentLoaded', () => {
+  const sel = document.getElementById('adTagProd');
+  if (sel) sel.addEventListener('change', adUpdateTagBadge);
+});
+
+// scroll + highlight สินค้าที่แท็กในหน้าร้าน
+function adGoToTaggedProduct(productId) {
+  if (!productId) return;
+  const pid = +productId;
+  const p = products.find(x => x.id === pid);
+  if (!p) return;
+  // เซต category filter ถ้าจำเป็น
+  if (activeCat && activeCat !== 'ทั้งหมด' && p.cat !== activeCat) {
+    setACat('ทั้งหมด');
+  }
+  // รอ render แล้ว scroll ไปหาการ์ด
+  setTimeout(() => {
+    const card = document.querySelector(`.pcard[data-id="${pid}"]`);
+    if (card) {
+      card.scrollIntoView({ behavior:'smooth', block:'center' });
+      card.style.transition = 'box-shadow .3s, outline .3s';
+      card.style.outline = '3px solid var(--c1)';
+      card.style.boxShadow = '0 0 0 6px rgba(192,57,43,.15)';
+      setTimeout(() => { card.style.outline=''; card.style.boxShadow=''; }, 2000);
+    }
+  }, 300);
+}
+
+
+
+// ══════════════════════════════════════════════════════════
+//  NEW BADGE DAYS — ตรวจว่ายังควรแสดง NEW หรือไม่
+// ══════════════════════════════════════════════════════════
+function msIsNewVisible(p) {
+  if (!p.isNew) return false;
+  const days = p.newDays;
+  if (!days || days === 0) return true; // ตลอดไป
+  const tsAdded = p.ts || 0;
+  if (!tsAdded) return true;
+  const diffDays = (Date.now() - tsAdded) / (1000 * 60 * 60 * 24);
+  return diffDays <= days;
+}
+
+// toggle แสดง/ซ่อน days input ตาม checkbox
+function toggleNewDays(wrapId, chk) {
+  const w = document.getElementById(wrapId);
+  if (w) w.style.display = chk.checked ? 'flex' : 'none';
+}
+
 </script>
 
 
