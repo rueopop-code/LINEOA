@@ -5192,10 +5192,11 @@ async function saveQE() {
   btn.disabled = true;
 
   try {
-    for (const pid of changed) {
+    // บันทึกทุกรายการพร้อมกัน (เร็วกว่าทีละตัวมาก)
+    await Promise.all([...changed].map(pid => {
       const p = products.find(x => x.id === pid);
-      if (p) await saveOne(p);
-    }
+      return p ? saveOne(p) : Promise.resolve();
+    }));
     renderGrid(); renderPMList();
     toast(`✅ บันทึก ${changed.size} รายการแล้ว`);
     closeQE();
