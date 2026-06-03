@@ -1497,8 +1497,10 @@ app.post('/webhook', async (req, res) => {
         }
         continue;
       } else {
-        // ไม่พบออเดอร์ที่ตรงกับเบอร์นี้ → ไม่ตอบ ปล่อยให้แอดมินดูแลเอง
-        console.log(`💬 ${userId.slice(0,12)}… พิมพ์เบอร์ "${rawText}" แต่ไม่พบออเดอร์ — ไม่ตอบ`);
+        await linePush(userId, [{
+          type: 'text',
+          text: `🔍 ไม่พบออเดอร์ที่ใช้เบอร์ ${rawText}\n\n📌 กรุณาตรวจสอบ:\n• เบอร์ที่พิมพ์ตรงกับที่กรอกตอนสั่งไหม?\n• ลองพิมพ์เบอร์ให้ครบ 10 หลัก เช่น 0812345678\n\nหากยังไม่พบ กดลิงก์ด้านล่างเพื่อสั่งสินค้าใหม่ได้เลยค่ะ\n${SHOP_URL}`
+        }]).catch(e => console.warn('push phone-notfound failed:', e.message));
         continue;
       }
     }
@@ -1728,16 +1730,17 @@ app.post('/webhook', async (req, res) => {
     }
 
     // ✨ แจ้งแอดมินเฉพาะลูกค้าที่มีออเดอร์จริง + ไม่ใช่ keyword auto-reply
+    // *** ข้อความแชทธรรมดา (ไม่เกี่ยวกับออเดอร์/ผูกบัญชี) → ไม่แจ้งแอดมิน ***
     if (latest) {
       // ถ้าตรงกับ keyword auto-reply ของ LINE OA → ไม่แจ้ง (LINE OA ตอบให้แล้ว)
       if (isAutoReplyKeyword(rawText)) {
         console.log(`💬 ${displayName} ส่ง "${rawText.slice(0,30)}" ตรงกับ auto-reply keyword — ไม่แจ้งแอดมิน`);
       } else {
-        const notifyText = rawText.slice(0,500);
-        notifyAllAdmins([{ type:'text', text: notifyText }]).catch(console.error);
+        // ไม่แจ้งแอดมินสำหรับข้อความแชทธรรมดา
+        // (แอดมินจะเห็นในหน้า Admin Panel เอง ไม่ต้องรบกวน LINE)
+        console.log(`💬 ${displayName} ส่งข้อความ (#${latest.order_id}) "${rawText.slice(0,30)}" — บันทึกใน Admin Panel (ไม่แจ้ง LINE)`);
       }
     } else {
-      // ยังไม่ผูกบัญชี → บันทึกแชทไว้แต่ไม่แจ้งแอดมิน ไม่ตอบ
       console.log(`💬 ${displayName} ทักเข้ามาใน LINE (ยังไม่มีออเดอร์) — ไม่แจ้งแอดมิน`);
     }
 
