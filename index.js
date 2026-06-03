@@ -1409,8 +1409,74 @@ app.post('/webhook', async (req, res) => {
         continue;
       }
 
-      // postback อื่นๆ ที่ไม่รู้จัก
-      continue;
+      if (action === 'view_history') {
+        // ดึงออเดอร์ที่เสร็จสิ้น/ยกเลิกทั้งหมดของ user นี้
+        const { data: histOrders } = await supabase.from('orders')
+          .select('*')
+          .eq('line_user_id', userId)
+          .in('status', ['done', 'cancelled'])
+          .not('order_id', 'like', 'LINE-%')
+          .not('order_id', 'like', 'LINK-%')
+          .order('created_at', { ascending: false })
+          .limit(10);
+
+        const realHist = (histOrders || []).filter(o => Array.isArray(o.items) && o.items.length > 0);
+
+        if (!realHist.length) {
+          await safeReply(replyToken, userId, [{ type:'text', text:'📭 ยังไม่มีประวัติออเดอร์ค่ะ' }]);
+          continue;
+        }
+
+        const histBubbles = realHist.slice(0, 10).map(o => ({
+          type:'bubble', size:'kilo',
+          header:{
+            type:'box', layout:'vertical',
+            backgroundColor: statusColor(o.status),
+            paddingAll:'md',
+            contents:[
+              { type:'text', text:`${getStatusEmoji(o.status)} ${STATUS_LABELS_TH[o.status]||o.status}`, color:'#ffffff', size:'sm', weight:'bold' },
+              { type:'text', text:`#${o.order_id}`, color:'#ffffff', size:'xs', margin:'xs' }
+            ]
+          },
+          body:{
+            type:'box', layout:'vertical', spacing:'sm', paddingAll:'md',
+            contents:[
+              ...((o.items||[]).slice(0,3).map(i => ({
+                type:'text', text:`${i.emoji||'•'} ${i.name} ×${i.qty}`,
+                size:'xs', color:'#555555', wrap:true
+              }))),
+              ...((o.items||[]).length > 3 ? [{ type:'text', text:`+${o.items.length-3} รายการ`, size:'xxs', color:'#888888' }] : []),
+              { type:'separator', margin:'md' },
+              { type:'box', layout:'horizontal', margin:'md',
+                contents:[
+                  { type:'text', text:'รวม', size:'xs', color:'#888888', flex:1 },
+                  { type:'text', text:`฿${(o.total||0).toLocaleString()}`, size:'sm', color:'#C0392B', weight:'bold', align:'end', flex:2 }
+                ]
+              },
+              { type:'text', text: new Date(o.created_at).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short', timeZone:'Asia/Bangkok' }), size:'xxs', color:'#aaaaaa', margin:'xs' }
+            ]
+          },
+          footer:{
+            type:'box', layout:'vertical', paddingAll:'md', paddingTop:'none',
+            contents:[
+              { type:'button', style:'primary', color:'#C0392B', height:'sm',
+                action:{ type:'postback', label:'📋 ดูรายละเอียด',
+                         data:`action=view_order&id=${o.order_id}`,
+                         displayText:`📋 ดูรายละเอียด #${o.order_id}` }
+              }
+            ]
+          }
+        }));
+
+        await safeReply(replyToken, userId, [
+          { type:'text', text:`📜 ประวัติออเดอร์ของคุณ (${realHist.length} รายการ)` },
+          { type:'flex', altText:`ประวัติออเดอร์ ${realHist.length} รายการ`,
+            contents:{ type:'carousel', contents: histBubbles } }
+        ]);
+        continue;
+      }
+
+
     }
 
     if (ev.type !== 'message' || ev.message?.type !== 'text') continue;
@@ -1563,8 +1629,17 @@ app.post('/webhook', async (req, res) => {
         continue;
       }
 
-      // ส่ง Flex carousel (สูงสุด 10 bubble ใน carousel)
-      const bubbles = realOrders.slice(0, 10).map(o => ({
+      // แยกออเดอร์ใหม่ (กำลังดำเนินการ) vs ออเดอร์เก่า (เสร็จสิ้น/ยกเลิก)
+      const DONE_STATUSES = ['done', 'cancelled'];
+      const activeOrders = realOrders.filter(o => !DONE_STATUSES.includes(o.status));
+      const historyOrders = realOrders.filter(o => DONE_STATUSES.includes(o.status));
+
+      // ถ้าลูกค้าพิมพ์ "ประวัติ" → แสดงออเดอร์เก่าแทน
+      const wantHistory = text.includes('ประวัติ') || text.includes('history') || text.includes('เก่า');
+      const ordersToShow = wantHistory ? historyOrders : (activeOrders.length ? activeOrders : realOrders);
+
+      // helper สร้าง bubble แต่ละออเดอร์
+      const makeBubble = (o) => ({
         type:'bubble', size:'kilo',
         header: {
           type:'box', layout:'vertical',
@@ -1604,19 +1679,62 @@ app.post('/webhook', async (req, res) => {
             }
           ]
         }
-      }));
+      });
 
-      await safeReply(replyToken, userId, [
-        {
-          type:'text',
-          text: `📋 ออเดอร์ของคุณ ${realOrders[0].customer_name || ''} (${realOrders.length} รายการล่าสุด)`
-        },
+      const bubbles = ordersToShow.slice(0, 10).map(makeBubble);
+
+      // สร้างข้อความ header
+      const customerName = realOrders[0].customer_name || '';
+      let headerText = '';
+      if (wantHistory) {
+        headerText = `📜 ประวัติออเดอร์ของคุณ ${customerName} (${historyOrders.length} รายการ)`;
+      } else if (activeOrders.length) {
+        headerText = `📋 ออเดอร์ปัจจุบันของคุณ ${customerName} (${activeOrders.length} รายการ)`;
+      } else {
+        headerText = `📋 ออเดอร์ของคุณ ${customerName} (${realOrders.length} รายการล่าสุด)`;
+      }
+
+      const replyMsgs = [
+        { type:'text', text: headerText },
         {
           type:'flex',
-          altText:`ออเดอร์ของคุณ ${realOrders.length} รายการ`,
+          altText: headerText,
           contents:{ type:'carousel', contents: bubbles }
         }
-      ]);
+      ];
+
+      // ถ้ามีประวัติออเดอร์เก่า และตอนนี้กำลังดูออเดอร์ปัจจุบัน → แสดงปุ่ม popup ถามว่าอยากดูประวัติไหม
+      if (!wantHistory && historyOrders.length > 0) {
+        replyMsgs.push({
+          type:'flex',
+          altText:`มีประวัติออเดอร์เก่า ${historyOrders.length} รายการ — ดูประวัติไหม?`,
+          contents:{
+            type:'bubble', size:'kilo',
+            body:{
+              type:'box', layout:'vertical', paddingAll:'lg', spacing:'sm',
+              contents:[
+                { type:'text', text:'📜 ประวัติออเดอร์', weight:'bold', size:'md', color:'#333333' },
+                { type:'text', text:`คุณมีออเดอร์ที่เสร็จสิ้นแล้ว ${historyOrders.length} รายการ`, size:'sm', color:'#888888', wrap:true, margin:'sm' }
+              ]
+            },
+            footer:{
+              type:'box', layout:'vertical', paddingAll:'lg', paddingTop:'none',
+              contents:[
+                { type:'button', style:'secondary', height:'sm',
+                  action:{
+                    type:'postback',
+                    label:'📜 ดูประวัติออเดอร์',
+                    data:'action=view_history',
+                    displayText:'📜 ดูประวัติออเดอร์'
+                  }
+                }
+              ]
+            }
+          }
+        });
+      }
+
+      await safeReply(replyToken, userId, replyMsgs);
       continue;
     }
 
