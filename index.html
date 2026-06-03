@@ -3139,7 +3139,7 @@ async function applyCouponCode() {
     const d = await r.json();
 
     if (r.ok && !d.error) {
-      // ✅ คูปองปกติ
+      // ✅ คูปองปกติ ใช้ได้เลย
       _manualDiscount = d.coupon;
       input.className = 'cpn-input-field success';
       result.className = 'cpn-result ok';
@@ -3149,6 +3149,18 @@ async function applyCouponCode() {
       btn.textContent = '✕ ยกเลิก';
       document.getElementById('manualCpnWrap').classList.add('active');
       refreshDiscountUI();
+      return;
+    }
+
+    // ⚠️ ถ้า backend บอก error เรื่องขั้นต่ำ → แสดงคูปองพร้อมแจ้งเตือน ไม่แสดง ❌
+    if (!r.ok && d.coupon) {
+      input.className = 'cpn-input-field success';
+      result.className = 'cpn-result err';
+      const disc = calcDiscountAmount(d.coupon, tot);
+      result.innerHTML = buildCouponCard(d.coupon, disc) +
+        `<div style="font-size:11px;color:#c62828;margin-top:6px;text-align:center;">❌ ${d.error}</div>`;
+      result.style.display = 'block';
+      btn.textContent = 'ใช้คูปอง';
       return;
     }
 

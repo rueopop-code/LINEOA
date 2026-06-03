@@ -2005,7 +2005,7 @@ app.get('/validate-coupon', async (req, res) => {
 
   // ตรวจ min_order
   if (coupon.min_order > 0 && total < coupon.min_order)
-    return res.status(400).json({ error: `ต้องสั่งขั้นต่ำ ฿${coupon.min_order.toLocaleString()} ถึงจะใช้คูปองนี้ได้` });
+    return res.status(400).json({ error: `ต้องสั่งขั้นต่ำ ฿${coupon.min_order.toLocaleString()} ถึงจะใช้คูปองนี้ได้`, coupon });
 
   // ตรวจ first_order condition
   if (coupon.condition_type === 'first_order' && customerId) {
