@@ -1497,10 +1497,8 @@ app.post('/webhook', async (req, res) => {
         }
         continue;
       } else {
-        await linePush(userId, [{
-          type: 'text',
-          text: `🔍 ไม่พบออเดอร์ที่ใช้เบอร์ ${rawText}\n\n📌 กรุณาตรวจสอบ:\n• เบอร์ที่พิมพ์ตรงกับที่กรอกตอนสั่งไหม?\n• ลองพิมพ์เบอร์ให้ครบ 10 หลัก เช่น 0812345678\n\nหากยังไม่พบ กดลิงก์ด้านล่างเพื่อสั่งสินค้าใหม่ได้เลยค่ะ\n${SHOP_URL}`
-        }]).catch(e => console.warn('push phone-notfound failed:', e.message));
+        // ไม่พบออเดอร์ที่ตรงกับเบอร์นี้ → ไม่ตอบ ปล่อยให้แอดมินดูแลเอง
+        console.log(`💬 ${userId.slice(0,12)}… พิมพ์เบอร์ "${rawText}" แต่ไม่พบออเดอร์ — ไม่ตอบ`);
         continue;
       }
     }
@@ -1739,6 +1737,7 @@ app.post('/webhook', async (req, res) => {
         notifyAllAdmins([{ type:'text', text: notifyText }]).catch(console.error);
       }
     } else {
+      // ยังไม่ผูกบัญชี → บันทึกแชทไว้แต่ไม่แจ้งแอดมิน ไม่ตอบ
       console.log(`💬 ${displayName} ทักเข้ามาใน LINE (ยังไม่มีออเดอร์) — ไม่แจ้งแอดมิน`);
     }
 
