@@ -1689,7 +1689,13 @@ app.post('/webhook', async (req, res) => {
       if (wantHistory) {
         headerText = `📜 ประวัติออเดอร์ของคุณ ${customerName} (${historyOrders.length} รายการ)`;
       } else if (activeOrders.length) {
-        headerText = `📋 ออเดอร์ปัจจุบันของคุณ ${customerName} (${activeOrders.length} รายการ)`;
+        const todayTH = new Date().toLocaleDateString('th-TH', { dateStyle:'short', timeZone:'Asia/Bangkok' });
+        const todayOrders = activeOrders.filter(o => new Date(o.created_at).toLocaleDateString('th-TH', { dateStyle:'short', timeZone:'Asia/Bangkok' }) === todayTH);
+        if (todayOrders.length > 0) {
+          headerText = `📋 ออเดอร์ล่าสุดวันนี้ ${customerName} (${todayOrders.length} รายการ)`;
+        } else {
+          headerText = `📋 ออเดอร์ล่าสุด ${customerName} (${activeOrders.length} รายการ)`;
+        }
       } else {
         headerText = `📋 ออเดอร์ของคุณ ${customerName} (${realOrders.length} รายการล่าสุด)`;
       }

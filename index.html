@@ -1843,12 +1843,20 @@ function addSzRow(to='szBuilder', existing=null) {
   const stock = existing?.stock ?? '';
   const tiers = existing?.tiers || [];
 
+  const existingImg = existing?.img || '';
   el.innerHTML = `
     <div class="sz-row" style="margin-bottom:6px;">
       <input class="sz-name" placeholder="ขนาด เช่น S/M/L" value="${existing?.n||''}">
       <input class="sz-price" placeholder="ราคาปลีก (฿)" type="number" min="0" value="${existing?.p||''}">
       <input class="sz-stock" placeholder="สต๊อก" type="number" min="0" value="${stock}" style="max-width:80px;" title="เว้นว่าง = ไม่จำกัด">
       <button class="sz-rm" onclick="rmSz(this)">✕</button>
+    </div>
+    <div style="margin-bottom:6px;display:flex;align-items:center;gap:8px;">
+      <label style="font-size:11px;color:#666;flex-shrink:0;">🖼 รูปขนาดนี้ (ไม่บังคับ):</label>
+      <input class="sz-img-file" type="file" accept="image/*" style="font-size:11px;flex:1;" onchange="previewSzImg(this)">
+      <img class="sz-img-prev" src="${existingImg}" style="width:36px;height:36px;object-fit:cover;border-radius:6px;border:1px solid #ddd;display:${existingImg?'block':'none'};">
+      <input class="sz-img-url" type="hidden" value="${existingImg}">
+      ${existingImg ? `<button type="button" onclick="rmSzImg(this)" style="background:none;border:none;color:#E74C3C;cursor:pointer;font-size:12px;">✕</button>` : ''}
     </div>
     <div style="margin-top:6px;">
       <button type="button" class="tier-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block';this.textContent=this.nextElementSibling.style.display==='block'?'▲ ซ่อนราคาส่ง':'▼ ราคาส่ง/ยกลัง (ตามจำนวน)'" style="background:none;border:none;color:#3498DB;font-size:11px;cursor:pointer;font-family:'Sarabun',sans-serif;font-weight:600;padding:0;">${tiers.length?'▲ ซ่อนราคาส่ง':'▼ ราคาส่ง/ยกลัง (ตามจำนวน)'}</button>
@@ -1878,6 +1886,35 @@ function addTierRow(btn) {
   btn.parentElement.insertBefore(div.firstChild, btn);
 }
 
+async function previewSzImg(input) {
+  const file = input.files[0]; if (!file) return;
+  const wrap = input.closest('.sz-row-wrap');
+  const prev = wrap.querySelector('.sz-img-prev');
+  const urlInput = wrap.querySelector('.sz-img-url');
+  try {
+    const url = await uploadImg(file);
+    urlInput.value = url;
+    prev.src = url; prev.style.display = 'block';
+    // เพิ่มปุ่มลบถ้ายังไม่มี
+    if (!wrap.querySelector('.sz-img-rm')) {
+      const btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'sz-img-rm';
+      btn.style.cssText = 'background:none;border:none;color:#E74C3C;cursor:pointer;font-size:12px;';
+      btn.textContent = '✕';
+      btn.onclick = function(){ rmSzImg(this); };
+      input.parentElement.appendChild(btn);
+    }
+  } catch(e) { toast('อัปโหลดรูปไม่สำเร็จ', 'error'); }
+}
+function rmSzImg(btn) {
+  const wrap = btn.closest('.sz-row-wrap');
+  wrap.querySelector('.sz-img-prev').style.display = 'none';
+  wrap.querySelector('.sz-img-prev').src = '';
+  wrap.querySelector('.sz-img-url').value = '';
+  wrap.querySelector('.sz-img-file').value = '';
+  btn.remove();
+}
+
 function addESzRow() { addSzRow('eSzBuilder'); }
 function rmSz(btn) {
   // ลบ wrapper (.sz-row-wrap) ทั้งก้อน ไม่ใช่แค่ .sz-row
@@ -1893,8 +1930,10 @@ function getSzRows(id) {
     if (!name || isNaN(price)) return;
 
     const stockRaw = wrap.querySelector('.sz-stock')?.value.trim();
+    const sizeImg = wrap.querySelector('.sz-img-url')?.value.trim() || '';
     const sizeObj = { n: name, p: price };
     if (stockRaw !== '') sizeObj.stock = parseInt(stockRaw) || 0;
+    if (sizeImg) sizeObj.img = sizeImg;
 
     // tiers
     const tiers = [];
@@ -2237,6 +2276,13 @@ function selSz(btn,idx){
   btn.classList.add('active');
   curSizeIdx = idx;
   curSize = curProd.sizes[idx];
+  // เปลี่ยนรูปตามขนาดที่เลือก (ถ้ามีรูปของขนาดนั้น)
+  const img = document.getElementById('pdImgTag');
+  const em = document.getElementById('pdEm');
+  const sizeImg = curSize.img || '';
+  const displayImg = sizeImg || curProd.img || '';
+  if (displayImg) { img.src = displayImg; img.style.display = 'block'; em.style.display = 'none'; }
+  else { img.style.display = 'none'; em.style.display = ''; em.textContent = curProd.emoji || '📦'; }
   // ถ้า qty เกิน stock → ลดลงมา
   if (curSize.stock !== undefined && curSize.stock !== null && mQty > curSize.stock) {
     mQty = Math.max(1, curSize.stock);
@@ -3340,26 +3386,11 @@ async function renderMyOrdersList() {
     const { orders } = await res.json();
     _myOrders = orders || [];
 
-    if (!_myOrders.length) {
-      body.innerHTML = `
-        <div class="mo-empty">
-          <div class="em-icon">📭</div>
-          <div>ยังไม่มีออเดอร์</div>
-          <div style="font-size:12px;margin-top:6px;">ลองเลือกสินค้าและสั่งซื้อดูค่ะ</div>
-        </div>
-        <div onclick="openReferralSheet()"
-          style="margin-top:10px;background:linear-gradient(135deg,#fff5f0,#fff0f5);border:1.5px solid #ffd0b5;border-radius:14px;padding:16px;cursor:pointer;display:flex;align-items:center;gap:12px;">
-          <div style="font-size:32px;flex-shrink:0;">🎁</div>
-          <div style="flex:1;">
-            <div style="font-weight:700;font-size:14px;color:#c0392b;">ชวนเพื่อน รับคูปองส่วนลด</div>
-            <div style="font-size:12px;color:#888;margin-top:2px;">แนะนำเพื่อนมาซื้อครั้งแรก รับคูปองทันที!</div>
-          </div>
-          <div style="color:#e8593c;font-size:18px;">›</div>
-        </div>`;
-      return;
-    }
+    const DONE_ST = ['done','cancelled','failed'];
+    const activeList = _myOrders.filter(o => !DONE_ST.includes(o.status));
+    const historyList = _myOrders.filter(o => DONE_ST.includes(o.status));
 
-    body.innerHTML = _myOrders.map(o => {
+    const makeOrderCards = (list) => list.map(o => {
       const items = (o.items || []).map(i => `${i.emoji||''} ${escapeShop(i.name)} ×${i.qty}`).join(', ');
       const date = new Date(o.created_at).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short' });
       const st = o.status || 'pending';
@@ -3379,7 +3410,9 @@ async function renderMyOrdersList() {
           </div>
         </div>
       `;
-    }).join('') + `
+    }).join('');
+
+    const referralBanner = `
       <div onclick="openReferralSheet()"
         style="margin-top:10px;background:linear-gradient(135deg,#fff5f0,#fff0f5);border:1.5px solid #ffd0b5;border-radius:14px;padding:16px;cursor:pointer;display:flex;align-items:center;gap:12px;">
         <div style="font-size:32px;flex-shrink:0;">🎁</div>
@@ -3389,8 +3422,51 @@ async function renderMyOrdersList() {
         </div>
         <div style="color:#e8593c;font-size:18px;">›</div>
       </div>`;
+
+    body.innerHTML = `
+      <div id="moTabs" style="display:flex;gap:0;border-bottom:2px solid #eee;margin-bottom:12px;">
+        <button id="moTabActive" onclick="switchMoTab('active')"
+          style="flex:1;padding:9px 0;font-size:13px;font-weight:600;border:none;background:none;cursor:pointer;color:#c0392b;border-bottom:2px solid #c0392b;margin-bottom:-2px;">
+          📋 ออเดอร์ล่าสุด ${activeList.length > 0 ? `<span style="background:#c0392b;color:#fff;border-radius:10px;font-size:11px;padding:1px 6px;margin-left:4px;">${activeList.length}</span>` : ''}
+        </button>
+        <button id="moTabHistory" onclick="switchMoTab('history')"
+          style="flex:1;padding:9px 0;font-size:13px;font-weight:600;border:none;background:none;cursor:pointer;color:#888;border-bottom:2px solid transparent;margin-bottom:-2px;">
+          📜 ประวัติ ${historyList.length > 0 ? `<span style="background:#ddd;color:#555;border-radius:10px;font-size:11px;padding:1px 6px;margin-left:4px;">${historyList.length}</span>` : ''}
+        </button>
+      </div>
+      <div id="moTabContentActive">
+        ${activeList.length ? makeOrderCards(activeList) : '<div class="mo-empty" style="padding:20px 0;"><div class="em-icon">📭</div><div>ไม่มีออเดอร์ที่กำลังดำเนินการ</div></div>'}
+        ${referralBanner}
+      </div>
+      <div id="moTabContentHistory" style="display:none;">
+        ${historyList.length ? makeOrderCards(historyList) : '<div class="mo-empty" style="padding:20px 0;"><div class="em-icon">📜</div><div>ยังไม่มีประวัติออเดอร์</div></div>'}
+      </div>
+    `;
   } catch(e) {
     body.innerHTML = `<div class="mo-empty"><div class="em-icon">⚠️</div><div>โหลดไม่สำเร็จ</div><div style="font-size:12px;margin-top:6px;">${escapeShop(e.message)}</div></div>`;
+  }
+}
+
+function switchMoTab(tab) {
+  const activeContent = document.getElementById('moTabContentActive');
+  const historyContent = document.getElementById('moTabContentHistory');
+  const tabActive = document.getElementById('moTabActive');
+  const tabHistory = document.getElementById('moTabHistory');
+  if (!activeContent || !historyContent) return;
+  if (tab === 'active') {
+    activeContent.style.display = '';
+    historyContent.style.display = 'none';
+    tabActive.style.color = '#c0392b';
+    tabActive.style.borderBottomColor = '#c0392b';
+    tabHistory.style.color = '#888';
+    tabHistory.style.borderBottomColor = 'transparent';
+  } else {
+    activeContent.style.display = 'none';
+    historyContent.style.display = '';
+    tabHistory.style.color = '#c0392b';
+    tabHistory.style.borderBottomColor = '#c0392b';
+    tabActive.style.color = '#888';
+    tabActive.style.borderBottomColor = 'transparent';
   }
 }
 
