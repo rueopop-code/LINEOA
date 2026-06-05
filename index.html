@@ -5495,7 +5495,8 @@ async function saveQE() {
 }
 
 // ปิด modal เมื่อคลิก backdrop
-document.getElementById('qeModal').addEventListener('click', function(e){
+var _qeModalEl = document.getElementById('qeModal');
+if(_qeModalEl) _qeModalEl.addEventListener('click', function(e){
   if (e.target === this) closeQE();
 });
 
