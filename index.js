@@ -1477,6 +1477,7 @@ app.post('/webhook', async (req, res) => {
         if (itemsList) detailText += `${itemsList}\n${'─'.repeat(20)}\n`;
         detailText += `💰 ยอดรวม: ฿${(order.total||0).toLocaleString()}`;
         if (order.note) detailText += `\n\n📝 ${order.note}`;
+        detailText += await shGetHoursMsg();
 
         // ส่งทั้ง text และ flex update (สถานะปัจจุบัน)
         const messages = [{ type:'text', text: detailText }];
