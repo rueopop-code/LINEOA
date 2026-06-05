@@ -107,9 +107,11 @@ async function shGetHoursMsg() {
     const [ch,cm] = (cfg.closeTime||'18:00').split(':').map(Number);
     const nowMins = now.getHours()*60+now.getMinutes();
     const isOpen = openDays.includes(day) && nowMins >= oh*60+om && nowMins < ch*60+cm;
-    const msg = isOpen ? (cfg.msgOpen||'') : (cfg.msgClosed||'');
+    // ถ้าร้านเปิดปกติ ไม่ต้องส่งข้อความอะไรเลย
+    if (isOpen) return '';
+    const msg = cfg.msgClosed || '';
     if (!msg) return '';
-    return '\n\n' + (isOpen ? '🟢' : '🔴') + ' ' + msg;
+    return '\n\n🔴 ' + msg;
   } catch(e) { return ''; }
 }
 
@@ -327,7 +329,9 @@ async function buildOrderSummaryFlex(order) {
               const [ch,cm] = (cfg.closeTime||'18:00').split(':').map(Number);
               const nowMins = now.getHours()*60+now.getMinutes();
               const isOpen = openDays.includes(day) && nowMins >= oh*60+om && nowMins < ch*60+cm;
-              const msg = isOpen ? (cfg.msgOpen||'') : (cfg.msgClosed||'');
+              // ถ้าร้านเปิดปกติ ไม่ต้องแสดง block แจ้งสถานะ
+              if (isOpen) return [];
+              const msg = cfg.msgClosed || '';
               if (!msg) return [];
               const openStr = String(oh).padStart(2,'0')+':'+String(om).padStart(2,'0');
               const closeStr = String(ch).padStart(2,'0')+':'+String(cm).padStart(2,'0');
@@ -335,9 +339,9 @@ async function buildOrderSummaryFlex(order) {
               const daysStr = openDays.map(d=>daysMap[d]).join(' ');
               return [
                 { type:'separator', margin:'lg' },
-                { type:'box', layout:'vertical', margin:'md', backgroundColor: isOpen ? '#f0faf4' : '#fdf2f0', cornerRadius:'8px', paddingAll:'sm',
+                { type:'box', layout:'vertical', margin:'md', backgroundColor: '#fdf2f0', cornerRadius:'8px', paddingAll:'sm',
                   contents:[
-                    { type:'text', text: (isOpen?'🟢 ร้านเปิดอยู่':'🔴 ร้านปิดแล้ว'), size:'xs', color: isOpen?'#1e8449':'#c0392b', weight:'bold' },
+                    { type:'text', text: '🔴 ร้านปิดแล้ว', size:'xs', color: '#c0392b', weight:'bold' },
                     { type:'text', text: '🕐 '+daysStr+' '+openStr+'–'+closeStr+' น.', size:'xs', color:'#888888', margin:'xs' },
                     { type:'text', text: msg, size:'xs', color:'#555555', wrap:true, margin:'xs' }
                   ]
@@ -411,11 +415,10 @@ async function buildStatusUpdateFlex(order, status) {
           ...await (async () => {
             const hoursMsg = await shGetHoursMsg();
             if (!hoursMsg) return [];
-            const isOpen = hoursMsg.startsWith('\n\n🟢');
-            const txt = hoursMsg.replace('\n\n🟢 ','').replace('\n\n🔴 ','');
+            const txt = hoursMsg.replace('\n\n🔴 ','');
             return [
               { type:'separator', margin:'md' },
-              { type:'text', text: (isOpen?'🟢 ร้านเปิดอยู่':'🔴 ร้านปิดแล้ว'), size:'xs', color: isOpen?'#1e8449':'#c0392b', weight:'bold', margin:'md' },
+              { type:'text', text: '🔴 ร้านปิดแล้ว', size:'xs', color: '#c0392b', weight:'bold', margin:'md' },
               { type:'text', text: txt, size:'xs', color:'#555555', wrap:true, margin:'xs' }
             ];
           })()
@@ -696,9 +699,11 @@ app.post('/send-order', async (req, res) => {
         const [ch,cm] = (cfg.closeTime||'18:00').split(':').map(Number);
         const nowMins = now.getHours()*60+now.getMinutes();
         const isOpen = openDays.includes(day) && nowMins >= oh*60+om && nowMins < ch*60+cm;
-        const msg = isOpen ? (cfg.msgOpen||'') : (cfg.msgClosed||'');
+        // ถ้าร้านเปิดปกติ ไม่ต้องส่งข้อความแจ้ง
+        if (isOpen) return '';
+        const msg = cfg.msgClosed || '';
         if (!msg) return '';
-        return '\n\n' + (isOpen ? '🟢' : '🔴') + ' ' + msg;
+        return '\n\n🔴 ' + msg;
       } catch(e) { return ''; }
     })();
 
