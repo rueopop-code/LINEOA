@@ -588,6 +588,82 @@ app.get('/api', (req, res) => res.json({
   lineToken: process.env.LINE_TOKEN  ? '✅' : '❌'
 }));
 
+// ── GET /liff-entry ───────────────────────────────────────
+// Endpoint สำหรับ LIFF App — ตั้ง Endpoint URL ใน LINE Developers Console ชี้มาที่นี่
+// Rich Menu ตั้ง URL: https://liff.line.me/{LIFF_ID}
+// LIFF SDK จะดึง LINE UID ให้อัตโนมัติ แล้วส่งมาที่นี่ผ่าน query string
+// → ระบบสร้าง token + redirect ไปหน้าร้านพร้อม ?lid=TOKEN
+// → หน้าร้านเรียก /link-line อัตโนมัติ → ผูกบัญชีเสร็จ ไม่ต้องพิมพ์อะไรเลย
+app.get('/liff-entry', (req, res) => {
+  const shopUrl = SHOP_URL.replace(/\/$/, '');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>กำลังเปิดร้าน...</title>
+  <script src="https://static.line-scdn.net/liff/edge/versions/2.22.3/sdk.js"></script>
+  <style>
+    body { margin:0; display:flex; flex-direction:column; align-items:center;
+           justify-content:center; min-height:100vh; font-family:sans-serif;
+           background:#fff8f0; color:#333; }
+    .spinner { width:48px; height:48px; border:5px solid #eee;
+               border-top-color:#c0392b; border-radius:50%;
+               animation:spin .8s linear infinite; margin-bottom:16px; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    p { font-size:15px; color:#888; }
+  </style>
+</head>
+<body>
+  <div class="spinner"></div>
+  <p>กำลังเปิดร้าน...</p>
+  <script>
+    (async () => {
+      try {
+        await liff.init({ liffId: '${process.env.LIFF_ID || ''}' });
+
+        // ดึง LINE UID ผ่าน LIFF SDK
+        const profile  = await liff.getProfile();
+        const lineUid  = profile.userId;
+
+        // ส่ง UID ไปที่ backend เพื่อสร้าง token
+        const res = await fetch('/liff-token?uid=' + encodeURIComponent(lineUid));
+        const data = await res.json();
+
+        if (data.url) {
+          // redirect ไปหน้าร้านพร้อม ?lid=TOKEN
+          window.location.replace(data.url);
+        } else {
+          window.location.replace('${shopUrl}');
+        }
+      } catch (e) {
+        console.error('LIFF error:', e);
+        // fallback — เปิดร้านปกติ (ไม่ผูก LINE แต่ยังใช้ได้)
+        window.location.replace('${shopUrl}');
+      }
+    })();
+  </script>
+</body>
+</html>`);
+});
+
+// ── GET /liff-token ───────────────────────────────────────
+// เรียกจาก /liff-entry — รับ LINE UID แล้วคืน shopLink พร้อม ?lid=TOKEN
+app.get('/liff-token', async (req, res) => {
+  const lineUserId = req.query.uid;
+  if (!lineUserId) return res.status(400).json({ error: 'missing uid' });
+
+  const token    = createLinkToken(lineUserId);
+  const shopUrl  = SHOP_URL.replace(/\/$/, '');
+  const url      = `${shopUrl}?lid=${token}`;
+
+  // บันทึก line_users เผื่อยังไม่มี record
+  upsertLineUser(lineUserId).catch(() => {});
+
+  res.json({ url });
+});
+
 // ── POST /send-order ──────────────────────────────────────
 app.post('/send-order', async (req, res) => {
   const {
@@ -611,12 +687,62 @@ app.post('/send-order', async (req, res) => {
       .from('coupons').select('*').eq('id', couponId).eq('is_active', true).maybeSingle();
     if (coup) {
       if (!coup.usage_limit || coup.used_count < coup.usage_limit) {
-        finalDiscount     = Math.min(Number(discountAmount), total);
-        appliedCouponId   = coup.id;
-        appliedCouponCode = coup.code;
-        await supabase.from('coupons')
-          .update({ used_count: (coup.used_count || 0) + 1 })
-          .eq('id', coup.id);
+
+        // 🔒 ป้องกันใช้คูปองซ้ำ — เช็คว่า LINE UID หรือเบอร์โทรนี้เคยใช้ไปแล้วหรือยัง
+        // (กันลูกค้าเคลียร์ localStorage แล้วสร้าง customer_id ใหม่มาใช้ซ้ำ)
+        let alreadyUsedCoupon = false;
+
+        // หา LINE UID ของ customer_id นี้ก่อน (ค้นจาก LINK- row หรือ line_users)
+        let lineUidForCoupon = null;
+        const linkRowId = `LINK-${customerId.slice(0, 20)}`;
+        const { data: linkRow } = await supabase.from('orders')
+          .select('line_user_id').eq('order_id', linkRowId)
+          .not('line_user_id', 'is', null).maybeSingle();
+        if (linkRow?.line_user_id) lineUidForCoupon = linkRow.line_user_id;
+
+        if (!lineUidForCoupon) {
+          const { data: luRow } = await supabase.from('line_users')
+            .select('user_id').eq('customer_id', customerId)
+            .order('last_seen', { ascending: false }).limit(1).maybeSingle();
+          if (luRow?.user_id) lineUidForCoupon = luRow.user_id;
+        }
+
+        // เช็ค coupon_usages ด้วย LINE UID (แม่นที่สุด)
+        if (lineUidForCoupon) {
+          const { data: usageByUid } = await supabase.from('coupon_usages')
+            .select('id').eq('coupon_id', couponId).eq('line_user_id', lineUidForCoupon)
+            .limit(1).maybeSingle();
+          if (usageByUid) alreadyUsedCoupon = true;
+        }
+
+        // เช็ค coupon_usages ด้วยเบอร์โทร (fallback กรณียังไม่ได้ผูก LINE)
+        const normPhone = String(phone || '').replace(/\D/g, '');
+        if (!alreadyUsedCoupon && normPhone) {
+          const { data: usageByPhone } = await supabase.from('coupon_usages')
+            .select('id').eq('coupon_id', couponId).eq('phone', normPhone)
+            .limit(1).maybeSingle();
+          if (usageByPhone) alreadyUsedCoupon = true;
+        }
+
+        if (!alreadyUsedCoupon) {
+          finalDiscount     = Math.min(Number(discountAmount), total);
+          appliedCouponId   = coup.id;
+          appliedCouponCode = coup.code;
+          await supabase.from('coupons')
+            .update({ used_count: (coup.used_count || 0) + 1 })
+            .eq('id', coup.id);
+          // 🔒 บันทึกการใช้คูปอง — ป้องกันใช้ซ้ำแม้เปลี่ยน customer_id
+          await supabase.from('coupon_usages').insert([{
+            coupon_id    : coup.id,
+            line_user_id : lineUidForCoupon || null,
+            phone        : normPhone || null,
+            customer_id  : customerId
+          }]).then(({ error: e }) => {
+            if (e) console.warn('coupon_usages insert failed:', e.message);
+          });
+        } else {
+          console.warn(`🚫 coupon ${coup.code} already used by LINE=${lineUidForCoupon?.slice(0,12)} phone=${normPhone}`);
+        }
       }
     }
   }
@@ -2067,7 +2193,7 @@ app.get('/applicable-discounts', async (req, res) => {
 // ── GET /validate-coupon ──────────────────────────────────
 // ตรวจสอบ manual coupon code ที่ลูกค้ากรอก
 app.get('/validate-coupon', async (req, res) => {
-  const { code, customerId, orderTotal } = req.query;
+  const { code, customerId, orderTotal, phone } = req.query;
   if (!code) return res.status(400).json({ error: 'กรุณากรอกรหัสคูปอง' });
 
   const total = parseFloat(orderTotal) || 0;
@@ -2102,6 +2228,41 @@ app.get('/validate-coupon', async (req, res) => {
       .not('order_id', 'like', 'LINE-%').not('order_id', 'like', 'LINK-%').limit(1);
     if (prev?.length)
       return res.status(400).json({ error: 'คูปองนี้สำหรับการสั่งซื้อครั้งแรกเท่านั้น' });
+  }
+
+  // 🔒 ตรวจว่า LINE UID หรือเบอร์โทรนี้เคยใช้คูปองนี้ไปแล้วหรือยัง
+  if (customerId) {
+    // หา LINE UID จาก LINK- row หรือ line_users
+    let lineUidForValidate = null;
+    const linkRowId = `LINK-${customerId.slice(0, 20)}`;
+    const { data: linkRow } = await supabase.from('orders')
+      .select('line_user_id').eq('order_id', linkRowId)
+      .not('line_user_id', 'is', null).maybeSingle();
+    if (linkRow?.line_user_id) lineUidForValidate = linkRow.line_user_id;
+
+    if (!lineUidForValidate) {
+      const { data: luRow } = await supabase.from('line_users')
+        .select('user_id').eq('customer_id', customerId)
+        .order('last_seen', { ascending: false }).limit(1).maybeSingle();
+      if (luRow?.user_id) lineUidForValidate = luRow.user_id;
+    }
+
+    if (lineUidForValidate) {
+      const { data: usageByUid } = await supabase.from('coupon_usages')
+        .select('id').eq('coupon_id', coupon.id).eq('line_user_id', lineUidForValidate)
+        .limit(1).maybeSingle();
+      if (usageByUid)
+        return res.status(400).json({ error: 'คูปองนี้ถูกใช้ไปแล้วในบัญชีของคุณ' });
+    }
+
+    const normPhone = String(phone || '').replace(/\D/g, '');
+    if (normPhone) {
+      const { data: usageByPhone } = await supabase.from('coupon_usages')
+        .select('id').eq('coupon_id', coupon.id).eq('phone', normPhone)
+        .limit(1).maybeSingle();
+      if (usageByPhone)
+        return res.status(400).json({ error: 'คูปองนี้ถูกใช้ไปแล้วในบัญชีของคุณ' });
+    }
   }
 
   const discount = calcDiscount(coupon, total);
