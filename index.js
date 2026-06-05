@@ -94,6 +94,25 @@ async function lineReply(replyToken, messages) {
   }
 }
 
+// ── Shop Hours Message Helper ────────────────────────────────
+async function shGetHoursMsg() {
+  try {
+    const { data } = await supabase.from('settings').select('value').eq('key','shop_hours').maybeSingle();
+    if (!data || !data.value || !data.value.enabled) return '';
+    const cfg = data.value;
+    const now = new Date();
+    const day = now.getDay();
+    const openDays = cfg.openDays || [];
+    const [oh,om] = (cfg.openTime||'09:00').split(':').map(Number);
+    const [ch,cm] = (cfg.closeTime||'18:00').split(':').map(Number);
+    const nowMins = now.getHours()*60+now.getMinutes();
+    const isOpen = openDays.includes(day) && nowMins >= oh*60+om && nowMins < ch*60+cm;
+    const msg = isOpen ? (cfg.msgOpen||'') : (cfg.msgClosed||'');
+    if (!msg) return '';
+    return '\n\n' + (isOpen ? '🟢' : '🔴') + ' ' + msg;
+  } catch(e) { return ''; }
+}
+
 // normalize เบอร์โทร — เอาเฉพาะตัวเลข
 function normalizePhone(p) {
   return String(p || '').replace(/\D/g, '');
@@ -116,7 +135,7 @@ function statusLabel(s) {
   })[s] || s;
 }
 
-function buildAdminMsg(order) {
+async function buildAdminMsg(order) {
   const { customer_name, items, total, order_id, created_at, phone, address, note,
           coupon_code, discount_amount, ref_code } = order;
   const date = new Date(created_at).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short', timeZone:'Asia/Bangkok' });
@@ -142,6 +161,7 @@ function buildAdminMsg(order) {
   msg += `💰 ยอดสุทธิ: ฿${total.toLocaleString()}\n`;
   if (note) msg += `\n📝 ${note}\n`;
   msg += `\n📲 ติดต่อลูกค้าผ่านหน้า Admin Panel ได้เลยค่ะ`;
+  msg += await shGetHoursMsg();
   return msg;
 }
 
@@ -345,7 +365,7 @@ async function buildOrderSummaryFlex(order) {
 }
 
 // Flex: อัปเดตสถานะออเดอร์
-function buildStatusUpdateFlex(order, status) {
+async function buildStatusUpdateFlex(order, status) {
   const labels = {
     pending  : { emoji:'⏳', text:'รอดำเนินการ', desc:'ร้านกำลังตรวจสอบออเดอร์ของคุณ' },
     sent     : { emoji:'📬', text:'ร้านได้รับแล้ว', desc:'ร้านได้รับออเดอร์ของคุณเรียบร้อยแล้ว' },
@@ -387,7 +407,18 @@ function buildStatusUpdateFlex(order, status) {
             ]
           },
           { type:'separator', margin:'md' },
-          { type:'text', text: lbl.desc, size:'sm', color:'#555555', wrap:true, margin:'md' }
+          { type:'text', text: lbl.desc, size:'sm', color:'#555555', wrap:true, margin:'md' },
+          ...await (async () => {
+            const hoursMsg = await shGetHoursMsg();
+            if (!hoursMsg) return [];
+            const isOpen = hoursMsg.startsWith('\n\n🟢');
+            const txt = hoursMsg.replace('\n\n🟢 ','').replace('\n\n🔴 ','');
+            return [
+              { type:'separator', margin:'md' },
+              { type:'text', text: (isOpen?'🟢 ร้านเปิดอยู่':'🔴 ร้านปิดแล้ว'), size:'xs', color: isOpen?'#1e8449':'#c0392b', weight:'bold', margin:'md' },
+              { type:'text', text: txt, size:'xs', color:'#555555', wrap:true, margin:'xs' }
+            ];
+          })()
         ]
       },
       footer: {
@@ -794,7 +825,7 @@ app.post('/send-order', async (req, res) => {
   // แจ้งแอดมินทุกคนผ่าน LINE OA
   if (process.env.LINE_TOKEN) {
     try {
-      const { sent } = await notifyAllAdmins([{ type: 'text', text: buildAdminMsg(order) }]);
+      const { sent } = await notifyAllAdmins([{ type: 'text', text: await buildAdminMsg(order) }]);
       if (sent > 0) {
         await supabase.from('orders').update({ status: 'sent' }).eq('order_id', order_id);
         console.log(`✅ ${order_id} → admin LINE (${sent} คน)`);
@@ -1450,7 +1481,7 @@ app.post('/webhook', async (req, res) => {
         // ส่งทั้ง text และ flex update (สถานะปัจจุบัน)
         const messages = [{ type:'text', text: detailText }];
         if (Array.isArray(order.items) && order.items.length > 0) {
-          messages.push(buildStatusUpdateFlex(order, st));
+          messages.push(await buildStatusUpdateFlex(order, st));
         }
         await safeReply(replyToken, userId, messages);
         continue;
@@ -1586,7 +1617,7 @@ app.post('/webhook', async (req, res) => {
           // ✨ ส่ง order summary + status flex พร้อมกัน (ไม่ต้องกดดูสถานะ)
           replyMessages.push(await buildOrderSummaryFlex(fullLatest));
           if (fullLatest.status && fullLatest.status !== 'pending') {
-            replyMessages.push(buildStatusUpdateFlex(fullLatest, fullLatest.status));
+            replyMessages.push(await buildStatusUpdateFlex(fullLatest, fullLatest.status));
           }
         }
 
@@ -2172,7 +2203,7 @@ app.post('/orders/:orderId/notify-status', async (req, res) => {
   }
 
   try {
-    const flex = buildStatusUpdateFlex(order, order.status);
+    const flex = await buildStatusUpdateFlex(order, order.status);
     await linePush(targetUid, [flex]);
     console.log(`📣 notify-status ${order.status} → ${targetUid.slice(0,12)}…`);
     res.json({ success: true, status: order.status, sentTo: targetUid.slice(0,12) + '…' });
@@ -2212,7 +2243,7 @@ app.patch('/orders/:orderId/status', async (req, res) => {
         targetUid = await findLineUserIdByCustomer(data.customer_id);
       }
       if (targetUid) {
-        const flex = buildStatusUpdateFlex(data, status);
+        const flex = await buildStatusUpdateFlex(data, status);
         linePush(targetUid, [flex])
           .then(() => console.log(`📤 status flex → ${targetUid.slice(0,12)}…`))
           .catch(e => console.warn('LINE flex push failed:', e.message));
