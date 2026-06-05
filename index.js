@@ -100,7 +100,9 @@ async function shGetHoursMsg() {
     const { data } = await supabase.from('settings').select('value').eq('key','shop_hours').maybeSingle();
     if (!data || !data.value || !data.value.enabled) return '';
     const cfg = data.value;
-    const now = new Date();
+    // แปลงเวลาเป็น Asia/Bangkok เสมอ (server อาจรัน UTC)
+    const bkkStr = new Date().toLocaleString('en-US', { timeZone: 'Asia/Bangkok' });
+    const now = new Date(bkkStr);
     const day = now.getDay();
     const openDays = cfg.openDays || [];
     const [oh,om] = (cfg.openTime||'09:00').split(':').map(Number);
@@ -322,7 +324,8 @@ async function buildOrderSummaryFlex(order) {
               const { data } = await supabase.from('settings').select('value').eq('key','shop_hours').maybeSingle();
               if (!data || !data.value || !data.value.enabled) return [];
               const cfg = data.value;
-              const now = new Date();
+              const bkkStr2 = new Date().toLocaleString('en-US', { timeZone: 'Asia/Bangkok' });
+              const now = new Date(bkkStr2);
               const day = now.getDay();
               const openDays = cfg.openDays || [];
               const [oh,om] = (cfg.openTime||'09:00').split(':').map(Number);
@@ -692,7 +695,8 @@ app.post('/send-order', async (req, res) => {
         const { data } = await supabase.from('settings').select('value').eq('key','shop_hours').maybeSingle();
         if (!data || !data.value || !data.value.enabled) return '';
         const cfg = data.value;
-        const now = new Date();
+        const bkkStr3 = new Date().toLocaleString('en-US', { timeZone: 'Asia/Bangkok' });
+        const now = new Date(bkkStr3);
         const day = now.getDay();
         const openDays = cfg.openDays || [];
         const [oh,om] = (cfg.openTime||'09:00').split(':').map(Number);
