@@ -3749,6 +3749,15 @@ async function loadOrderChat(orderId) {
       const who = m.sender === 'admin' ? 'ร้าน' : m.sender === 'system' ? '' : 'คุณ';
       return `<div class="chat-bbl ${cls}">${escapeShop(m.text)}<div class="chat-meta">${who ? who+' • ' : ''}${time}</div></div>`;
     }).join('') + shChatHoursBanner();
+    // โหลด cfg ล่าสุดจาก server แล้วอัปเดต banner ใน chat
+    shLoadCfgFromServer().then(function(cfg){
+      var banner = list.querySelector('.sh-chat-banner');
+      if(banner && cfg){
+        var newBanner = document.createElement('div');
+        newBanner.innerHTML = shChatHoursBanner();
+        if(newBanner.firstChild) banner.parentNode.replaceChild(newBanner.firstChild, banner);
+      }
+    }).catch(function(){});
     list.scrollTop = list.scrollHeight;
   } catch(e) {
     list.innerHTML = `<div class="chat-empty-c">⚠️ ${escapeShop(e.message)}</div>`;
@@ -5582,7 +5591,26 @@ var SH_SEEN_KEY = 'ms_sh_seen';
 var SH_DAYS_TH = ['อาทิตย์','จันทร์','อังคาร','พุธ','พฤหัสบดี','ศุกร์','เสาร์'];
 var SH_DAYS_SHORT = ['อา.','จ.','อ.','พ.','พฤ.','ศ.','ส.'];
 function shDefaultCfg(){return{enabled:false,openTime:'09:00',closeTime:'18:00',openDays:[1,2,3,4,5,6],msgOpen:'ยินดีต้อนรับค่ะ! 🎉 ร้านเปิดให้บริการอยู่นะคะ',msgClosed:'ขณะนี้ร้านปิดให้บริการแล้วค่ะ 🌙\nทางร้านจะจัดส่งสินค้าให้วันพรุ่งนี้เช้านะคะ ✨\nขอบคุณที่อุดหนุนร้านเรานะคะ 🙏',showBanner:true,showPopup:true,popupOnce:true};}
-function shGetCfg(){try{var v=localStorage.getItem('ms_shop_hours_v1');var r=v?JSON.parse(v):null;if(!r||typeof r!=='object')return shDefaultCfg();if(!r.openTime)r.openTime='09:00';if(!r.closeTime)r.closeTime='18:00';if(!Array.isArray(r.openDays))r.openDays=[1,2,3,4,5,6];return r;}catch(e){return shDefaultCfg();}}
+var _shCfgCache = null;
+function shGetCfg(){return _shCfgCache || shDefaultCfg();}
+async function shLoadCfgFromServer(){
+  try{
+    var r = await fetch(BACKEND_URL+'/shop-hours');
+    if(!r.ok) throw new Error('โหลดไม่ได้');
+    var d = await r.json();
+    var def = shDefaultCfg();
+    _shCfgCache = Object.assign({},def,d);
+    if(!_shCfgCache.openTime)_shCfgCache.openTime='09:00';
+    if(!_shCfgCache.closeTime)_shCfgCache.closeTime='18:00';
+    if(!Array.isArray(_shCfgCache.openDays))_shCfgCache.openDays=[1,2,3,4,5,6];
+    localStorage.setItem('ms_shop_hours_v1', JSON.stringify(_shCfgCache));
+  }catch(e){
+    console.warn('shLoadCfgFromServer failed:', e.message);
+    try{var v=localStorage.getItem('ms_shop_hours_v1');if(v)_shCfgCache=JSON.parse(v);}catch(e2){}
+    if(!_shCfgCache)_shCfgCache=shDefaultCfg();
+  }
+  return _shCfgCache;
+}
 function shParseTime(t,dh,dm){try{var s=(t||'').toString();if(s.indexOf(':')<0)return[dh||0,dm||0];var p=s.split(':');return[parseInt(p[0])||dh||0,parseInt(p[1])||dm||0];}catch(e){return[dh||0,dm||0];}}
 function shIsOpen(cfg){try{if(!cfg||!cfg.enabled)return null;var now=new Date(),day=now.getDay();if(!(cfg.openDays||[]).includes(day))return false;var op=shParseTime(cfg.openTime,9,0),cp=shParseTime(cfg.closeTime,18,0),nowMins=now.getHours()*60+now.getMinutes();return nowMins>=op[0]*60+op[1]&&nowMins<cp[0]*60+cp[1];}catch(e){return null;}}
 function shChatHoursBanner(){try{var cfg=shGetCfg();if(!cfg||!cfg.enabled)return'';var isOpen=shIsOpen(cfg),openDays=cfg.openDays||[],op=shParseTime(cfg.openTime,9,0),cp=shParseTime(cfg.closeTime,18,0),openStr=String(op[0]).padStart(2,'0')+':'+String(op[1]).padStart(2,'0'),closeStr=String(cp[0]).padStart(2,'0')+':'+String(cp[1]).padStart(2,'0'),daysStr=openDays.map(function(d){return SH_DAYS_SHORT[d];}).join(' '),msg=isOpen?(cfg.msgOpen||''):(cfg.msgClosed||''),bg=isOpen?'#f0faf4':'#fdf2f0',border=isOpen?'#a9dfbf':'#f5cac3',dotClr=isOpen?'#27ae60':'#e74c3c',txtClr=isOpen?'#1e8449':'#c0392b',statusTxt;if(isOpen){statusTxt='🟢 ร้านเปิดอยู่ — ปิด '+closeStr+' น.';}else{var td=new Date().getDay();if(!openDays.includes(td)){statusTxt='🔴 วันนี้ร้านหยุด';}else{var nm=new Date().getHours()*60+new Date().getMinutes();statusTxt=nm<op[0]*60+op[1]?'🔴 ร้านยังไม่เปิด — เปิด '+openStr+' น.':'🔴 ร้านปิดแล้วสำหรับวันนี้';}}return'<div style="margin:10px 4px 4px;background:'+bg+';border:1.5px solid '+border+';border-radius:12px;padding:10px 12px;font-family:\'Sarabun\',sans-serif;"><div style="display:flex;align-items:center;gap:7px;margin-bottom:'+(msg?'6px':'0')+'"><div style="width:8px;height:8px;border-radius:50%;background:'+dotClr+';flex-shrink:0;"></div><div style="font-size:12px;font-weight:700;color:'+txtClr+';">'+statusTxt+'</div></div><div style="font-size:11px;color:#888;margin-bottom:'+(msg?'6px':'0')+'">🕐 เวลาทำการ: '+daysStr+'  '+openStr+'–'+closeStr+' น.</div>'+(msg?'<div style="font-size:12px;color:#555;line-height:1.6;white-space:pre-line;border-top:1px solid '+border+';padding-top:6px;margin-top:2px;">'+msg+'</div>':'')+'</div>';}catch(e){return'';}}
@@ -5590,10 +5618,68 @@ function shBuildPopup(cfg){try{var isOpen=shIsOpen(cfg),nameEl=document.getEleme
 function showShopHoursPopup(){var cfg=shGetCfg();if(!cfg.enabled)return;shBuildPopup(cfg);document.getElementById('shopHoursPopup').classList.add('show');}
 function closeShopHoursPopup(){document.getElementById('shopHoursPopup').classList.remove('show');}
 function shUpdateBanner(cfg){try{var banner=document.getElementById('shopHoursBanner'),inner=document.getElementById('shbInner'),txt=document.getElementById('shbText');if(!cfg||!cfg.enabled||!cfg.showBanner){banner.style.display='none';return;}var isOpen=shIsOpen(cfg),openDays=cfg.openDays||[],op=shParseTime(cfg.openTime,9,0),cp=shParseTime(cfg.closeTime,18,0),openStr=String(op[0]).padStart(2,'0')+':'+String(op[1]).padStart(2,'0'),closeStr=String(cp[0]).padStart(2,'0')+':'+String(cp[1]).padStart(2,'0'),daysStr=openDays.map(function(d){return SH_DAYS_SHORT[d];}).join(' ');banner.style.display='block';if(isOpen){banner.className='open-banner';inner.className='shb-inner open';txt.textContent='🟢 ร้านเปิดอยู่ ('+daysStr+'  '+openStr+'–'+closeStr+' น.) — ปิด '+closeStr+' น.';}else{banner.className='';inner.className='shb-inner closed';var td=new Date().getDay();if(!openDays.includes(td))txt.textContent='🔴 วันนี้ร้านหยุด — เปิด '+daysStr+'  '+openStr+'–'+closeStr+' น.';else{var nm=new Date().getHours()*60+new Date().getMinutes();txt.textContent=nm<op[0]*60+op[1]?'🔴 ร้านยังไม่เปิด — วันนี้เปิด '+openStr+'–'+closeStr+' น.':'🔴 ร้านปิดแล้วสำหรับวันนี้ — พรุ่งนี้เปิด '+openStr+' น.';}}}catch(e){}}
-function shInit(){var cfg=shGetCfg();if(!cfg.enabled)return;shUpdateBanner(cfg);if(!cfg.showPopup)return;if(cfg.popupOnce){var last=localStorage.getItem(SH_SEEN_KEY),today=new Date().toISOString().slice(0,10);if(last===today)return;localStorage.setItem(SH_SEEN_KEY,today);}setTimeout(showShopHoursPopup,800);}
-function shLoadAdminUI(){var cfg=shGetCfg();document.getElementById('shEnabled').checked=!!cfg.enabled;document.getElementById('shConfig').style.display=cfg.enabled?'block':'none';document.getElementById('shOpenTime').value=cfg.openTime||'09:00';document.getElementById('shCloseTime').value=cfg.closeTime||'18:00';document.getElementById('shMsgOpen').value=cfg.msgOpen||'';document.getElementById('shMsgClosed').value=cfg.msgClosed||'';document.getElementById('shShowBanner').checked=cfg.showBanner!==false;document.getElementById('shShowPopup').checked=cfg.showPopup!==false;document.getElementById('shPopupOnce').checked=cfg.popupOnce!==false;for(var d=0;d<=6;d++){var el=document.getElementById('shDay'+d);if(el)el.checked=(cfg.openDays||[]).includes(d);}}
-function shToggleChange(){var on=document.getElementById('shEnabled').checked;document.getElementById('shConfig').style.display=on?'block':'none';if(on){saveShopHours();}else{var cfg=shGetCfg();cfg.enabled=false;localStorage.setItem('ms_shop_hours_v1',JSON.stringify(cfg));shUpdateBanner({enabled:false});toast('⏹️ ปิดแจ้งเตือนเวลาทำการแล้ว');}}
-function saveShopHours(){var openDays=[];for(var d=0;d<=6;d++){var el=document.getElementById('shDay'+d);if(el&&el.checked)openDays.push(d);}if(!openDays.length){toast('กรุณาเลือกวันเปิดทำการอย่างน้อย 1 วัน');return;}var oldCfg=shGetCfg();var otEl=document.getElementById('shOpenTime');var ctEl=document.getElementById('shCloseTime');var openTime=(otEl&&otEl.value&&otEl.value!=='')?otEl.value:(oldCfg.openTime||'09:00');var closeTime=(ctEl&&ctEl.value&&ctEl.value!=='')?ctEl.value:(oldCfg.closeTime||'18:00');var cfg={enabled:document.getElementById('shEnabled').checked,openTime:openTime,closeTime:closeTime,openDays:openDays,msgOpen:document.getElementById('shMsgOpen').value.trim(),msgClosed:document.getElementById('shMsgClosed').value.trim(),showBanner:document.getElementById('shShowBanner').checked,showPopup:document.getElementById('shShowPopup').checked,popupOnce:document.getElementById('shPopupOnce').checked};console.log('saveShopHours cfg:',JSON.stringify(cfg));try{localStorage.setItem('ms_shop_hours_v1',JSON.stringify(cfg));localStorage.removeItem('ms_sh_seen');localStorage.removeItem(SH_SEEN_KEY);shUpdateBanner(cfg);toast('💾 บันทึก: '+openTime+'-'+closeTime+' ✓');if(cfg.showPopup){setTimeout(function(){shBuildPopup(cfg);document.getElementById('shopHoursPopup').classList.add('show');},300);}else{document.getElementById('shopHoursPopup').classList.remove('show');}}catch(e){alert('บันทึกไม่ได้: '+e.message);}}
+async function shInit(){
+  var cfg = await shLoadCfgFromServer();
+  if(!cfg.enabled)return;
+  shUpdateBanner(cfg);
+  if(!cfg.showPopup)return;
+  if(cfg.popupOnce){
+    var last=localStorage.getItem(SH_SEEN_KEY),today=new Date().toISOString().slice(0,10);
+    if(last===today)return;
+    localStorage.setItem(SH_SEEN_KEY,today);
+  }
+  setTimeout(showShopHoursPopup,800);
+}
+async function shLoadAdminUI(){
+  var cfg = await shLoadCfgFromServer();
+  document.getElementById('shEnabled').checked=!!cfg.enabled;
+  document.getElementById('shConfig').style.display=cfg.enabled?'block':'none';
+  document.getElementById('shOpenTime').value=cfg.openTime||'09:00';
+  document.getElementById('shCloseTime').value=cfg.closeTime||'18:00';
+  document.getElementById('shMsgOpen').value=cfg.msgOpen||'';
+  document.getElementById('shMsgClosed').value=cfg.msgClosed||'';
+  document.getElementById('shShowBanner').checked=cfg.showBanner!==false;
+  document.getElementById('shShowPopup').checked=cfg.showPopup!==false;
+  document.getElementById('shPopupOnce').checked=cfg.popupOnce!==false;
+  for(var d=0;d<=6;d++){var el=document.getElementById('shDay'+d);if(el)el.checked=(cfg.openDays||[]).includes(d);}
+}
+function shToggleChange(){var on=document.getElementById('shEnabled').checked;document.getElementById('shConfig').style.display=on?'block':'none';saveShopHours();}
+async function saveShopHours(){
+  var openDays=[];
+  for(var d=0;d<=6;d++){var el=document.getElementById('shDay'+d);if(el&&el.checked)openDays.push(d);}
+  if(!openDays.length){toast('กรุณาเลือกวันเปิดทำการอย่างน้อย 1 วัน');return;}
+  var oldCfg=shGetCfg();
+  var otEl=document.getElementById('shOpenTime');
+  var ctEl=document.getElementById('shCloseTime');
+  var openTime=(otEl&&otEl.value)?otEl.value:(oldCfg.openTime||'09:00');
+  var closeTime=(ctEl&&ctEl.value)?ctEl.value:(oldCfg.closeTime||'18:00');
+  var cfg={
+    enabled:document.getElementById('shEnabled').checked,
+    openTime:openTime,closeTime:closeTime,openDays:openDays,
+    msgOpen:document.getElementById('shMsgOpen').value.trim(),
+    msgClosed:document.getElementById('shMsgClosed').value.trim(),
+    showBanner:document.getElementById('shShowBanner').checked,
+    showPopup:document.getElementById('shShowPopup').checked,
+    popupOnce:document.getElementById('shPopupOnce').checked
+  };
+  var btn=document.querySelector('[onclick="saveShopHours()"]');
+  if(btn){btn.disabled=true;btn.textContent='⏳ กำลังบันทึก...';}
+  try{
+    var r=await fetch(BACKEND_URL+'/shop-hours',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
+    if(!r.ok)throw new Error('บันทึกไม่ได้');
+    _shCfgCache=cfg;
+    localStorage.setItem('ms_shop_hours_v1',JSON.stringify(cfg));
+    localStorage.removeItem(SH_SEEN_KEY);
+    shUpdateBanner(cfg);
+    toast('💾 บันทึก: '+openTime+'–'+closeTime+' ✓');
+    if(cfg.showPopup){setTimeout(function(){shBuildPopup(cfg);document.getElementById('shopHoursPopup').classList.add('show');},300);}
+    else{document.getElementById('shopHoursPopup').classList.remove('show');}
+  }catch(e){
+    alert('บันทึกไม่ได้: '+e.message);
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='💾 บันทึกการตั้งค่าเวลาทำการ';}
+  }
+}
 function shPreview(){saveShopHours();setTimeout(showShopHoursPopup,200);}
 setTimeout(shInit,600);
 

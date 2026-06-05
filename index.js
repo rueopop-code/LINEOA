@@ -2214,6 +2214,50 @@ app.post('/referral-config', async (req, res) => {
   res.json({ success: true, config: cfg });
 });
 
+// ── GET /shop-hours ──────────────────────────────────────────
+// อ่านเวลาทำการร้าน (ลูกค้าและแอดมินใช้)
+app.get('/shop-hours', async (req, res) => {
+  const { data, error } = await supabase
+    .from('settings')
+    .select('value')
+    .eq('key', 'shop_hours')
+    .maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  const defaults = {
+    enabled: false,
+    openTime: '09:00',
+    closeTime: '18:00',
+    openDays: [1,2,3,4,5,6],
+    msgOpen: 'ยินดีต้อนรับค่ะ! 🎉 ร้านเปิดให้บริการอยู่นะคะ',
+    msgClosed: 'ขณะนี้ร้านปิดให้บริการแล้วค่ะ 🌙\nทางร้านจะจัดส่งสินค้าให้วันพรุ่งนี้เช้านะคะ ✨\nขอบคุณที่อุดหนุนร้านเรานะคะ 🙏',
+    showBanner: true,
+    showPopup: true,
+    popupOnce: true
+  };
+  res.json(data ? { ...defaults, ...data.value } : defaults);
+});
+
+// ── POST /shop-hours ─────────────────────────────────────────
+// บันทึกเวลาทำการร้าน (แอดมิน)
+app.post('/shop-hours', async (req, res) => {
+  const cfg = {
+    enabled   : !!req.body.enabled,
+    openTime  : req.body.openTime  || '09:00',
+    closeTime : req.body.closeTime || '18:00',
+    openDays  : Array.isArray(req.body.openDays) ? req.body.openDays : [1,2,3,4,5,6],
+    msgOpen   : req.body.msgOpen   || '',
+    msgClosed : req.body.msgClosed || '',
+    showBanner: !!req.body.showBanner,
+    showPopup : !!req.body.showPopup,
+    popupOnce : !!req.body.popupOnce
+  };
+  const { error } = await supabase
+    .from('settings')
+    .upsert({ key: 'shop_hours', value: cfg }, { onConflict: 'key' });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true, config: cfg });
+});
+
 // ── GET /my-referral ─────────────────────────────────────────
 // สร้าง/ดึงลิงก์ referral ของลูกค้า
 app.get('/my-referral', async (req, res) => {
