@@ -544,6 +544,50 @@ textarea.fi{resize:none;height:70px}
 .ad-no-today span{font-size:12px;color:#666;font-family:'Sarabun',sans-serif;}
 
 
+/* ── SHOP HOURS ── */
+#shopHoursPopup{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:8500;align-items:center;justify-content:center;padding:16px;}
+#shopHoursPopup.show{display:flex;}
+.shp-box{background:#fff;border-radius:22px;width:100%;max-width:400px;overflow:hidden;box-shadow:0 16px 60px rgba(0,0,0,.22);animation:popscale .35s cubic-bezier(.17,.89,.32,1.25);}
+.shp-header{background:linear-gradient(120deg,var(--c2) 0%,var(--c1) 55%,var(--c3) 100%);padding:22px 20px 18px;text-align:center;}
+.shp-icon{font-size:42px;margin-bottom:6px;}
+.shp-title{font-family:'Prompt',sans-serif;font-size:18px;font-weight:800;color:#fff;}
+.shp-subtitle{font-size:12px;color:rgba(255,255,255,.85);margin-top:3px;}
+.shp-body{padding:20px;}
+.shp-status-row{display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:14px;margin-bottom:14px;}
+.shp-status-row.open{background:#eafaf1;border:1.5px solid #a9dfbf;}
+.shp-status-row.closed{background:#fdf2f0;border:1.5px solid #f5cac3;}
+.shp-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;}
+.shp-status-row.open .shp-dot{background:#27ae60;}
+.shp-status-row.closed .shp-dot{background:#e74c3c;}
+.shp-status-text{font-size:14px;font-weight:700;}
+.shp-status-row.open .shp-status-text{color:#1e8449;}
+.shp-status-row.closed .shp-status-text{color:#c0392b;}
+.shp-msg{font-size:13px;color:#555;line-height:1.7;background:#fafafa;border-radius:12px;padding:12px 14px;margin-bottom:16px;border:1px solid #f0f0f0;white-space:pre-line;}
+.shp-hours-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:16px;}
+.shp-day-item{display:flex;align-items:center;gap:7px;padding:7px 10px;border-radius:10px;font-size:12px;}
+.shp-day-item.today{background:linear-gradient(120deg,var(--c2),var(--c1));color:#fff;font-weight:700;}
+.shp-day-item.open-day{background:#f0faf4;color:#1e8449;}
+.shp-day-item.closed-day{background:#fafafa;color:#bbb;}
+.shp-day-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+.shp-day-item.today .shp-day-dot{background:#FFD700;}
+.shp-day-item.open-day .shp-day-dot{background:#27ae60;}
+.shp-day-item.closed-day .shp-day-dot{background:#ddd;}
+.shp-close-btn{width:100%;padding:13px;background:linear-gradient(120deg,var(--c2),var(--c1));color:#fff;border:none;border-radius:12px;font-size:14px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;}
+#shopHoursBanner{display:none;padding:8px 16px;background:#fff8f0;border-bottom:1px solid #f5d5cc;cursor:pointer;position:relative;z-index:1;}
+#shopHoursBanner.open-banner{background:#f0faf4;border-bottom-color:#c8e6c9;}
+.shb-inner{max-width:1200px;margin:0 auto;display:flex;align-items:center;gap:8px;}
+.shb-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+.shb-inner.open .shb-dot{background:#27ae60;}
+.shb-inner.closed .shb-dot{background:#e74c3c;}
+.shb-text{font-size:12px;flex:1;}
+.shb-inner.open .shb-text{color:#1a6b35;}
+.shb-inner.closed .shb-text{color:#9b1a0a;}
+.shb-more{font-size:11px;color:#aaa;white-space:nowrap;}
+.sh-day-chk{display:inline-flex;align-items:center;gap:5px;cursor:pointer;user-select:none;}
+.sh-day-chk input[type=checkbox]{display:none;}
+.sh-day-chk span{padding:6px 11px;border-radius:20px;border:1.5px solid var(--border);font-size:12px;font-family:'Sarabun',sans-serif;background:#fafafa;color:#888;transition:.15s;font-weight:600;}
+.sh-day-chk input:checked + span{background:var(--c1);color:#fff;border-color:var(--c1);}
+
 /* ── MOBILE HEADER ── */
 @media(max-width:480px){
   .hdr{height:54px;padding:0 10px;gap:8px;}
@@ -614,6 +658,15 @@ textarea.fi{resize:none;height:70px}
     <span>💬 <b>เปิดผ่าน LINE OA เพื่อรับการแจ้งเตือนสถานะออเดอร์</b></span>
     <a id="lineBannerBtn" href="https://lin.ee/" target="_blank" style="background:#fff;color:#06C755;padding:6px 16px;border-radius:20px;text-decoration:none;font-weight:700;font-size:12px;white-space:nowrap;">📱 เปิด LINE OA</a>
     <button onclick="document.getElementById('lineBanner').style.display='none';localStorage.setItem('ms_banner_dismissed','1');" style="background:transparent;border:1px solid rgba(255,255,255,0.4);color:#fff;width:24px;height:24px;border-radius:50%;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;padding:0;">×</button>
+  </div>
+</div>
+
+<!-- ── SHOP HOURS BANNER ── -->
+<div id="shopHoursBanner" onclick="showShopHoursPopup()">
+  <div class="shb-inner" id="shbInner">
+    <div class="shb-dot"></div>
+    <div class="shb-text" id="shbText"></div>
+    <div class="shb-more">แตะดูรายละเอียด ›</div>
   </div>
 </div>
 
@@ -995,6 +1048,58 @@ textarea.fi{resize:none;height:70px}
           style="width:100%;margin-top:6px;padding:9px;background:none;border:1.5px solid var(--border);border-radius:10px;font-size:13px;font-weight:600;font-family:'Sarabun',sans-serif;cursor:pointer;color:var(--sub);">
           🔄 โหลดค่าปัจจุบัน
         </button>
+      </div>
+
+      <!-- ── เวลาเปิด-ปิดร้าน ─────────────────────────────── -->
+      <div style="margin-top:22px;padding-top:18px;border-top:1.5px solid var(--border)">
+        <div class="ad-toggle-row">
+          <div>
+            <div class="ad-toggle-lbl">🕐 แจ้งเตือนเวลาเปิด-ปิดร้าน</div>
+            <div class="ad-toggle-sub">แสดง pop-up และแบนเนอร์เวลาทำการให้ลูกค้า</div>
+          </div>
+          <label class="sw-wrap">
+            <input type="checkbox" id="shEnabled" onchange="shToggleChange()">
+            <span class="sw-track"></span>
+          </label>
+        </div>
+        <div id="shConfig" style="display:none;">
+          <div class="s-row">
+            <label class="s-lbl">เวลาเปิด-ปิด</label>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input type="time" id="shOpenTime" value="09:00" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:9px;font-size:14px;font-family:'Sarabun',sans-serif;outline:none;max-width:120px;">
+              <span style="font-size:13px;color:#888;">ถึง</span>
+              <input type="time" id="shCloseTime" value="18:00" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:9px;font-size:14px;font-family:'Sarabun',sans-serif;outline:none;max-width:120px;">
+            </div>
+          </div>
+          <div class="s-row">
+            <label class="s-lbl">วันเปิดทำการ</label>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;">
+              <label class="sh-day-chk"><input type="checkbox" id="shDay0"><span>อา.</span></label>
+              <label class="sh-day-chk"><input type="checkbox" id="shDay1" checked><span>จ.</span></label>
+              <label class="sh-day-chk"><input type="checkbox" id="shDay2" checked><span>อ.</span></label>
+              <label class="sh-day-chk"><input type="checkbox" id="shDay3" checked><span>พ.</span></label>
+              <label class="sh-day-chk"><input type="checkbox" id="shDay4" checked><span>พฤ.</span></label>
+              <label class="sh-day-chk"><input type="checkbox" id="shDay5" checked><span>ศ.</span></label>
+              <label class="sh-day-chk"><input type="checkbox" id="shDay6" checked><span>ส.</span></label>
+            </div>
+          </div>
+          <div class="s-row">
+            <label class="s-lbl">💬 ข้อความขณะร้านเปิด</label>
+            <textarea id="shMsgOpen" rows="2" style="width:100%;padding:9px 11px;border:1.5px solid var(--border);border-radius:9px;font-size:13px;font-family:'Sarabun',sans-serif;outline:none;resize:vertical;" placeholder="เช่น ยินดีต้อนรับ! ร้านเปิดให้บริการอยู่นะคะ 🎉"></textarea>
+          </div>
+          <div class="s-row">
+            <label class="s-lbl">💬 ข้อความขณะร้านปิด</label>
+            <textarea id="shMsgClosed" rows="3" style="width:100%;padding:9px 11px;border:1.5px solid var(--border);border-radius:9px;font-size:13px;font-family:'Sarabun',sans-serif;outline:none;resize:vertical;" placeholder="เช่น ร้านปิดแล้วค่ะ 🌙 จะจัดส่งวันพรุ่งนี้เช้านะคะ ✨"></textarea>
+          </div>
+          <div class="s-row" style="flex-direction:column;gap:8px;">
+            <label class="s-lbl">⚙️ ตัวเลือก</label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;"><input type="checkbox" id="shShowBanner" checked style="width:16px;height:16px;accent-color:var(--c1);"> แสดงแบนเนอร์เวลาทำการ (ด้านบนหน้าร้าน)</label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;"><input type="checkbox" id="shShowPopup" checked style="width:16px;height:16px;accent-color:var(--c1);"> แสดง pop-up เมื่อลูกค้าเปิดร้าน</label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;"><input type="checkbox" id="shPopupOnce" checked style="width:16px;height:16px;accent-color:var(--c1);"> แสดง pop-up วันละครั้งเท่านั้น</label>
+          </div>
+          <button onclick="saveShopHours()" style="width:100%;padding:12px;background:linear-gradient(120deg,var(--c2),var(--c1));color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;font-family:'Sarabun',sans-serif;cursor:pointer;margin-top:6px;">💾 บันทึกการตั้งค่าเวลาทำการ</button>
+          <button onclick="shPreview()" style="width:100%;padding:10px;background:none;border:1.5px solid var(--border);border-radius:10px;font-size:13px;font-weight:600;font-family:'Sarabun',sans-serif;cursor:pointer;color:var(--sub);margin-top:6px;">👁️ ดูตัวอย่าง Pop-up</button>
+        </div>
       </div>
 
       <!-- ── โฆษณา Pop-up ─────────────────────────────── -->
@@ -3643,7 +3748,7 @@ async function loadOrderChat(orderId) {
                 : m.sender === 'system' ? 'from-system' : 'from-customer';
       const who = m.sender === 'admin' ? 'ร้าน' : m.sender === 'system' ? '' : 'คุณ';
       return `<div class="chat-bbl ${cls}">${escapeShop(m.text)}<div class="chat-meta">${who ? who+' • ' : ''}${time}</div></div>`;
-    }).join('');
+    }).join('') + shChatHoursBanner();
     list.scrollTop = list.scrollHeight;
   } catch(e) {
     list.innerHTML = `<div class="chat-empty-c">⚠️ ${escapeShop(e.message)}</div>`;
@@ -3744,6 +3849,7 @@ function openAdmin() {
   }
   adLoadUI();
   loadReferralConfig(); // โหลด referral config ทุกครั้งที่เปิด
+  shLoadAdminUI();
   document.getElementById('adminOv').classList.add('show');
 }
 function closeAdmin() { document.getElementById('adminOv').classList.remove('show'); }
@@ -5468,8 +5574,51 @@ function toggleNewDays(wrapId, chk) {
   if (w) w.style.display = chk.checked ? 'flex' : 'none';
 }
 
+// ══════════════════════════════════════════════════════════
+//  🕐 SHOP HOURS
+// ══════════════════════════════════════════════════════════
+var SH_KEY = 'ms_shop_hours_v1';
+var SH_SEEN_KEY = 'ms_sh_seen';
+var SH_DAYS_TH = ['อาทิตย์','จันทร์','อังคาร','พุธ','พฤหัสบดี','ศุกร์','เสาร์'];
+var SH_DAYS_SHORT = ['อา.','จ.','อ.','พ.','พฤ.','ศ.','ส.'];
+function shDefaultCfg(){return{enabled:false,openTime:'09:00',closeTime:'18:00',openDays:[1,2,3,4,5,6],msgOpen:'ยินดีต้อนรับค่ะ! 🎉 ร้านเปิดให้บริการอยู่นะคะ',msgClosed:'ขณะนี้ร้านปิดให้บริการแล้วค่ะ 🌙\nทางร้านจะจัดส่งสินค้าให้วันพรุ่งนี้เช้านะคะ ✨\nขอบคุณที่อุดหนุนร้านเรานะคะ 🙏',showBanner:true,showPopup:true,popupOnce:true};}
+function shGetCfg(){try{var v=localStorage.getItem('ms_shop_hours_v1');var r=v?JSON.parse(v):null;if(!r||typeof r!=='object')return shDefaultCfg();if(!r.openTime)r.openTime='09:00';if(!r.closeTime)r.closeTime='18:00';if(!Array.isArray(r.openDays))r.openDays=[1,2,3,4,5,6];return r;}catch(e){return shDefaultCfg();}}
+function shParseTime(t,dh,dm){try{var s=(t||'').toString();if(s.indexOf(':')<0)return[dh||0,dm||0];var p=s.split(':');return[parseInt(p[0])||dh||0,parseInt(p[1])||dm||0];}catch(e){return[dh||0,dm||0];}}
+function shIsOpen(cfg){try{if(!cfg||!cfg.enabled)return null;var now=new Date(),day=now.getDay();if(!(cfg.openDays||[]).includes(day))return false;var op=shParseTime(cfg.openTime,9,0),cp=shParseTime(cfg.closeTime,18,0),nowMins=now.getHours()*60+now.getMinutes();return nowMins>=op[0]*60+op[1]&&nowMins<cp[0]*60+cp[1];}catch(e){return null;}}
+function shChatHoursBanner(){try{var cfg=shGetCfg();if(!cfg||!cfg.enabled)return'';var isOpen=shIsOpen(cfg),openDays=cfg.openDays||[],op=shParseTime(cfg.openTime,9,0),cp=shParseTime(cfg.closeTime,18,0),openStr=String(op[0]).padStart(2,'0')+':'+String(op[1]).padStart(2,'0'),closeStr=String(cp[0]).padStart(2,'0')+':'+String(cp[1]).padStart(2,'0'),daysStr=openDays.map(function(d){return SH_DAYS_SHORT[d];}).join(' '),msg=isOpen?(cfg.msgOpen||''):(cfg.msgClosed||''),bg=isOpen?'#f0faf4':'#fdf2f0',border=isOpen?'#a9dfbf':'#f5cac3',dotClr=isOpen?'#27ae60':'#e74c3c',txtClr=isOpen?'#1e8449':'#c0392b',statusTxt;if(isOpen){statusTxt='🟢 ร้านเปิดอยู่ — ปิด '+closeStr+' น.';}else{var td=new Date().getDay();if(!openDays.includes(td)){statusTxt='🔴 วันนี้ร้านหยุด';}else{var nm=new Date().getHours()*60+new Date().getMinutes();statusTxt=nm<op[0]*60+op[1]?'🔴 ร้านยังไม่เปิด — เปิด '+openStr+' น.':'🔴 ร้านปิดแล้วสำหรับวันนี้';}}return'<div style="margin:10px 4px 4px;background:'+bg+';border:1.5px solid '+border+';border-radius:12px;padding:10px 12px;font-family:\'Sarabun\',sans-serif;"><div style="display:flex;align-items:center;gap:7px;margin-bottom:'+(msg?'6px':'0')+'"><div style="width:8px;height:8px;border-radius:50%;background:'+dotClr+';flex-shrink:0;"></div><div style="font-size:12px;font-weight:700;color:'+txtClr+';">'+statusTxt+'</div></div><div style="font-size:11px;color:#888;margin-bottom:'+(msg?'6px':'0')+'">🕐 เวลาทำการ: '+daysStr+'  '+openStr+'–'+closeStr+' น.</div>'+(msg?'<div style="font-size:12px;color:#555;line-height:1.6;white-space:pre-line;border-top:1px solid '+border+';padding-top:6px;margin-top:2px;">'+msg+'</div>':'')+'</div>';}catch(e){return'';}}
+function shBuildPopup(cfg){try{var isOpen=shIsOpen(cfg),nameEl=document.getElementById('shpShopName');if(nameEl)nameEl.textContent=localStorage.getItem('ms_name')||document.getElementById('shopNameEl').textContent||'ร้านของเรา';var sr=document.getElementById('shpStatusRow'),st=document.getElementById('shpStatusText');sr.className='shp-status-row '+(isOpen?'open':'closed');var openDays=cfg.openDays||[],op=shParseTime(cfg.openTime,9,0),cp=shParseTime(cfg.closeTime,18,0),openStr=String(op[0]).padStart(2,'0')+':'+String(op[1]).padStart(2,'0'),closeStr=String(cp[0]).padStart(2,'0')+':'+String(cp[1]).padStart(2,'0');if(isOpen){st.textContent='🟢 ร้านเปิดอยู่ — ปิด '+closeStr+' น.';}else{var td=new Date().getDay();if(!openDays.includes(td))st.textContent='🔴 วันนี้ร้านหยุด ('+SH_DAYS_TH[td]+')';else{var nm=new Date().getHours()*60+new Date().getMinutes();st.textContent=nm<op[0]*60+op[1]?'🔴 ร้านยังไม่เปิด — เปิด '+openStr+' น.':'🔴 ร้านปิดแล้วสำหรับวันนี้';}}var msg=isOpen?(cfg.msgOpen||''):(cfg.msgClosed||''),msgEl=document.getElementById('shpMsg');if(msg){msgEl.textContent=msg;msgEl.style.display='block';}else{msgEl.style.display='none';}var timeStr=openStr+' – '+closeStr+' น.',td2=new Date().getDay();document.getElementById('shpHoursGrid').innerHTML=[0,1,2,3,4,5,6].map(function(d){var isToday=d===td2,isOpenDay=openDays.includes(d),cls=isToday?'today':isOpenDay?'open-day':'closed-day';return'<div class="shp-day-item '+cls+'"><div class="shp-day-dot"></div><div><div style="font-size:12px;font-weight:700;">'+SH_DAYS_SHORT[d]+(isToday?' (วันนี้)':'')+'</div><div style="font-size:10px;opacity:'+(isOpenDay?'.85':'.5')+';margin-top:1px;">'+(isOpenDay?timeStr:'หยุด')+'</div></div></div>';}).join('');}catch(e){}}
+function showShopHoursPopup(){var cfg=shGetCfg();if(!cfg.enabled)return;shBuildPopup(cfg);document.getElementById('shopHoursPopup').classList.add('show');}
+function closeShopHoursPopup(){document.getElementById('shopHoursPopup').classList.remove('show');}
+function shUpdateBanner(cfg){try{var banner=document.getElementById('shopHoursBanner'),inner=document.getElementById('shbInner'),txt=document.getElementById('shbText');if(!cfg||!cfg.enabled||!cfg.showBanner){banner.style.display='none';return;}var isOpen=shIsOpen(cfg),openDays=cfg.openDays||[],op=shParseTime(cfg.openTime,9,0),cp=shParseTime(cfg.closeTime,18,0),openStr=String(op[0]).padStart(2,'0')+':'+String(op[1]).padStart(2,'0'),closeStr=String(cp[0]).padStart(2,'0')+':'+String(cp[1]).padStart(2,'0'),daysStr=openDays.map(function(d){return SH_DAYS_SHORT[d];}).join(' ');banner.style.display='block';if(isOpen){banner.className='open-banner';inner.className='shb-inner open';txt.textContent='🟢 ร้านเปิดอยู่ ('+daysStr+'  '+openStr+'–'+closeStr+' น.) — ปิด '+closeStr+' น.';}else{banner.className='';inner.className='shb-inner closed';var td=new Date().getDay();if(!openDays.includes(td))txt.textContent='🔴 วันนี้ร้านหยุด — เปิด '+daysStr+'  '+openStr+'–'+closeStr+' น.';else{var nm=new Date().getHours()*60+new Date().getMinutes();txt.textContent=nm<op[0]*60+op[1]?'🔴 ร้านยังไม่เปิด — วันนี้เปิด '+openStr+'–'+closeStr+' น.':'🔴 ร้านปิดแล้วสำหรับวันนี้ — พรุ่งนี้เปิด '+openStr+' น.';}}}catch(e){}}
+function shInit(){var cfg=shGetCfg();if(!cfg.enabled)return;shUpdateBanner(cfg);if(!cfg.showPopup)return;if(cfg.popupOnce){var last=localStorage.getItem(SH_SEEN_KEY),today=new Date().toISOString().slice(0,10);if(last===today)return;localStorage.setItem(SH_SEEN_KEY,today);}setTimeout(showShopHoursPopup,800);}
+function shLoadAdminUI(){var cfg=shGetCfg();document.getElementById('shEnabled').checked=!!cfg.enabled;document.getElementById('shConfig').style.display=cfg.enabled?'block':'none';document.getElementById('shOpenTime').value=cfg.openTime||'09:00';document.getElementById('shCloseTime').value=cfg.closeTime||'18:00';document.getElementById('shMsgOpen').value=cfg.msgOpen||'';document.getElementById('shMsgClosed').value=cfg.msgClosed||'';document.getElementById('shShowBanner').checked=cfg.showBanner!==false;document.getElementById('shShowPopup').checked=cfg.showPopup!==false;document.getElementById('shPopupOnce').checked=cfg.popupOnce!==false;for(var d=0;d<=6;d++){var el=document.getElementById('shDay'+d);if(el)el.checked=(cfg.openDays||[]).includes(d);}}
+function shToggleChange(){var on=document.getElementById('shEnabled').checked;document.getElementById('shConfig').style.display=on?'block':'none';if(on){saveShopHours();}else{var cfg=shGetCfg();cfg.enabled=false;localStorage.setItem('ms_shop_hours_v1',JSON.stringify(cfg));shUpdateBanner({enabled:false});toast('⏹️ ปิดแจ้งเตือนเวลาทำการแล้ว');}}
+function saveShopHours(){var openDays=[];for(var d=0;d<=6;d++){var el=document.getElementById('shDay'+d);if(el&&el.checked)openDays.push(d);}if(!openDays.length){toast('กรุณาเลือกวันเปิดทำการอย่างน้อย 1 วัน');return;}var cfg={enabled:document.getElementById('shEnabled').checked,openTime:document.getElementById('shOpenTime').value||'09:00',closeTime:document.getElementById('shCloseTime').value||'18:00',openDays:openDays,msgOpen:document.getElementById('shMsgOpen').value.trim(),msgClosed:document.getElementById('shMsgClosed').value.trim(),showBanner:document.getElementById('shShowBanner').checked,showPopup:document.getElementById('shShowPopup').checked,popupOnce:document.getElementById('shPopupOnce').checked};try{localStorage.setItem('ms_shop_hours_v1',JSON.stringify(cfg));shUpdateBanner(cfg);localStorage.removeItem('ms_sh_seen');toast('💾 บันทึกเวลาทำการแล้ว ✓');}catch(e){alert('บันทึกไม่ได้: '+e.message);}}
+function shPreview(){saveShopHours();setTimeout(showShopHoursPopup,200);}
+setTimeout(shInit,600);
+
 </script>
 
+
+<!-- ── SHOP HOURS POPUP ── -->
+<div id="shopHoursPopup" onclick="if(event.target===this)closeShopHoursPopup()">
+  <div class="shp-box">
+    <div class="shp-header">
+      <div class="shp-icon">🏪</div>
+      <div class="shp-title" id="shpShopName">ร้านของเรา</div>
+      <div class="shp-subtitle">เวลาทำการ</div>
+    </div>
+    <div class="shp-body">
+      <div class="shp-status-row" id="shpStatusRow">
+        <div class="shp-dot"></div>
+        <div class="shp-status-text" id="shpStatusText"></div>
+      </div>
+      <div class="shp-msg" id="shpMsg" style="display:none;"></div>
+      <div class="shp-hours-grid" id="shpHoursGrid"></div>
+      <button class="shp-close-btn" onclick="closeShopHoursPopup()">✅ รับทราบ เข้าใจแล้ว</button>
+    </div>
+  </div>
+</div>
 
 <!-- ── QUICK EDIT MODAL ── -->
 <div id="qeModal">
