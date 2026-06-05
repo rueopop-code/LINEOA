@@ -203,7 +203,7 @@ function statusColor(s) {
 }
 
 // Flex: สรุปออเดอร์ใหม่ (ส่งหาลูกค้าหลังสั่ง)
-function buildOrderSummaryFlex(order) {
+async function buildOrderSummaryFlex(order) {
   // ป้องกันค่า undefined/NaN
   const safe = (v, fallback = '') => (v === undefined || v === null ? fallback : v);
   const safeNum = (v) => {
@@ -294,7 +294,37 @@ function buildOrderSummaryFlex(order) {
               { type:'text', text:`฿${total.toLocaleString()}`, size:'lg', color:'#C0392B', weight:'bold', align:'end' }
             ]
           },
-          { type:'text', text:'⏳ ร้านกำลังตรวจสอบและจะแจ้งให้ทราบเร็วๆ นี้', size:'xs', color:'#888888', wrap:true, margin:'lg', align:'center' }
+          { type:'text', text:'⏳ ร้านกำลังตรวจสอบและจะแจ้งให้ทราบเร็วๆ นี้', size:'xs', color:'#888888', wrap:true, margin:'lg', align:'center' },
+          ...await (async () => {
+            try {
+              const { data } = await supabase.from('settings').select('value').eq('key','shop_hours').maybeSingle();
+              if (!data || !data.value || !data.value.enabled) return [];
+              const cfg = data.value;
+              const now = new Date();
+              const day = now.getDay();
+              const openDays = cfg.openDays || [];
+              const [oh,om] = (cfg.openTime||'09:00').split(':').map(Number);
+              const [ch,cm] = (cfg.closeTime||'18:00').split(':').map(Number);
+              const nowMins = now.getHours()*60+now.getMinutes();
+              const isOpen = openDays.includes(day) && nowMins >= oh*60+om && nowMins < ch*60+cm;
+              const msg = isOpen ? (cfg.msgOpen||'') : (cfg.msgClosed||'');
+              if (!msg) return [];
+              const openStr = String(oh).padStart(2,'0')+':'+String(om).padStart(2,'0');
+              const closeStr = String(ch).padStart(2,'0')+':'+String(cm).padStart(2,'0');
+              const daysMap = ['อา.','จ.','อ.','พ.','พฤ.','ศ.','ส.'];
+              const daysStr = openDays.map(d=>daysMap[d]).join(' ');
+              return [
+                { type:'separator', margin:'lg' },
+                { type:'box', layout:'vertical', margin:'md', backgroundColor: isOpen ? '#f0faf4' : '#fdf2f0', cornerRadius:'8px', paddingAll:'sm',
+                  contents:[
+                    { type:'text', text: (isOpen?'🟢 ร้านเปิดอยู่':'🔴 ร้านปิดแล้ว'), size:'xs', color: isOpen?'#1e8449':'#c0392b', weight:'bold' },
+                    { type:'text', text: '🕐 '+daysStr+' '+openStr+'–'+closeStr+' น.', size:'xs', color:'#888888', margin:'xs' },
+                    { type:'text', text: msg, size:'xs', color:'#555555', wrap:true, margin:'xs' }
+                  ]
+                }
+              ];
+            } catch(e) { return []; }
+          })()
         ]
       },
       footer: {
@@ -778,7 +808,7 @@ app.post('/send-order', async (req, res) => {
   if (process.env.LINE_TOKEN) {
     const customerLineUid = autoLinkedLineUid || await findLineUserIdByCustomer(customerId);
     if (customerLineUid) {
-      const flex = buildOrderSummaryFlex({ ...order, status: 'sent' });
+      const flex = await buildOrderSummaryFlex({ ...order, status: 'sent' });
       linePush(customerLineUid, [flex])
         .then(() => console.log(`📤 order summary → ${customerLineUid.slice(0,12)}…`))
         .catch(e => console.warn('LINE flex to customer failed:', e.message));
@@ -1213,7 +1243,7 @@ app.post('/resend-order/:orderId', async (req, res) => {
   }
 
   try {
-    const flex = buildOrderSummaryFlex(order);
+    const flex = await buildOrderSummaryFlex(order);
     await linePush(targetUid, [flex]);
     console.log(`📤 resend order ${orderId} → ${targetUid.slice(0,12)}… (via ${linkedHow})`);
     res.json({
@@ -1554,7 +1584,7 @@ app.post('/webhook', async (req, res) => {
         ];
         if (fullLatest && fullLatest.items?.length) {
           // ✨ ส่ง order summary + status flex พร้อมกัน (ไม่ต้องกดดูสถานะ)
-          replyMessages.push(buildOrderSummaryFlex(fullLatest));
+          replyMessages.push(await buildOrderSummaryFlex(fullLatest));
           if (fullLatest.status && fullLatest.status !== 'pending') {
             replyMessages.push(buildStatusUpdateFlex(fullLatest, fullLatest.status));
           }
