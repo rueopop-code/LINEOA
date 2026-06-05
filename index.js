@@ -2237,13 +2237,15 @@ app.patch('/orders/:orderId/status', async (req, res) => {
 
   if (data) {
     // 1) บันทึก system message ในแชทเว็บ
-    await supabase.from('messages').insert([{
-      order_id   : data.order_id,
-      customer_id: data.customer_id,
-      sender     : 'system',
-      text       : `📦 ออเดอร์ #${data.order_id} อัปเดตสถานะ: ${statusLabel(status)}`,
-      created_at : new Date().toISOString()
-    }]).catch(console.error);
+    try {
+      await supabase.from('messages').insert([{
+        order_id   : data.order_id,
+        customer_id: data.customer_id,
+        sender     : 'system',
+        text       : `📦 ออเดอร์ #${data.order_id} อัปเดตสถานะ: ${statusLabel(status)}`,
+        created_at : new Date().toISOString()
+      }]);
+    } catch(e) { console.error(e); }
 
     // 2) ส่ง LINE Flex Message หาลูกค้า
     if (process.env.LINE_TOKEN) {
