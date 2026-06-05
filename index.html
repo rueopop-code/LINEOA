@@ -915,6 +915,7 @@ textarea.fi{resize:none;height:70px}
       <div style="font-weight:700;color:#c0392b;margin-bottom:4px;">🎁 คุณมาจากลิงก์แนะนำของเพื่อน!</div>
       <div style="color:#666;">เพื่อนของคุณจะได้รับคูปองส่วนลดเป็นรางวัล ✨<br>ขอบคุณที่ช่วยสนับสนุนร้านของเรานะคะ 🙏</div>
     </div>
+    <div id="successShopHoursNotice" style="display:none;"></div>
     <button class="sclose" onclick="closeSuccess(); openMyOrders()" style="background:linear-gradient(120deg,var(--c2),var(--c1));color:#fff;margin-bottom:8px;">📋 ดูออเดอร์ของฉัน</button>
     <button class="sclose" onclick="closeSuccess()">ตกลง</button>
   </div>
@@ -3540,6 +3541,20 @@ async function sendOrder() {
     // แสดง referral banner ถ้ามาจากลิงก์ชวนเพื่อน
     const activeRef = sessionStorage.getItem('activeRefCode');
     document.getElementById('successReferralBanner').style.display = activeRef ? 'block' : 'none';
+    // 🕐 แสดงข้อความเวลาทำการใน success popup
+    var _shNoticeEl = document.getElementById('successShopHoursNotice');
+    if(_shNoticeEl){
+      var _shCfg = shGetCfg();
+      if(_shCfg && _shCfg.enabled){
+        var _shOpen = shIsOpen(_shCfg);
+        var _shMsg = _shOpen ? (_shCfg.msgOpen||'') : (_shCfg.msgClosed||'');
+        if(_shMsg){
+          var _shStatus = _shOpen ? '🟢 ร้านเปิดอยู่' : '🔴 ร้านปิดแล้ว';
+          _shNoticeEl.innerHTML = '<div style="background:'+(_shOpen?'#f0faf4':'#fdf2f0')+';border:1.5px solid '+(_shOpen?'#a9dfbf':'#f5cac3')+';border-radius:12px;padding:12px 14px;margin:10px 0;font-size:13px;line-height:1.7;text-align:left;"><div style="font-weight:700;color:'+(_shOpen?'#1e8449':'#c0392b')+';">'+_shStatus+'</div><div style="color:#555;margin-top:4px;white-space:pre-line;">'+_shMsg+'</div></div>';
+          _shNoticeEl.style.display = 'block';
+        } else { _shNoticeEl.style.display='none'; }
+      } else { _shNoticeEl.style.display='none'; }
+    }
     document.getElementById('successOv').classList.add('show');
     // reset
     ['cAddr','cPickTime','cNote'].forEach(id=>document.getElementById(id).value='');

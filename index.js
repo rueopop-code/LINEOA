@@ -622,7 +622,24 @@ app.post('/send-order', async (req, res) => {
     items.map(i => `• ${i.emoji||''} ${i.name} ×${i.qty} = ฿${(i.qty*i.price).toLocaleString()}`).join('\n') +
     (finalDiscount > 0 ? `\n🎟️ ส่วนลด: -฿${finalDiscount.toLocaleString()}` : '') +
     `\n\n💰 ยอดรวม: ฿${finalTotal.toLocaleString()}\n` +
-    `\nร้านจะยืนยันและแจ้งสถานะให้ทราบเร็วๆ นี้ค่ะ 🙏`;
+    `\nร้านจะยืนยันและแจ้งสถานะให้ทราบเร็วๆ นี้ค่ะ 🙏` +
+    await (async () => {
+      try {
+        const { data } = await supabase.from('settings').select('value').eq('key','shop_hours').maybeSingle();
+        if (!data || !data.value || !data.value.enabled) return '';
+        const cfg = data.value;
+        const now = new Date();
+        const day = now.getDay();
+        const openDays = cfg.openDays || [];
+        const [oh,om] = (cfg.openTime||'09:00').split(':').map(Number);
+        const [ch,cm] = (cfg.closeTime||'18:00').split(':').map(Number);
+        const nowMins = now.getHours()*60+now.getMinutes();
+        const isOpen = openDays.includes(day) && nowMins >= oh*60+om && nowMins < ch*60+cm;
+        const msg = isOpen ? (cfg.msgOpen||'') : (cfg.msgClosed||'');
+        if (!msg) return '';
+        return '\n\n' + (isOpen ? '🟢' : '🔴') + ' ' + msg;
+      } catch(e) { return ''; }
+    })();
 
   await supabase.from('messages').insert([{
     order_id, customer_id: customerId,
