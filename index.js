@@ -1226,7 +1226,6 @@ app.post('/link-line', async (req, res) => {
     if (e) console.warn('upsert link-ghost failed:', e.message);
     else console.log(`🔗 stored LINK mapping: customer=${customer_id} ↔ LINE=${lineUserId.slice(0,12)}… ref=${refCode||'-'}`);
   });
-  });
 
   // ดึงโปรไฟล์ LINE มาเพิ่ม customer_name (ถ้าออเดอร์ยังไม่มีชื่อ)
   let displayName = null;
