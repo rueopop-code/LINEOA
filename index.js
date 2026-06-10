@@ -2707,6 +2707,97 @@ app.post('/reveal-coupon', async (req, res) => {
 //  หน้าแอดมิน admin.html เก็บไว้ในเครื่องเจ้าของร้าน — เปิดจาก browser ตรงๆ
 //  (admin.html จะเรียก API ของ backend ที่นี่ผ่าน CORS)
 
+// ── GET /sales/:salesId ──────────────────────────────────────
+// หน้า Landing สำหรับเซล — แยกจากระบบเชิญเพื่อน
+app.get('/sales/:salesId', (req, res) => {
+  const salesId  = req.params.salesId;
+  const baseUrl  = (process.env.SHOP_URL || `https://${req.headers.host}`).replace(/\/$/, '');
+  const shopUrl  = `${baseUrl}/?ref=${salesId}`;
+  const lineOaId = process.env.LINE_OA_ID || '';
+  const lineAddUrl = lineOaId ? `https://line.me/R/ti/p/${encodeURIComponent(lineOaId)}` : null;
+  const shopName = process.env.SHOP_NAME || 'ร้านของเรา';
+
+  if (!lineAddUrl) return res.redirect(302, shopUrl);
+
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.send(`<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>สั่งสินค้าผ่านเซล — ${shopName}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Helvetica Neue',Arial,'Noto Sans Thai',sans-serif;
+         background:linear-gradient(135deg,#fff5f5 0%,#ffe0e0 100%);
+         min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+    .card{background:#fff;border-radius:20px;padding:36px 28px 32px;
+          max-width:380px;width:100%;text-align:center;
+          box-shadow:0 8px 40px rgba(192,57,43,.15)}
+    .logo{font-size:48px;margin-bottom:8px}
+    .shop{font-size:20px;font-weight:700;color:#2C3E50;margin-bottom:4px}
+    .tagline{font-size:13px;color:#888;margin-bottom:8px}
+    .sales-badge{display:inline-block;background:linear-gradient(120deg,#96281B,#C0392B);
+                 color:#fff;border-radius:20px;padding:6px 18px;font-size:13px;
+                 font-weight:700;margin-bottom:24px;letter-spacing:.5px}
+    .step{display:flex;align-items:flex-start;gap:12px;text-align:left;margin-bottom:16px}
+    .step-num{min-width:26px;height:26px;border-radius:50%;
+              background:#C0392B;color:#fff;font-size:12px;font-weight:700;
+              display:flex;align-items:center;justify-content:center;margin-top:2px}
+    .step-txt{font-size:14px;color:#444;line-height:1.5}
+    .step-txt strong{color:#2C3E50}
+    .btn-line{display:block;background:#06C755;color:#fff;border:none;
+              border-radius:12px;padding:16px;font-size:16px;font-weight:700;
+              text-decoration:none;cursor:pointer;margin-top:24px;
+              font-family:inherit;width:100%;
+              box-shadow:0 4px 14px rgba(6,199,85,.35)}
+    .btn-skip{display:block;margin-top:12px;font-size:13px;color:#aaa;
+              text-decoration:underline;cursor:pointer;background:none;
+              border:none;font-family:inherit;width:100%;padding:6px}
+    #status{font-size:13px;color:#C0392B;min-height:20px;margin-top:14px;display:none}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">🛍️</div>
+    <div class="shop">${shopName}</div>
+    <div class="tagline">พนักงานขายแนะนำสินค้าให้คุณ</div>
+    <div class="sales-badge">💼 รหัสเซล: ${salesId}</div>
+
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-txt"><strong>แอด LINE OA ของเรา</strong><br>เพื่อรับการแจ้งเตือนออเดอร์</div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-txt"><strong>ช้อปสินค้าได้เลย</strong><br>ออเดอร์จะอ้างอิงถึงเซลคนนี้อัตโนมัติ</div>
+    </div>
+
+    <button class="btn-line" onclick="goAddAndShop()">
+      ➕ แอด LINE OA + ไปช้อปเลย
+    </button>
+    <button class="btn-skip" onclick="goShopOnly()">ข้ามขั้นตอนนี้ ไปช้อปเลย →</button>
+    <div id="status">✅ กำลังพาไปหน้าร้าน...</div>
+  </div>
+
+  <script>
+    const SHOP_WITH_REF = ${JSON.stringify(shopUrl)};
+    const LINE_ADD      = ${JSON.stringify(lineAddUrl)};
+
+    function goAddAndShop() {
+      window.open(LINE_ADD, '_blank');
+      document.getElementById('status').style.display = 'block';
+      setTimeout(() => { window.location.href = SHOP_WITH_REF; }, 1200);
+    }
+    function goShopOnly() {
+      window.location.href = SHOP_WITH_REF;
+    }
+  </script>
+</body>
+</html>`);
+});
+
 // ── GET /invite/:refCode ─────────────────────────────────────
 // หน้า Landing Page กลาง — ให้ B แอด LINE OA แล้ว redirect ไปร้านพร้อม ref code
 app.get('/invite/:refCode', (req, res) => {
@@ -2792,17 +2883,19 @@ app.get('/invite/:refCode', (req, res) => {
   <script>
     const SHOP_URL   = ${JSON.stringify(shopUrl)};
     const LINE_ADD   = ${JSON.stringify(lineAddUrl)};
+    const REF_CODE   = ${JSON.stringify(refCode)};
+    const SHOP_WITH_REF = SHOP_URL + (SHOP_URL.includes('?') ? '&' : '?') + 'ref=' + encodeURIComponent(REF_CODE);
 
     function goAddAndShop() {
       // เปิด LINE เพื่อแอด OA
       window.open(LINE_ADD, '_blank');
-      // หน้านี้ redirect ไปร้านหลังจาก 1.2 วิ (ให้ LINE app เปิดทัน)
+      // redirect ไปร้านพร้อม ref code
       document.getElementById('status').style.display = 'block';
-      setTimeout(() => { window.location.href = SHOP_URL; }, 1200);
+      setTimeout(() => { window.location.href = SHOP_WITH_REF; }, 1200);
     }
 
     function goShopOnly() {
-      window.location.href = SHOP_URL;
+      window.location.href = SHOP_WITH_REF;
     }
   </script>
 </body>
