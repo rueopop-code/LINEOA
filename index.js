@@ -771,18 +771,17 @@ app.post('/send-order', async (req, res) => {
   const created_at = new Date().toISOString();
   const order      = {
     order_id, customer_id: customerId,
-    customer_name: customerName,             // ชื่อจริง — สำหรับจ่าหน้าพัสดุ
-    line_name: lineName || customerName,     // ✨ ชื่อ LINE — สำหรับผูกแชท
+    customer_name: customerName,
+    line_name: lineName || customerName,
     phone: phone || null, address: address || null, note: note || extra || null,
     items, total: finalTotal, status: 'pending', created_at,
     order_type: orderType || 'pickup',
-    // 📍 บันทึกพิกัดจัดส่ง (ถ้ามี) — ให้หน้าแอดมินเห็นปุ่มแผนที่
     map_lat: hasValidPin ? lat : null,
     map_lng: hasValidPin ? lng : null,
-    // 🎟️ ส่วนลด
     coupon_id: appliedCouponId,
     coupon_code: appliedCouponCode,
-    discount_amount: finalDiscount
+    discount_amount: finalDiscount,
+    ref_code: refCode || null          // 💼 รหัสเซลที่แนะนำ
   };
 
   const { error: dbErr } = await supabase.from('orders').insert([order]);
