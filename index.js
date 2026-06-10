@@ -769,6 +769,19 @@ app.post('/send-order', async (req, res) => {
 
   const order_id   = genOrderId();
   const created_at = new Date().toISOString();
+
+  // ถ้าไม่มี refCode ใน request → ดึงจาก LINK ghost row
+  let finalRefCode = refCode || null;
+  if (!finalRefCode && customerId) {
+    const linkRowId = `LINK-${customerId.slice(0, 20)}`;
+    const { data: linkRow } = await supabase.from('orders')
+      .select('ref_code').eq('order_id', linkRowId).maybeSingle();
+    if (linkRow?.ref_code) {
+      finalRefCode = linkRow.ref_code;
+      console.log(`💼 ref_code from ghost row: ${finalRefCode}`);
+    }
+  }
+
   const order      = {
     order_id, customer_id: customerId,
     customer_name: customerName,
@@ -781,7 +794,7 @@ app.post('/send-order', async (req, res) => {
     coupon_id: appliedCouponId,
     coupon_code: appliedCouponCode,
     discount_amount: finalDiscount,
-    ref_code: refCode || null          // 💼 รหัสเซลที่แนะนำ
+    ref_code: finalRefCode          // 💼 รหัสเซลที่แนะนำ
   };
 
   const { error: dbErr } = await supabase.from('orders').insert([order]);
@@ -1182,7 +1195,7 @@ app.get('/messages/:orderId', async (req, res) => {
 // ผูก customer_id (จาก shop browser) ↔ line_user_id อัตโนมัติ
 // shop เรียกตอนลูกค้าเปิดด้วย ?lid=TOKEN
 app.post('/link-line', async (req, res) => {
-  const { customer_id, link_token } = req.body;
+  const { customer_id, link_token, refCode } = req.body;
   if (!customer_id || !link_token)
     return res.status(400).json({ error: 'missing customer_id or link_token' });
 
@@ -1202,15 +1215,17 @@ app.post('/link-line', async (req, res) => {
     order_id    : `LINK-${customer_id.slice(0, 20)}`,
     customer_id,
     line_user_id: lineUserId,
-    customer_name: '',          // จะ fill ทีหลังตอนดึงโปรไฟล์ LINE
+    customer_name: '',
     items       : [],
     total       : 0,
     status      : 'pending',
     created_at  : new Date().toISOString(),
-    note        : '🔗 ผูกบัญชี LINE (รอสั่งสินค้า)'
+    note        : '🔗 ผูกบัญชี LINE (รอสั่งสินค้า)',
+    ref_code    : refCode || null          // 💼 เก็บรหัสเซลไว้ใน ghost row
   }], { onConflict: 'order_id' }).then(({ error: e }) => {
     if (e) console.warn('upsert link-ghost failed:', e.message);
-    else console.log(`🔗 stored LINK mapping: customer=${customer_id} ↔ LINE=${lineUserId.slice(0,12)}…`);
+    else console.log(`🔗 stored LINK mapping: customer=${customer_id} ↔ LINE=${lineUserId.slice(0,12)}… ref=${refCode||'-'}`);
+  });
   });
 
   // ดึงโปรไฟล์ LINE มาเพิ่ม customer_name (ถ้าออเดอร์ยังไม่มีชื่อ)

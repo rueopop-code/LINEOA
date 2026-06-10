@@ -1522,7 +1522,11 @@ const CUSTOMER_ID = getOrCreateCustomerId();
     const res = await fetch(`${BACKEND_URL}/link-line`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ customer_id: CUSTOMER_ID, link_token: linkToken })
+      body: JSON.stringify({
+        customer_id: CUSTOMER_ID,
+        link_token: linkToken,
+        refCode: sessionStorage.getItem('activeRefCode') || localStorage.getItem('activeRefCode') || null
+      })
     });
     const result = await res.json().catch(() => ({}));
 
