@@ -2557,7 +2557,28 @@ app.post('/referral-visit', async (req, res) => {
   const { customerId, refCode } = req.body;
   if (!refCode) return res.status(400).json({ error: 'refCode required' });
 
-  // หา referral owner
+  // ✨ ถ้า refCode เป็น salesId (เช่น S001, S002) → บันทึกลง ghost row ทันที
+  // เพื่อให้ /send-order ดึงได้แม้ localStorage หาย
+  if (customerId && /^S\d+$/i.test(refCode)) {
+    const linkRowId = `LINK-${customerId.slice(0, 20)}`;
+    await supabase.from('orders').upsert([{
+      order_id    : linkRowId,
+      customer_id : customerId,
+      customer_name: '',
+      items       : [],
+      total       : 0,
+      status      : 'pending',
+      created_at  : new Date().toISOString(),
+      note        : '🔗 เยี่ยมชมจากลิงก์เซล',
+      ref_code    : refCode
+    }], { onConflict: 'order_id' }).then(({ error: e }) => {
+      if (e) console.warn('upsert sales-ref ghost failed:', e.message);
+      else console.log(`💼 sales ref stored: customer=${customerId} ref=${refCode}`);
+    });
+    return res.json({ success: true });
+  }
+
+  // หา referral owner (ระบบชวนเพื่อนปกติ)
   const { data: ref } = await supabase
     .from('referrals')
     .select('id, customer_id')
