@@ -1084,11 +1084,12 @@ app.post('/send-order', async (req, res) => {
                   let refLineUid = null;
 
                   // [1] ค้นจาก line_users.customer_id (ตรงที่สุด)
-                  const { data: refUser } = await supabase
-                    .from('line_users').select('user_id')
-                    .eq('customer_id', ref.customer_id).maybeSingle()
-                    .catch(() => ({ data: null }));
-                  refLineUid = refUser?.user_id || null;
+                  try {
+                    const { data: refUser } = await supabase
+                      .from('line_users').select('user_id')
+                      .eq('customer_id', ref.customer_id).maybeSingle();
+                    refLineUid = refUser?.user_id || null;
+                  } catch (_) { refLineUid = null; }
                   console.log(`🔍 [referral] line_users lookup → ${refLineUid || 'ไม่พบ'}`);
 
                   // [2] fallback: orders.line_user_id ที่ผูกไว้แล้ว
@@ -1109,11 +1110,12 @@ app.post('/send-order', async (req, res) => {
                       .eq('customer_id', ref.customer_id).limit(1).maybeSingle();
                     const refName = refAnyOrder?.line_name || refAnyOrder?.customer_name;
                     if (refName) {
-                      const { data: luByName } = await supabase
-                        .from('line_users').select('user_id')
-                        .eq('display_name', refName).limit(1).maybeSingle()
-                        .catch(() => ({ data: null }));
-                      refLineUid = luByName?.user_id || null;
+                      try {
+                        const { data: luByName } = await supabase
+                          .from('line_users').select('user_id')
+                          .eq('display_name', refName).limit(1).maybeSingle();
+                        refLineUid = luByName?.user_id || null;
+                      } catch (_) { refLineUid = null; }
                       console.log(`🔍 [referral] display_name("${refName}") lookup → ${refLineUid || 'ไม่พบ'}`);
                     }
                   }
