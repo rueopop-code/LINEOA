@@ -3506,7 +3506,7 @@ async function sendOrder() {
       couponId: _appliedCoupon ? _appliedCoupon.id : null,
       discountAmount: _discountAmount || 0,
       // 🎁 referral code (ถ้ามาจากลิงก์ชวนเพื่อน)
-      refCode: sessionStorage.getItem('activeRefCode') || null
+      refCode: sessionStorage.getItem('activeRefCode') || localStorage.getItem('activeRefCode') || null
     };
     console.log('📦 sending order:', JSON.stringify(payload));
 
@@ -5005,8 +5005,9 @@ async function handleReferralFromUrl() {
   const refCode = params.get('ref');
   if (!refCode) return;
 
-  // เก็บไว้ใน sessionStorage ก่อน — เผื่อ LIFF redirect ล้าง URL
+  // เก็บไว้ใน sessionStorage และ localStorage — ให้คงอยู่แม้ปิด browser
   sessionStorage.setItem('activeRefCode', refCode);
+  localStorage.setItem('activeRefCode', refCode);
 
   // ลบ ?ref ออกจาก URL ให้สะอาด
   const cleanUrl = window.location.pathname + window.location.hash;
