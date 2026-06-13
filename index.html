@@ -260,7 +260,7 @@ textarea.fi{resize:none;height:70px}
 .pin-info{font-size:12px;color:var(--sub);margin-bottom:10px;padding:8px 12px;background:var(--bg);border-radius:8px;display:none}
 
 /* ── SUCCESS ── */
-#successOv{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:500;align-items:center;justify-content:center}
+#successOv{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:500;align-items:flex-start;justify-content:center;overflow-y:auto;padding:20px 0}
 #successOv.show{display:flex}
 
 /* ── MY ORDERS MODAL ── */
@@ -313,7 +313,7 @@ textarea.fi{resize:none;height:70px}
 .chat-input-row textarea:focus{outline:none;border-color:var(--c1)}
 .chat-send-btn{padding:0 18px;background:var(--c1);color:#fff;border:none;border-radius:10px;cursor:pointer;font-weight:600;font-size:13px;font-family:inherit}
 .chat-send-btn:disabled{background:#ccc}
-.sbox{background:#fff;border-radius:20px;padding:32px 24px;text-align:center;max-width:320px;width:90%;animation:pop .35s ease}
+.sbox{background:#fff;border-radius:20px;padding:28px 22px;text-align:center;max-width:380px;width:92%;animation:pop .35s ease;margin:auto;}
 @keyframes pop{from{transform:scale(.75);opacity:0}to{transform:scale(1);opacity:1}}
 .si{font-size:60px;margin-bottom:10px}
 .st{font-family:'Prompt',sans-serif;font-size:20px;font-weight:700;margin-bottom:6px}
@@ -847,7 +847,13 @@ textarea.fi{resize:none;height:70px}
       <input class="fi" id="cPhone" placeholder="📞 เบอร์โทรศัพท์ *" type="tel">
       <!-- delivery extra -->
       <div class="deliv-extra show" id="delivExtra">
-        <input class="fi" id="cAddr" placeholder="ที่อยู่จัดส่ง *" type="text">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+          <input class="fi" id="cAddrNo" placeholder="🏠 บ้านเลขที่ *" type="text" style="grid-column:1/2;">
+          <input class="fi" id="cAddrMoo" placeholder="🏘️ หมู่ *" type="text" style="grid-column:2/3;">
+        </div>
+        <input class="fi" id="cAddrSoi" placeholder="🛣️ ซอย *" type="text">
+        <input class="fi" id="cAddrRoad" placeholder="🛤️ ถนน *" type="text">
+        <input class="fi" id="cAddrProvince" placeholder="🗺️ จังหวัด *" type="text">
         <button class="map-btn" onclick="openMapPick()" id="mapBtn">
           📍 ปักหมุดตำแหน่งจัดส่ง (ไม่บังคับ)
         </button>
@@ -858,8 +864,22 @@ textarea.fi{resize:none;height:70px}
       </div>
       <!-- pickup extra -->
       <div class="pickup-extra" id="pickupExtra">
-        <input class="fi" id="cPickTime" placeholder="วัน/เวลารับสินค้า เช่น 25/12 10:00น." type="text">
+        <label style="font-size:12px;color:#555;margin-bottom:4px;display:block;">📅 วัน/เวลารับสินค้า *</label>
+        <input class="fi" id="cPickTime" type="datetime-local" style="color:#333;">
         <textarea class="fi" id="cNote" placeholder="หมายเหตุ / คำขอพิเศษ (ถ้ามี)" rows="2"></textarea>
+      </div>
+      <!-- payment method — บังคับเลือก -->
+      <div style="margin-bottom:10px;">
+        <div style="font-size:12px;font-weight:700;color:#c0392b;margin-bottom:6px;">💳 วิธีชำระเงิน <span style="color:#e74c3c;">*</span></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div id="pay-cod" onclick="selectPayment('cod')" style="border:2px solid #ccc;border-radius:10px;padding:12px 8px;text-align:center;cursor:pointer;font-size:13px;font-weight:700;transition:all .2s;background:#fafafa;">
+            🏍️ เก็บปลายทาง
+          </div>
+          <div id="pay-transfer" onclick="selectPayment('transfer')" style="border:2px solid #ccc;border-radius:10px;padding:12px 8px;text-align:center;cursor:pointer;font-size:13px;font-weight:700;transition:all .2s;background:#fafafa;">
+            📲 โอน/สแกน QR
+          </div>
+        </div>
+        <div id="pay-error" style="color:#e74c3c;font-size:11px;margin-top:4px;display:none;">⚠️ กรุณาเลือกวิธีชำระเงิน</div>
       </div>
       <button class="big-btn" id="sendBtn" onclick="sendOrder()">📲 ยืนยันสั่งซื้อ</button>
     </div>
@@ -916,6 +936,32 @@ textarea.fi{resize:none;height:70px}
       <div style="color:#666;">เพื่อนของคุณจะได้รับคูปองส่วนลดเป็นรางวัล ✨<br>ขอบคุณที่ช่วยสนับสนุนร้านของเรานะคะ 🙏</div>
     </div>
     <div id="successShopHoursNotice" style="display:none;"></div>
+    <!-- 💳 แนบสลิป (แสดงเฉพาะออเดอร์โอนเงิน) -->
+    <div id="successSlipSection" style="display:none;background:#eaf4fd;border:1.5px solid #b3d4f0;border-radius:14px;padding:14px 16px;margin:10px 0;text-align:left;">
+      <div style="font-weight:700;color:#1a5276;font-size:14px;margin-bottom:8px;">📎 แนบสลิปโอนเงิน</div>
+      <div style="font-size:12px;color:#555;margin-bottom:10px;">แนบสลิปได้เลย ระบบจะตรวจยอดให้อัตโนมัติ หรือส่งสลิปใน LINE OA ก็ได้ค่ะ</div>
+      <div id="successSlipDrop" onclick="document.getElementById('successSlipFile').click()"
+        style="border:2px dashed #7fb3d3;border-radius:10px;padding:14px;text-align:center;cursor:pointer;background:#f0f8ff;transition:.2s;"
+        ondragover="event.preventDefault();this.style.borderColor='#1a5276';" ondragleave="this.style.borderColor='#7fb3d3';"
+        ondrop="event.preventDefault();this.style.borderColor='#7fb3d3';_successSlipDrop(event);">
+        <div style="font-size:22px;">📷</div>
+        <div style="font-size:12px;color:#2980b9;margin-top:4px;">คลิกหรือลากวางรูปสลิป</div>
+        <input type="file" id="successSlipFile" accept="image/*" style="display:none;" onchange="_successSlipPick(this)">
+      </div>
+      <div id="successSlipPreviewWrap" style="display:none;margin-top:8px;text-align:center;">
+        <img id="successSlipPreviewImg" style="max-width:100%;max-height:180px;border-radius:8px;object-fit:contain;border:1px solid #b3d4f0;">
+      </div>
+      <div style="margin-top:10px;">
+        <label style="font-size:12px;color:#1a5276;font-weight:700;display:block;margin-bottom:4px;">ยอดที่โอน (บาท) *</label>
+        <input id="successSlipAmount" type="number" min="0" step="0.01" placeholder="กรอกยอดที่โอน หรือรอระบบอ่านอัตโนมัติ"
+          style="width:100%;padding:9px 12px;border:1.5px solid #b3d4f0;border-radius:8px;font-size:13px;font-family:'Sarabun',sans-serif;outline:none;">
+      </div>
+      <div id="successSlipStatus" style="font-size:12px;min-height:16px;margin:6px 0;color:#2980b9;"></div>
+      <button onclick="_successSlipSubmit()" id="successSlipBtn"
+        style="width:100%;padding:10px;background:#2980b9;color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;font-family:'Sarabun',sans-serif;cursor:pointer;">
+        📤 ส่งสลิป
+      </button>
+    </div>
     <button class="sclose" onclick="closeSuccess(); openMyOrders()" style="background:linear-gradient(120deg,var(--c2),var(--c1));color:#fff;margin-bottom:8px;">📋 ดูออเดอร์ของฉัน</button>
     <button class="sclose" onclick="closeSuccess()">ตกลง</button>
   </div>
@@ -1200,6 +1246,57 @@ textarea.fi{resize:none;height:70px}
           <button onclick="clearAdSettings()" style="width:100%;margin-top:8px;padding:9px;background:none;border:none;color:#e53935;font-size:13px;font-family:'Sarabun',sans-serif;cursor:pointer;font-weight:700">🗑 ลบโฆษณาทั้งหมด</button>
         </div>
       </div>
+
+      <!-- ── QR โอนเงิน ─────────────────────────────── -->
+      <div style="margin-top:22px;padding-top:18px;border-top:1.5px solid var(--border)">
+        <div class="ad-toggle-row">
+          <div>
+            <div class="ad-toggle-lbl">📲 ตั้งค่า QR โอนเงิน</div>
+            <div class="ad-toggle-sub">แสดง QR และข้อมูลบัญชีให้ลูกค้าสแกนจ่าย</div>
+          </div>
+          <label class="sw-wrap">
+            <input type="checkbox" id="qrEnabled" onchange="qrToggleChange()">
+            <span class="sw-track"></span>
+          </label>
+        </div>
+        <div id="qrConfig" style="display:none;">
+          <div class="s-row">
+            <label class="s-lbl">เลขพร้อมเพย์ / เบอร์โทร</label>
+            <input class="s-inp" id="qrPromptpay" type="text" placeholder="เช่น 0812345678 หรือ 0-1234-56789-1">
+          </div>
+          <div class="s-row">
+            <label class="s-lbl">ชื่อบัญชี</label>
+            <input class="s-inp" id="qrAccountName" type="text" placeholder="เช่น ร้านมนชิน ซัพพลาย">
+          </div>
+          <div class="s-row">
+            <label class="s-lbl">รูป QR Code</label>
+            <input type="hidden" id="qrImageUrl">
+            <div class="logo-drop" id="qrImgDrop"
+              onclick="document.getElementById('qrImgFile').click()"
+              ondragover="doDrag(event,'qrImgDrop')" ondragleave="unDrag('qrImgDrop')" ondrop="dropQrImg(event)"
+              style="padding:18px;margin-bottom:0;">
+              <div style="font-size:24px">🖼️</div>
+              <p style="margin:4px 0 0;font-size:13px;color:#888;">คลิกหรือลากวางรูป QR Code</p>
+              <input type="file" id="qrImgFile" accept="image/png,image/jpeg,image/webp" onchange="pickQrImg(this)">
+            </div>
+            <div id="qrImgPreview" style="margin-top:8px;text-align:center;display:none;">
+              <img id="qrImgPreviewEl" src="" alt="QR Preview" style="max-width:160px;border-radius:10px;border:1.5px solid var(--border);">
+              <div style="margin-top:4px;">
+                <button onclick="clearQrImg()" style="font-size:11px;color:#e53935;background:none;border:none;cursor:pointer;font-family:'Sarabun',sans-serif;">🗑 ลบรูป</button>
+              </div>
+            </div>
+            <div id="qrImgUploadStatus" style="font-size:11px;color:#888;margin-top:4px;min-height:14px;"></div>
+          </div>
+          <div class="s-row">
+            <label class="s-lbl">หมายเหตุให้ลูกค้า</label>
+            <textarea id="qrNote" rows="2" class="s-inp" placeholder="เช่น โอนแล้วกรุณาส่งสลิปให้ทางร้านที่ LINE นะคะ 🙏" style="resize:vertical;"></textarea>
+          </div>
+          <div id="qrSaveStatus" style="font-size:12px;color:#888;min-height:18px;margin-bottom:6px;"></div>
+          <button onclick="saveQRConfig()" style="width:100%;padding:11px;background:#2980b9;color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;font-family:'Sarabun',sans-serif;cursor:pointer;">
+            💾 บันทึกตั้งค่า QR โอนเงิน
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- CATEGORIES -->
@@ -1476,8 +1573,15 @@ textarea.fi{resize:none;height:70px}
 // ── BACKEND URL — ถ้า host บน GitHub Pages ให้ใส่ URL ของ Render ──────────
 const BACKEND_URL = (() => {
   const origin = window.location.origin;
-  // ถ้า host บน GitHub Pages (github.io) → ใช้ Render URL
-  if (origin.includes('github.io') || origin.includes('localhost') || origin.startsWith('file://')) {
+  const href   = window.location.href;
+  // ถ้าเปิดจาก file://, localhost, github.io, หรือ origin เป็น "null" (file://) → ใช้ Render URL
+  if (
+    origin === 'null' ||
+    origin.includes('github.io') ||
+    origin.includes('localhost') ||
+    origin.startsWith('file://') ||
+    href.startsWith('file://')
+  ) {
     return 'https://lineoa-u0v2.onrender.com';
   }
   // ถ้า host บน Render เอง → ใช้ origin ปกติ
@@ -1671,6 +1775,32 @@ let cats      = ['ทั้งหมด','สินค้าใหม่'];
 let cart      = [];
 let activeCat = 'ทั้งหมด';
 let curProd   = null, curSize = null, curSizeIdx = 0, cartOT = 'delivery';
+let paymentMethod = null; // 'cod' หรือ 'transfer'
+function selectPayment(method) {
+  paymentMethod = method;
+  const cod  = document.getElementById('pay-cod');
+  const trf  = document.getElementById('pay-transfer');
+  const err  = document.getElementById('pay-error');
+  if (!cod || !trf) return;
+  cod.style.borderColor  = method === 'cod'      ? '#e74c3c' : '#ccc';
+  cod.style.background   = method === 'cod'      ? '#fff5f5' : '#fafafa';
+  cod.style.color        = method === 'cod'      ? '#c0392b' : '#333';
+  trf.style.borderColor  = method === 'transfer' ? '#2980b9' : '#ccc';
+  trf.style.background   = method === 'transfer' ? '#eaf4fd' : '#fafafa';
+  trf.style.color        = method === 'transfer' ? '#2980b9' : '#333';
+  if (err) err.style.display = 'none';
+  // จำการเลือกไว้ครั้งหน้า
+  if (method) localStorage.setItem('ms_payment_method', method);
+  // แสดง QR popup ถ้าเลือกโอนเงินและร้านตั้งค่าไว้
+  if (method === 'transfer') showQRPopup();
+}
+function copyQRNumber() {
+  const el = document.getElementById('qrPopPromptpay');
+  if (!el) return;
+  const num = el.textContent.trim();
+  if (!num) return;
+  navigator.clipboard.writeText(num).then(() => toast('คัดลอกเลขพร้อมเพย์แล้ว ✓')).catch(() => toast('คัดลอกไม่ได้'));
+}
 let mQty      = 1;
 let pinBuf    = '';
 let editingId = null;
@@ -1710,6 +1840,11 @@ window.onload = async () => {
     // ไม่ block — ลองโหลดต่อเลย
   }
 
+  // ── Keep-alive: ping ทุก 10 นาที ไม่ให้ Render หลับ ──────
+  setInterval(() => {
+    fetch(`${BACKEND_URL}/health`).catch(() => {});
+  }, 10 * 60 * 1000);
+
   try {
     await loadStore();
     renderCatBar();
@@ -1733,6 +1868,10 @@ window.onload = async () => {
       const delayMs = Math.max(0, (parseFloat(adCfg.delay) || 1)) * 1000;
       setTimeout(() => showAdOverlay(adCfg, false), delayMs);
     }
+
+    // 💳 โหลด QR config จาก localStorage ไว้พร้อม (ก่อน admin เปิด)
+    const _qrLsInit = _qrLoadLS();
+    if (_qrLsInit) _qrCfgCache = _qrLsInit;
   } catch(e) {
     console.error('Init error:', e);
   } finally {
@@ -3406,6 +3545,16 @@ async function openCart() {
   if(n && !document.getElementById('cName').value)     document.getElementById('cName').value = n;
   if(p && !document.getElementById('cPhone').value)    document.getElementById('cPhone').value = p;
   if(l && !document.getElementById('cLineName').value) document.getElementById('cLineName').value = l;
+  // pre-fill ที่อยู่จัดส่ง
+  const _af = { cAddrNo:'ms_addr_no', cAddrMoo:'ms_addr_moo', cAddrSoi:'ms_addr_soi', cAddrRoad:'ms_addr_road', cAddrProvince:'ms_addr_prov' };
+  Object.entries(_af).forEach(([id, key]) => {
+    const el = document.getElementById(id);
+    const val = localStorage.getItem(key);
+    if (el && val && !el.value) el.value = val;
+  });
+  // pre-select วิธีชำระที่เคยเลือก
+  const _savedPm = localStorage.getItem('ms_payment_method');
+  if (_savedPm && !paymentMethod) selectPayment(_savedPm);
 }
 
 async function sendOrder() {
@@ -3461,16 +3610,42 @@ async function sendOrder() {
       return;
     }
   }
-  if (cartOT==='delivery' && !document.getElementById('cAddr').value.trim()) { toast('กรุณากรอกที่อยู่จัดส่ง'); return; }
+  if (cartOT==='delivery') {
+    const addrNo  = document.getElementById('cAddrNo').value.trim();
+    const addrMoo = document.getElementById('cAddrMoo').value.trim();
+    const addrSoi = document.getElementById('cAddrSoi').value.trim();
+    const addrRoad= document.getElementById('cAddrRoad').value.trim();
+    const addrProv= document.getElementById('cAddrProvince').value.trim();
+    if (!addrNo)   { toast('⚠️ กรุณากรอกบ้านเลขที่'); return; }
+    if (!addrMoo)  { toast('⚠️ กรุณากรอกหมู่'); return; }
+    if (!addrSoi)  { toast('⚠️ กรุณากรอกซอย'); return; }
+    if (!addrRoad) { toast('⚠️ กรุณากรอกถนน'); return; }
+    if (!addrProv) { toast('⚠️ กรุณากรอกจังหวัด'); return; }
+  }
+  if (cartOT==='pickup') {
+    const pickTVal = document.getElementById('cPickTime').value.trim();
+    if (!pickTVal) { toast('⚠️ กรุณาเลือกวัน/เวลารับสินค้า'); return; }
+  }
+  if (!paymentMethod) {
+    const errEl = document.getElementById('pay-error');
+    if (errEl) errEl.style.display = 'block';
+    toast('⚠️ กรุณาเลือกวิธีชำระเงิน');
+    return;
+  }
 
   const btn = document.getElementById('sendBtn');
   btn.disabled=true; btn.textContent='⏳ กำลังส่ง...';
 
-  const addr    = document.getElementById('cAddr').value.trim();
-  const pickT   = document.getElementById('cPickTime').value.trim();
-  const note    = document.getElementById('cNote').value.trim();
-  const total   = cart.reduce((s,i,idx)=>s + getCartLinePrice(idx) * i.qty, 0);
-  const items   = cart.map((i,idx)=>{
+  const addrNo   = cartOT==='delivery' ? document.getElementById('cAddrNo').value.trim()       : '';
+  const addrMoo  = cartOT==='delivery' ? document.getElementById('cAddrMoo').value.trim()      : '';
+  const addrSoi  = cartOT==='delivery' ? document.getElementById('cAddrSoi').value.trim()      : '';
+  const addrRoad = cartOT==='delivery' ? document.getElementById('cAddrRoad').value.trim()     : '';
+  const addrProv = cartOT==='delivery' ? document.getElementById('cAddrProvince').value.trim() : '';
+  const addr     = cartOT==='delivery' ? `${addrNo} หมู่ ${addrMoo} ซอย ${addrSoi} ถนน ${addrRoad} ${addrProv}` : '';
+  const pickT    = document.getElementById('cPickTime').value.trim();
+  const note     = document.getElementById('cNote').value.trim();
+  const total    = cart.reduce((s,i,idx)=>s + getCartLinePrice(idx) * i.qty, 0);
+  const items    = cart.map((i,idx)=>{
     const unitPrice = getCartLinePrice(idx);
     return {
       name:`${i.prod.name} (${i.size.n})`,
@@ -3483,15 +3658,21 @@ async function sendOrder() {
       isWholesale: i.size.tiers?.length && unitPrice < i.size.p
     };
   });
+  const payLabel = paymentMethod === 'cod' ? '🏍️ เก็บปลายทาง' : '📲 โอน/สแกน QR';
 
   let extra = '';
   if (cartOT==='delivery') {
-    extra = `ที่อยู่: ${addr}`;
+    extra = `ที่อยู่: ${addrNo} หมู่ ${addrMoo} ซอย ${addrSoi} ถนน ${addrRoad} ${addrProv}`;
     if (mapLat) extra += `\nพิกัด: ${mapLat.toFixed(5)},${mapLng.toFixed(5)}`;
   } else {
-    if (pickT) extra = `รับสินค้า: ${pickT}`;
+    if (pickT) {
+      const dt = new Date(pickT);
+      const pickDisplay = dt.toLocaleString('th-TH',{dateStyle:'short',timeStyle:'short'});
+      extra = `รับสินค้า: ${pickDisplay}`;
+    }
     if (note)  extra += (extra?'\n':'')+`หมายเหตุ: ${note}`;
   }
+  extra += `\n💳 ชำระ: ${payLabel}`;
 
   try {
     const payload = {
@@ -3499,6 +3680,8 @@ async function sendOrder() {
       customerName: name,        // ชื่อจริง — สำหรับจ่าหน้าพัสดุ
       lineName: lineName,        // ✨ ชื่อ LINE — สำหรับผูกแชท
       phone, orderType:cartOT, address:addr, extra, items, total,
+      paymentMethod: paymentMethod,
+      paymentLabel:  payLabel,
       // 📍 พิกัด GPS (ถ้ามี) — สำหรับให้แอดมินดูแผนที่
       mapLat: mapLat || null,
       mapLng: mapLng || null,
@@ -3530,6 +3713,14 @@ async function sendOrder() {
     localStorage.setItem('ms_line_name', lineName);
     localStorage.setItem('ms_customer_name', name);
     if (phone) localStorage.setItem('ms_customer_phone', phone);
+    // เก็บที่อยู่จัดส่ง
+    if (cartOT === 'delivery') {
+      ['cAddrNo','cAddrMoo','cAddrSoi','cAddrRoad','cAddrProvince'].forEach((id, i) => {
+        const keys = ['ms_addr_no','ms_addr_moo','ms_addr_soi','ms_addr_road','ms_addr_prov'];
+        const el = document.getElementById(id);
+        if (el && el.value.trim()) localStorage.setItem(keys[i], el.value.trim());
+      });
+    }
 
     cart=[]; updCart(); closeCart();
     const isLinked = localStorage.getItem('ms_line_linked') === '1';
@@ -3560,8 +3751,28 @@ async function sendOrder() {
       } else { _shNoticeEl.style.display='none'; }
     }
     document.getElementById('successOv').classList.add('show');
+    // แสดง/ซ่อน slip section ตามวิธีชำระ
+    const slipSec = document.getElementById('successSlipSection');
+    if (slipSec) {
+      if (paymentMethod === 'transfer' && orderId) {
+        slipSec.style.display = 'block';
+        slipSec._orderId = orderId;
+        slipSec._customerId = CUSTOMER_ID;
+        // reset slip form
+        document.getElementById('successSlipFile').value = '';
+        document.getElementById('successSlipPreviewWrap').style.display = 'none';
+        document.getElementById('successSlipAmount').value = '';
+        document.getElementById('successSlipStatus').textContent = '';
+        document.getElementById('successSlipBtn').disabled = false;
+        document.getElementById('successSlipBtn').textContent = '📤 ส่งสลิป';
+        window._successSlipData = null;
+      } else {
+        slipSec.style.display = 'none';
+      }
+    }
     // reset
-    ['cAddr','cPickTime','cNote'].forEach(id=>document.getElementById(id).value='');
+    ['cAddrNo','cAddrMoo','cAddrSoi','cAddrRoad','cAddrProvince','cPickTime','cNote'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+    paymentMethod = null; selectPayment(null);
     mapLat=mapLng=null;
     document.getElementById('mapPreview').style.display='none';
     document.getElementById('pinInfo').style.display='none';
@@ -3652,7 +3863,11 @@ async function renderMyOrdersList() {
           <div class="mo-card-items">${items || '—'}</div>
           <div class="mo-card-bottom">
             <span class="mo-card-total">฿${(o.total||0).toLocaleString()}</span>
-            <span class="mo-card-cta">ดูรายละเอียด / แชท ›</span>
+            ${o.payment_method === 'cod'
+              ? `<span style="font-size:11px;background:#fff5f5;color:#c0392b;border:1px solid #f5c6c6;border-radius:8px;padding:2px 8px;font-weight:700;">🏍️ ปลายทาง</span>`
+              : o.payment_method === 'transfer'
+                ? `<span style="font-size:11px;background:#eaf4fd;color:#2980b9;border:1px solid #b3d4f0;border-radius:8px;padding:2px 8px;font-weight:700;">📲 โอน/QR</span>`
+                : `<span class="mo-card-cta">ดูรายละเอียด / แชท ›</span>`}
           </div>
         </div>
       `;
@@ -3736,6 +3951,101 @@ async function openOrderDetail(orderId) {
     </div>
     <div class="det-items">${itemsHtml}</div>
 
+    <div style="background:#f9f9f9;border:1px solid #eee;border-radius:12px;padding:10px 14px;margin-bottom:12px;font-size:13px;display:flex;flex-direction:column;gap:6px;">
+      ${o.address ? `<div style="display:flex;gap:8px;"><span style="color:#888;min-width:60px;">📍 ที่อยู่</span><span style="color:#333;">${escapeShop(o.address)}</span></div>` : ''}
+      <div style="display:flex;gap:8px;align-items:center;">
+        <span style="color:#888;min-width:60px;">💳 ชำระ</span>
+        ${o.payment_method === 'cod'
+          ? `<span style="background:#fff5f5;color:#c0392b;border:1px solid #f5c6c6;border-radius:8px;padding:2px 10px;font-size:12px;font-weight:700;">🏍️ เก็บปลายทาง</span>`
+          : o.payment_method === 'transfer'
+            ? `<span style="background:#eaf4fd;color:#2980b9;border:1px solid #b3d4f0;border-radius:8px;padding:2px 10px;font-size:12px;font-weight:700;">📲 โอน/สแกน QR</span>`
+            : `<span style="color:#aaa;font-size:12px;">—</span>`}
+      </div>
+      ${o.note ? `<div style="display:flex;gap:8px;"><span style="color:#888;min-width:60px;">📝 หมายเหตุ</span><span style="color:#555;">${escapeShop(o.note)}</span></div>` : ''}
+    </div>
+    <!-- ── ส่วนแนบสลิป (เฉพาะออเดอร์โอน) ─── -->
+    ${o.payment_method === 'transfer' ? `
+    <div id="slipSection" style="background:#eaf4fd;border:1.5px solid #b3d4f0;border-radius:14px;padding:14px 16px;margin-bottom:14px;">
+      <div style="font-weight:700;color:#1a5276;font-size:14px;margin-bottom:8px;">📲 แนบสลิปการโอนเงิน</div>
+
+      ${o.payment_status === 'confirmed' ? `
+        <!-- ✅ ยืนยันแล้ว -->
+        <div style="background:#e8f8f5;border-radius:10px;padding:12px 14px;color:#1e8449;font-size:14px;font-weight:700;text-align:center;">
+          ✅ ยืนยันชำระเงินแล้ว<br>
+          <span style="font-size:12px;font-weight:400;color:#27ae60;margin-top:4px;display:block;">ทางร้านได้รับการชำระเรียบร้อยแล้ว 🎉</span>
+        </div>
+
+      ` : o.payment_status === 'paid' ? `
+        <!-- 📋 รับสลิปแล้ว รอร้านยืนยัน -->
+        <div style="background:#eaf4fd;border-radius:10px;padding:12px 14px;color:#1a5276;font-size:13px;font-weight:700;margin-bottom:10px;text-align:center;">
+          📋 ส่งสลิปแล้ว — รอร้านยืนยัน<br>
+          <span style="font-size:11px;font-weight:400;color:#5d6d7e;margin-top:3px;display:block;">ยอดที่โอน ฿${Number(o.slip_amount||0).toLocaleString()} • ยอดออเดอร์ ฿${Number(o.total||0).toLocaleString()}</span>
+        </div>
+        ${o.slip_url ? `<img src="${o.slip_url}" style="width:100%;max-height:200px;object-fit:contain;border-radius:10px;border:1px solid #b3d4f0;" alt="สลิป">` : ''}
+
+      ` : o.payment_status === 'slip_mismatch' ? `
+        <!-- ⚠️ ยอดไม่ตรง — ส่งสลิปใหม่ได้ -->
+        <div style="background:#fff5f5;border:1.5px solid #f5c6c6;border-radius:10px;padding:12px 14px;margin-bottom:12px;">
+          <div style="font-size:13px;font-weight:700;color:#c0392b;margin-bottom:4px;">⚠️ ยอดที่โอนไม่ครบ</div>
+          <div style="font-size:12px;color:#555;line-height:1.7;">
+            ยอดที่โอน: <b>฿${Number(o.slip_amount||0).toLocaleString()}</b><br>
+            ยอดออเดอร์: <b>฿${Number(o.total||0).toLocaleString()}</b><br>
+            <span style="color:#c0392b;font-weight:700;">ขาดอีก ฿${Math.max(0, Number(o.total||0) - Number(o.slip_amount||0)).toFixed(2)}</span>
+          </div>
+        </div>
+        <div style="font-size:12px;color:#555;margin-bottom:10px;">📎 ส่งสลิปใหม่หลังโอนเพิ่มได้เลย</div>
+        <div style="margin-bottom:8px;">
+          <div id="slipDropArea" onclick="document.getElementById('slipFileInput').click()"
+            style="border:2px dashed #f5c6c6;border-radius:10px;padding:14px;text-align:center;cursor:pointer;font-size:13px;color:#c0392b;background:#fff;">
+            📎 คลิกเลือกสลิปใหม่
+            <div id="slipPreviewWrap" style="display:none;margin-top:8px;">
+              <img id="slipPreviewImg" style="max-width:100%;max-height:180px;border-radius:8px;object-fit:contain;" />
+            </div>
+          </div>
+          <input type="file" id="slipFileInput" accept="image/*" style="display:none;" onchange="onSlipFileChange(this)">
+        </div>
+        <div style="margin-bottom:8px;">
+          <label style="font-size:12px;color:#888;display:block;margin-bottom:4px;">ยอดที่โอน (บาท) *</label>
+          <input id="slipAmountInput" type="number" min="0" step="0.01"
+            placeholder="฿${Number(o.total||0).toFixed(2)}"
+            style="width:100%;padding:9px 12px;border:1.5px solid #f5c6c6;border-radius:9px;font-size:14px;font-family:'Sarabun',sans-serif;outline:none;box-sizing:border-box;">
+        </div>
+        <div id="slipStatusMsg" style="font-size:12px;min-height:16px;margin-bottom:6px;"></div>
+        <button onclick="submitSlip('${o.order_id}')"
+          style="width:100%;padding:11px;background:#c0392b;color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;font-family:'Sarabun',sans-serif;cursor:pointer;">
+          📤 ส่งสลิปใหม่
+        </button>
+
+      ` : `
+        <!-- ⏳ ยังไม่ได้ส่งสลิป (pending_slip หรือ null) -->
+        <div style="font-size:12px;color:#555;margin-bottom:10px;">📎 แนบรูปสลิปและกรอกยอดที่โอน ระบบจะตรวจสอบให้อัตโนมัติ</div>
+        <div style="margin-bottom:8px;">
+          <label style="font-size:12px;color:#888;display:block;margin-bottom:4px;">รูปสลิป *</label>
+          <div id="slipDropArea" onclick="document.getElementById('slipFileInput').click()"
+            style="border:2px dashed #b3d4f0;border-radius:10px;padding:16px;text-align:center;cursor:pointer;font-size:13px;color:#2980b9;background:#fff;">
+            📎 คลิกเพื่อเลือกรูปสลิป
+            <div id="slipPreviewWrap" style="display:none;margin-top:8px;">
+              <img id="slipPreviewImg" style="max-width:100%;max-height:200px;border-radius:8px;object-fit:contain;" />
+            </div>
+          </div>
+          <input type="file" id="slipFileInput" accept="image/*" style="display:none;" onchange="onSlipFileChange(this)">
+        </div>
+        <div style="margin-bottom:10px;">
+          <label style="font-size:12px;color:#888;display:block;margin-bottom:4px;">ยอดที่โอน (บาท) *</label>
+          <input id="slipAmountInput" type="number" min="0" step="0.01"
+            placeholder="${Number(o.total||0).toFixed(2)}"
+            style="width:100%;padding:9px 12px;border:1.5px solid #b3d4f0;border-radius:9px;font-size:14px;font-family:'Sarabun',sans-serif;outline:none;box-sizing:border-box;">
+          <div style="font-size:11px;color:#aaa;margin-top:3px;">ยอดออเดอร์: ฿${Number(o.total||0).toLocaleString()}</div>
+        </div>
+        <div id="slipStatusMsg" style="font-size:12px;min-height:16px;margin-bottom:6px;"></div>
+        <button onclick="submitSlip('${o.order_id}')"
+          style="width:100%;padding:11px;background:#2980b9;color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;font-family:'Sarabun',sans-serif;cursor:pointer;">
+          📤 ส่งสลิป
+        </button>
+      `}
+    </div>
+    ` : ''}
+
     <div style="font-family:'Prompt',sans-serif;font-weight:700;margin-bottom:8px;">💬 แชทกับร้าน</div>
     <div class="chat-list" id="shopChatList">
       <div class="chat-empty-c">กำลังโหลด...</div>
@@ -3766,7 +4076,11 @@ async function loadOrderChat(orderId) {
       const cls = m.sender === 'admin' ? 'from-admin'
                 : m.sender === 'system' ? 'from-system' : 'from-customer';
       const who = m.sender === 'admin' ? 'ร้าน' : m.sender === 'system' ? '' : 'คุณ';
-      return `<div class="chat-bbl ${cls}">${escapeShop(m.text)}<div class="chat-meta">${who ? who+' • ' : ''}${time}</div></div>`;
+      // แสดงรูปสลิปถ้ามีใน message
+      const imgHtml = m.slip_url
+        ? `<div style="margin-top:6px;"><img src="${escapeShop(m.slip_url)}" style="max-width:180px;border-radius:8px;cursor:pointer;border:1px solid #ddd;" onclick="window.open('${escapeShop(m.slip_url)}','_blank')"></div>`
+        : '';
+      return `<div class="chat-bbl ${cls}">${escapeShop(m.text)}${imgHtml}<div class="chat-meta">${who ? who+' • ' : ''}${time}</div></div>`;
     }).join('') + shChatHoursBanner();
     // โหลด cfg ล่าสุดจาก server แล้วอัปเดต banner ใน chat
     shLoadCfgFromServer().then(function(cfg){
@@ -3805,9 +4119,17 @@ function setupShopChatRealtime(orderId) {
       payload => {
         if (_curViewOrder?.order_id === orderId && payload.new) {
           // อัปเดตสถานะใน UI
-          _curViewOrder.status = payload.new.status;
+          _curViewOrder.status         = payload.new.status;
+          _curViewOrder.payment_status = payload.new.payment_status;
+          _curViewOrder.slip_url       = payload.new.slip_url;
+          _curViewOrder.slip_amount    = payload.new.slip_amount;
           const idx = _myOrders.findIndex(x => x.order_id === orderId);
-          if (idx >= 0) _myOrders[idx].status = payload.new.status;
+          if (idx >= 0) {
+            _myOrders[idx].status         = payload.new.status;
+            _myOrders[idx].payment_status = payload.new.payment_status;
+            _myOrders[idx].slip_url       = payload.new.slip_url;
+            _myOrders[idx].slip_amount    = payload.new.slip_amount;
+          }
           openOrderDetail(orderId);
         }
       }
@@ -3848,6 +4170,296 @@ document.addEventListener('keydown', e => {
 });
 
 // ═══════════════════════════════════════════
+//  SLIP UPLOAD — ลูกค้าแนบสลิปโอนเงิน
+// ═══════════════════════════════════════════
+let _slipFileData = null; // base64 หรือ URL หลัง upload
+
+function onSlipFileChange(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async e => {
+    _slipFileData = e.target.result; // base64 เต็ม ใช้อัปโหลด Cloudinary
+    const prevImg  = document.getElementById('slipPreviewImg');
+    const prevWrap = document.getElementById('slipPreviewWrap');
+    const dropArea = document.getElementById('slipDropArea');
+    if (prevImg && prevWrap) {
+      prevImg.src = _slipFileData;
+      prevWrap.style.display = 'block';
+      if (dropArea) dropArea.style.borderColor = '#27ae60';
+    }
+
+    // ── อ่านยอดจากสลิปอัตโนมัติ ──
+    const amountEl  = document.getElementById('slipAmountInput');
+    const statusEl  = document.getElementById('slipStatusMsg');
+    if (!amountEl) return;
+
+    if (statusEl) { statusEl.textContent = '🔍 กำลังอ่านยอดจากสลิป...'; statusEl.style.color = '#2980b9'; }
+
+    try {
+      // compress รูปก่อนส่ง OCR (ลดขนาดเหลือ max 1200px)
+      const compressed = await _compressImgBase64(_slipFileData, 1200, 0.75);
+      const r = await fetch(`${BACKEND_URL}/read-slip`, {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ image_base64: compressed })
+      });
+      if (r.status === 413) {
+        if (statusEl) { statusEl.textContent = '⚠️ รูปใหญ่เกินไป — กรุณากรอกยอดเอง'; statusEl.style.color = '#e67e22'; }
+        return;
+      }
+      const d = await r.json();
+
+      if (d.success && d.amount > 0) {
+        amountEl.value = d.amount.toFixed(2);
+        amountEl.style.borderColor = '#27ae60';
+        if (statusEl) { statusEl.textContent = `✅ อ่านได้ ฿${d.amount.toLocaleString()} — ตรวจสอบก่อนกดส่ง`; statusEl.style.color = '#27ae60'; }
+      } else {
+        amountEl.style.borderColor = '#e67e22';
+        if (statusEl) { statusEl.textContent = '⚠️ อ่านยอดไม่ได้ — กรุณากรอกเอง'; statusEl.style.color = '#e67e22'; }
+      }
+    } catch(e) {
+      if (statusEl) { statusEl.textContent = '⚠️ อ่านยอดไม่ได้ — กรุณากรอกเอง'; statusEl.style.color = '#e67e22'; }
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+// ── compress รูปก่อนส่ง OCR ──────────────────────────────────
+function _compressImgBase64(base64, maxPx, quality) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      let w = img.width, h = img.height;
+      if (w > maxPx || h > maxPx) {
+        if (w > h) { h = Math.round(h * maxPx / w); w = maxPx; }
+        else       { w = Math.round(w * maxPx / h); h = maxPx; }
+      }
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(c.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => resolve(base64); // ถ้า error ส่ง original
+    img.src = base64;
+  });
+}
+
+async function submitSlip(orderId) {
+  const amountEl  = document.getElementById('slipAmountInput');
+  const statusEl  = document.getElementById('slipStatusMsg');
+  const amount    = parseFloat(amountEl?.value);
+
+  if (!_slipFileData) { toast('⚠️ กรุณาเลือกรูปสลิปก่อน'); return; }
+  if (!amount || amount <= 0) { toast('⚠️ กรุณากรอกยอดที่โอน'); return; }
+
+  if (statusEl) statusEl.textContent = '⏳ กำลังอัปโหลดสลิป...';
+
+  let slipUrl = null;
+  try {
+    // อัปโหลดสลิปไป Cloudinary
+    const blob = await (await fetch(_slipFileData)).blob();
+    const formData = new FormData();
+    formData.append('file', blob);
+    formData.append('upload_preset', CLOUDINARY_PRESET);
+    formData.append('folder', 'slips');
+    const upRes = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, {
+      method: 'POST', body: formData
+    });
+    if (!upRes.ok) throw new Error('อัปโหลดรูปไม่ได้');
+    const upData = await upRes.json();
+    slipUrl = upData.secure_url;
+  } catch(e) {
+    // ถ้า Cloudinary ล้มเหลว ใช้ base64 แทน (ส่งใน chat message)
+    console.warn('Cloudinary upload failed, using base64 fallback:', e.message);
+    slipUrl = null; // ส่ง text แทน
+  }
+
+  if (statusEl) statusEl.textContent = '⏳ กำลังส่งสลิป...';
+
+  try {
+    const res = await fetch(`${BACKEND_URL}/submit-slip`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        order_id   : orderId,
+        customer_id: CUSTOMER_ID,
+        slip_url   : slipUrl,
+        slip_amount: amount
+      })
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || 'ส่งไม่ได้');
+
+    // แสดงผลลัพธ์
+    if (d.isMatch) {
+      toast('✅ ยืนยันการโอนสำเร็จ! ยอดตรงกัน');
+      if (statusEl) { statusEl.textContent = '✅ ยืนยันสำเร็จ! ยอดตรงกัน'; statusEl.style.color = '#27ae60'; }
+    } else if (d.diff > 0) {
+      toast(`⚠️ ยอดขาด ฿${d.diff.toFixed(2)} — ร้านได้รับแจ้งแล้ว`);
+      if (statusEl) { statusEl.textContent = `⚠️ ยอดขาดอีก ฿${d.diff.toFixed(2)} — กรุณาโอนเพิ่มแล้วส่งสลิปใหม่`; statusEl.style.color = '#e67e22'; }
+    } else {
+      toast('✅ ส่งสลิปแล้ว รอร้านตรวจสอบ');
+      if (statusEl) { statusEl.textContent = '✅ ส่งสลิปแล้ว รอร้านตรวจสอบ'; statusEl.style.color = '#2980b9'; }
+    }
+
+    _slipFileData = null;
+    // Reload order detail เพื่ออัปเดตสถานะ
+    await loadMyOrders();
+    setTimeout(() => openOrderDetail(orderId), 500);
+  } catch(e) {
+    if (statusEl) { statusEl.textContent = '❌ ' + e.message; statusEl.style.color = '#e74c3c'; }
+  }
+}
+
+// ═══════════════════════════════════════════
+//  SUCCESS POPUP SLIP UPLOAD
+// ═══════════════════════════════════════════
+window._successSlipData = null;
+
+function _successSlipSetPreview(base64) {
+  window._successSlipData = base64;
+  const img  = document.getElementById('successSlipPreviewImg');
+  const wrap = document.getElementById('successSlipPreviewWrap');
+  img.src = base64;
+  wrap.style.display = 'block';
+  document.getElementById('successSlipDrop').style.borderColor = '#27ae60';
+  // อ่านยอดอัตโนมัติ
+  _successSlipReadOCR(base64);
+}
+
+async function _successSlipReadOCR(base64) {
+  const statusEl = document.getElementById('successSlipStatus');
+  if (statusEl) { statusEl.textContent = '🔍 กำลังอ่านยอดจากสลิป...'; statusEl.style.color = '#2980b9'; }
+  try {
+    const compressed = await _compressImgBase64(base64, 1200, 0.75);
+    const r = await fetch(`${BACKEND_URL}/read-slip`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image_base64: compressed })
+    });
+    if (r.status === 413) {
+      if (statusEl) { statusEl.textContent = '⚠️ รูปใหญ่เกินไป — กรุณากรอกยอดเอง'; statusEl.style.color = '#e67e22'; }
+      return;
+    }
+    const text = await r.text();
+    let d;
+    try { d = JSON.parse(text); } catch(_) {
+      if (statusEl) { statusEl.textContent = '⚠️ อ่านยอดไม่ได้ — กรุณากรอกเอง'; statusEl.style.color = '#e67e22'; }
+      return;
+    }
+    const amountEl = document.getElementById('successSlipAmount');
+    if (d.success && d.amount > 0) {
+      amountEl.value = d.amount.toFixed(2);
+      amountEl.style.borderColor = '#27ae60';
+      if (statusEl) { statusEl.textContent = `✅ อ่านได้ ฿${d.amount.toLocaleString()} — ตรวจสอบก่อนกดส่ง`; statusEl.style.color = '#27ae60'; }
+    } else {
+      amountEl.style.borderColor = '#e67e22';
+      if (statusEl) { statusEl.textContent = '⚠️ อ่านยอดไม่ได้ — กรุณากรอกเอง'; statusEl.style.color = '#e67e22'; }
+    }
+  } catch(e) {
+    const statusEl = document.getElementById('successSlipStatus');
+    if (statusEl) { statusEl.textContent = '⚠️ อ่านยอดไม่ได้ — กรุณากรอกเอง'; statusEl.style.color = '#e67e22'; }
+  }
+}
+
+function _successSlipPick(inp) {
+  const f = inp.files[0]; if (!f) return;
+  const reader = new FileReader();
+  reader.onload = e => _successSlipSetPreview(e.target.result);
+  reader.readAsDataURL(f);
+}
+
+function _successSlipDrop(e) {
+  const f = e.dataTransfer.files[0]; if (!f) return;
+  const reader = new FileReader();
+  reader.onload = ev => _successSlipSetPreview(ev.target.result);
+  reader.readAsDataURL(f);
+}
+
+async function _successSlipSubmit() {
+  const slipSec  = document.getElementById('successSlipSection');
+  const statusEl = document.getElementById('successSlipStatus');
+  const btn      = document.getElementById('successSlipBtn');
+  const amountEl = document.getElementById('successSlipAmount');
+  const orderId  = slipSec?._orderId;
+  const customerId = slipSec?._customerId;
+  const amount   = parseFloat(amountEl?.value);
+
+  if (!window._successSlipData) { toast('⚠️ กรุณาเลือกรูปสลิปก่อน'); return; }
+  if (!amount || amount <= 0)    { toast('⚠️ กรุณากรอกยอดที่โอน');      return; }
+  if (!orderId)                  { toast('⚠️ ไม่พบเลขออเดอร์');          return; }
+
+  btn.disabled = true; btn.textContent = '⏳ กำลังส่ง...';
+  if (statusEl) statusEl.textContent = '⏳ กำลังอัปโหลดสลิป...';
+
+  // ── ปลุก server ก่อนส่งเสมอ (กัน Render หลับ) ──
+  try {
+    if (statusEl) { statusEl.textContent = '⏳ กำลังเชื่อมต่อ server...'; statusEl.style.color = '#2980b9'; }
+    await fetch(`${BACKEND_URL}/health`, { signal: AbortSignal.timeout(40000) });
+  } catch(e) { console.warn('pre-slip wake failed:', e.message); }
+  if (statusEl) statusEl.textContent = '⏳ กำลังอัปโหลดสลิป...';
+
+  let slipUrl = null;
+  try {
+    const blob = await (await fetch(window._successSlipData)).blob();
+    const fd = new FormData();
+    fd.append('file', blob);
+    fd.append('upload_preset', CLOUDINARY_PRESET);
+    fd.append('folder', 'slips');
+    const up = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, { method:'POST', body:fd });
+    if (up.ok) { const ud = await up.json(); slipUrl = ud.secure_url; }
+  } catch(e) { console.warn('Cloudinary fallback:', e.message); }
+
+  if (statusEl) statusEl.textContent = '⏳ กำลังส่งสลิป...';
+
+  try {
+    const res = await fetch(`${BACKEND_URL}/submit-slip`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order_id: orderId, customer_id: customerId, slip_url: slipUrl, slip_amount: amount })
+    });
+    // ป้องกัน Render ตื่นนอนช้า → ตอบ HTML แทน JSON
+    const text = await res.text();
+    let d;
+    try { d = JSON.parse(text); }
+    catch(_) {
+      // server ยังไม่ตื่น → รอ 5 วิแล้ว retry อัตโนมัติ
+      if (statusEl) { statusEl.textContent = '⏳ server กำลังตื่น รอสักครู่...'; statusEl.style.color = '#e67e22'; }
+      await new Promise(r => setTimeout(r, 5000));
+      if (statusEl) statusEl.textContent = '🔄 กำลังลองใหม่...';
+      const res2 = await fetch(`${BACKEND_URL}/submit-slip`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order_id: orderId, customer_id: customerId, slip_url: slipUrl, slip_amount: amount })
+      });
+      const text2 = await res2.text();
+      try { d = JSON.parse(text2); }
+      catch(_) {
+        if (statusEl) { statusEl.textContent = '❌ เชื่อมต่อไม่ได้ กรุณาลองใหม่'; statusEl.style.color = '#e74c3c'; }
+        btn.disabled = false; btn.textContent = '📤 ลองใหม่';
+        return;
+      }
+    }
+    if (!res.ok && !d?.success) throw new Error(d?.error || 'ส่งไม่ได้');
+
+    if (d.isMatch) {
+      if (statusEl) { statusEl.textContent = '✅ ยืนยันสำเร็จ! ยอดตรงกัน — ร้านได้รับแล้ว'; statusEl.style.color = '#27ae60'; }
+      toast('✅ ยืนยันการโอนสำเร็จ! ยอดตรงกัน');
+      btn.textContent = '✅ ส่งแล้ว';
+    } else if (d.diff > 0) {
+      if (statusEl) { statusEl.textContent = `⚠️ ยอดขาดอีก ฿${d.diff.toFixed(2)} — ส่งสลิปใหม่หลังโอนเพิ่ม`; statusEl.style.color = '#e67e22'; }
+      toast(`⚠️ ยอดขาด ฿${d.diff.toFixed(2)}`);
+      btn.disabled = false; btn.textContent = '📤 ส่งสลิปใหม่';
+    } else {
+      if (statusEl) { statusEl.textContent = '✅ ส่งสลิปแล้ว รอร้านตรวจสอบ'; statusEl.style.color = '#2980b9'; }
+      toast('✅ ส่งสลิปแล้ว รอร้านตรวจสอบ');
+      btn.textContent = '✅ ส่งแล้ว';
+    }
+  } catch(e) {
+    if (statusEl) { statusEl.textContent = '❌ ' + e.message; statusEl.style.color = '#e74c3c'; }
+    btn.disabled = false; btn.textContent = '📤 ส่งสลิป';
+  }
+}
+
+// ═══════════════════════════════════════════
 //  PIN
 // ═══════════════════════════════════════════
 function askPin() { pinBuf=''; updPinDots(); document.getElementById('pinErr').textContent=''; document.getElementById('pinOv').classList.add('show'); }
@@ -3878,6 +4490,12 @@ function openAdmin() {
   adLoadUI();
   loadReferralConfig(); // โหลด referral config ทุกครั้งที่เปิด
   shLoadAdminUI();
+
+  // 💳 QR config — apply จาก localStorage ทันทีก่อน (sync) แล้ว async sync backend
+  const _qrLs = _qrLoadLS();
+  if (_qrLs) _qrApplyUI(_qrLs);
+  loadQRConfig();       // async sync กับ backend (ถ้า deploy แล้ว)
+
   document.getElementById('adminOv').classList.add('show');
 }
 function closeAdmin() { document.getElementById('adminOv').classList.remove('show'); }
@@ -5245,7 +5863,203 @@ async function saveReferralConfig() {
     if (status) status.textContent = '❌ ' + e.message;
   }
 }
+
+// ═══════════════════════════════════════════
+//  QR CONFIG — ตั้งค่า QR โอนเงิน
+// ═══════════════════════════════════════════
+let _qrCfgCache = null; // cache
+const QR_LS_KEY = 'ms_qr_config_v1';
+
+function _qrSaveLS(cfg) {
+  try { localStorage.setItem(QR_LS_KEY, JSON.stringify(cfg)); } catch(e) {}
+}
+function _qrLoadLS() {
+  try { const v = localStorage.getItem(QR_LS_KEY); return v ? JSON.parse(v) : null; }
+  catch(e) { return null; }
+}
+
+function qrToggleChange() {
+  const on = document.getElementById('qrEnabled').checked;
+  document.getElementById('qrConfig').style.display = on ? 'block' : 'none';
+  // บันทึกสถานะ enabled ทันที ไม่ต้องกด save
+  const cur = _qrCfgCache || _qrLoadLS() || {};
+  cur.enabled = on;
+  _qrSaveLS(cur);
+  _qrCfgCache = cur;
+}
+
+function qrPreviewImg() {
+  const url   = (document.getElementById('qrImageUrl').value || '').trim();
+  const wrap  = document.getElementById('qrImgPreview');
+  const img   = document.getElementById('qrImgPreviewEl');
+  if (url) { img.src = url; wrap.style.display = 'block'; }
+  else       wrap.style.display = 'none';
+}
+
+function _qrSetImgUrl(url) {
+  document.getElementById('qrImageUrl').value = url;
+  const wrap = document.getElementById('qrImgPreview');
+  const img  = document.getElementById('qrImgPreviewEl');
+  if (url) { img.src = url; wrap.style.display = 'block'; }
+  else       wrap.style.display = 'none';
+}
+
+function clearQrImg() {
+  _qrSetImgUrl('');
+  document.getElementById('qrImgFile').value = '';
+}
+
+async function _uploadQrImgFile(file) {
+  const statusEl = document.getElementById('qrImgUploadStatus');
+  if (statusEl) statusEl.textContent = '⏳ กำลังอัปโหลด...';
+  try {
+    const url = await uploadImg(file);
+    _qrSetImgUrl(url);
+    if (statusEl) statusEl.textContent = '✅ อัปโหลดสำเร็จ';
+    setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 2500);
+  } catch(e) {
+    if (statusEl) statusEl.textContent = '❌ อัปโหลดไม่สำเร็จ';
+    toast('อัปโหลดรูป QR ไม่สำเร็จ', 'error');
+  }
+}
+
+function pickQrImg(inp) {
+  const f = inp.files[0];
+  if (f) _uploadQrImgFile(f);
+}
+
+function dropQrImg(e) {
+  e.preventDefault();
+  unDrag('qrImgDrop');
+  const f = e.dataTransfer.files[0];
+  if (f) _uploadQrImgFile(f);
+}
+
+function _qrApplyUI(d) {
+  _qrCfgCache = d;
+  document.getElementById('qrEnabled').checked = !!d.enabled;
+  document.getElementById('qrConfig').style.display = d.enabled ? 'block' : 'none';
+  document.getElementById('qrPromptpay').value   = d.promptpay_number || '';
+  document.getElementById('qrAccountName').value = d.account_name     || '';
+  _qrSetImgUrl(d.qr_image_url || '');
+  document.getElementById('qrNote').value        = d.note             || '';
+}
+
+async function loadQRConfig() {
+  // โหลดจาก localStorage ก่อนทันที (ไม่รอ network)
+  const ls = _qrLoadLS();
+  if (ls) _qrApplyUI(ls);
+
+  // พยายาม sync จาก backend (ถ้า deploy แล้ว)
+  const bu = typeof BACKEND_URL !== 'undefined' ? BACKEND_URL : null;
+  if (!bu) return;
+  try {
+    const r = await fetch(`${bu}/qr-config`, { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return;
+    const ct = r.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) return; // backend ยังไม่ deploy
+    const d = await r.json();
+    _qrApplyUI(d);
+    _qrSaveLS(d); // sync ลง localStorage
+  } catch(e) { /* backend ยังไม่ deploy — ใช้ localStorage ต่อไป */ }
+}
+
+async function saveQRConfig() {
+  const status = document.getElementById('qrSaveStatus');
+  if (status) status.textContent = '⏳ กำลังบันทึก...';
+  const cfg = {
+    enabled          : document.getElementById('qrEnabled').checked,
+    promptpay_number : document.getElementById('qrPromptpay').value.trim(),
+    account_name     : document.getElementById('qrAccountName').value.trim(),
+    qr_image_url     : document.getElementById('qrImageUrl').value.trim(),
+    note             : document.getElementById('qrNote').value.trim(),
+  };
+  // บันทึก localStorage ก่อนเสมอ (ไม่ต้องรอ backend)
+  _qrSaveLS(cfg);
+  _qrCfgCache = cfg;
+
+  // พยายาม sync backend ถ้าทำได้
+  const bu = typeof BACKEND_URL !== 'undefined' ? BACKEND_URL : null;
+  if (bu) {
+    try {
+      const r = await fetch(`${bu}/qr-config`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg), signal: AbortSignal.timeout(5000)
+      });
+      const ct = r.headers.get('content-type') || '';
+      if (r.ok && ct.includes('application/json')) {
+        // sync สำเร็จ
+      }
+      // ถ้า backend ยังไม่ deploy ก็ไม่ error — ใช้ localStorage ปกติ
+    } catch(e) { /* silent — localStorage ยังทำงาน */ }
+  }
+
+  if (status) status.textContent = '✅ บันทึกแล้ว!';
+  setTimeout(() => { if (status) status.textContent = ''; }, 2500);
+  toast('💾 บันทึก QR config แล้ว ✓');
+}
+
+// แสดง QR popup เมื่อลูกค้าเลือกโอนเงิน
+function showQRPopup() {
+  const cfg = _qrCfgCache || _qrLoadLS();
+  if (!cfg || !cfg.enabled) return;
+  const pop = document.getElementById('qrPayPopup');
+  if (!pop) return;
+  // เติมข้อมูล
+  const numEl  = document.getElementById('qrPopPromptpay');
+  const nameEl = document.getElementById('qrPopAccountName');
+  const imgEl  = document.getElementById('qrPopImg');
+  const noteEl = document.getElementById('qrPopNote');
+  if (numEl)  numEl.textContent  = cfg.promptpay_number || '';
+  if (nameEl) nameEl.textContent = cfg.account_name     || '';
+  if (imgEl) {
+    if (cfg.qr_image_url) { imgEl.src = cfg.qr_image_url; imgEl.style.display = 'block'; }
+    else imgEl.style.display = 'none';
+  }
+  if (noteEl) noteEl.textContent = cfg.note || '';
+  document.getElementById('qrPopNumRow').style.display  = cfg.promptpay_number ? 'flex' : 'none';
+  document.getElementById('qrPopNameRow').style.display = cfg.account_name     ? 'flex' : 'none';
+  document.getElementById('qrPopNoteRow').style.display = cfg.note             ? 'block': 'none';
+  pop.style.display = 'flex';
+}
+function closeQRPopup() {
+  const pop = document.getElementById('qrPayPopup');
+  if (pop) pop.style.display = 'none';
+}
 </script>
+
+<!-- ── QR PAY POPUP ── -->
+<div id="qrPayPopup" onclick="if(event.target===this)closeQRPopup()"
+  style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:8800;align-items:center;justify-content:center;padding:16px;">
+  <div style="background:#fff;border-radius:20px;width:100%;max-width:360px;padding:22px 20px;box-shadow:0 8px 32px rgba(0,0,0,0.22);position:relative;">
+    <button onclick="closeQRPopup()" style="position:absolute;top:14px;right:16px;background:none;border:none;font-size:22px;color:#aaa;cursor:pointer;line-height:1;">×</button>
+    <div style="text-align:center;margin-bottom:14px;">
+      <div style="font-size:18px;font-weight:700;color:#2980b9;">📲 โอน / สแกน QR จ่าย</div>
+    </div>
+    <!-- QR Image -->
+    <div style="text-align:center;margin-bottom:14px;">
+      <img id="qrPopImg" src="" alt="QR Code" style="max-width:200px;width:100%;border-radius:12px;border:1.5px solid #e0e0e0;display:none;">
+    </div>
+    <!-- PromptPay Number -->
+    <div id="qrPopNumRow" style="display:none;align-items:center;gap:8px;background:#eaf4fd;border-radius:10px;padding:10px 12px;margin-bottom:8px;">
+      <span style="font-size:13px;color:#888;flex-shrink:0;">📱 พร้อมเพย์:</span>
+      <span id="qrPopPromptpay" style="font-size:15px;font-weight:700;color:#2980b9;flex:1;"></span>
+      <button onclick="copyQRNumber()" style="background:#2980b9;color:#fff;border:none;border-radius:7px;padding:4px 10px;font-size:11px;font-family:'Sarabun',sans-serif;cursor:pointer;font-weight:700;">คัดลอก</button>
+    </div>
+    <!-- Account Name -->
+    <div id="qrPopNameRow" style="display:none;align-items:center;gap:8px;background:#f5f5f5;border-radius:10px;padding:10px 12px;margin-bottom:8px;">
+      <span style="font-size:13px;color:#888;flex-shrink:0;">👤 ชื่อบัญชี:</span>
+      <span id="qrPopAccountName" style="font-size:14px;font-weight:700;color:#333;flex:1;"></span>
+    </div>
+    <!-- Note -->
+    <div id="qrPopNoteRow" style="display:none;background:#fffde7;border-radius:10px;padding:10px 12px;margin-bottom:6px;">
+      <div style="font-size:12px;color:#888;margin-bottom:3px;">📝 หมายเหตุ</div>
+      <div id="qrPopNote" style="font-size:13px;color:#555;white-space:pre-line;line-height:1.6;"></div>
+    </div>
+    <button onclick="closeQRPopup()" style="width:100%;margin-top:10px;padding:12px;background:#2980b9;color:#fff;border:none;border-radius:12px;font-size:14px;font-weight:700;font-family:'Sarabun',sans-serif;cursor:pointer;">✅ ปิด</button>
+  </div>
+</div>
+
 <!-- ── REFERRAL SHEET ── -->
 <div id="referralOv" onclick="if(event.target===this)closeReferralSheet()"
   style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9000;align-items:flex-end;justify-content:center;">

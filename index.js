@@ -13,7 +13,8 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.options('*', cors()); // preflight สำหรับทุก route
-app.use(express.json());
+app.use(express.json({ limit: '15mb' }));         // รับ base64 รูปสลิปขนาดใหญ่ได้
+app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
 // ─── Supabase ──────────────────────────────────────────────
 const supabase = createClient(
@@ -141,12 +142,16 @@ function statusLabel(s) {
 
 async function buildAdminMsg(order) {
   const { customer_name, items, total, order_id, created_at, phone, address, note,
-          coupon_code, discount_amount, ref_code } = order;
+          coupon_code, discount_amount, ref_code, order_type, payment_method, payment_label } = order;
   const date = new Date(created_at).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short', timeZone:'Asia/Bangkok' });
+  const typeLabel = order_type === 'delivery' ? '🚚 จัดส่ง' : '📦 จอง/รับเอง';
+  const payLabel  = payment_label || (payment_method === 'cod' ? '🏍️ เก็บปลายทาง' : payment_method === 'transfer' ? '📲 โอน/สแกน QR' : null);
   let msg = `🛒 ออเดอร์ใหม่! #${order_id}\n`;
   msg += `${'─'.repeat(24)}\n`;
   msg += `👤 ${customer_name}\n`;
   if (phone)   msg += `📞 ${phone}\n`;
+  msg += `📋 ประเภท: ${typeLabel}\n`;
+  if (payLabel) msg += `💳 ชำระ: ${payLabel}\n`;
   if (address) msg += `📍 ${address}\n`;
   msg += `📅 ${date}\n`;
   if (ref_code) msg += `🎁 ชวนเพื่อน (${ref_code})\n`;
@@ -267,6 +272,27 @@ async function buildOrderSummaryFlex(order) {
   const total = safeNum(order.total);
   const orderId = String(safe(order.order_id, '-'));
   const customerName = String(safe(order.customer_name, '-')).trim() || '-';
+  const orderTypeLabel = order.order_type === 'delivery' ? '🚚 จัดส่ง' : '📦 จอง/รับเอง';
+  const payLabel = order.payment_label || (order.payment_method === 'cod' ? '🏍️ เก็บปลายทาง' : order.payment_method === 'transfer' ? '📲 โอน/สแกน QR' : null);
+  const payColor = order.payment_method === 'cod' ? '#e74c3c' : '#2980b9';
+
+  // แถวข้อมูลออเดอร์ (ประเภท + ชำระ)
+  const orderInfoRows = [
+    { type:'box', layout:'horizontal', margin:'sm',
+      contents:[
+        { type:'text', text:'ประเภท', size:'sm', color:'#888888', flex:1 },
+        { type:'text', text: orderTypeLabel, size:'sm', color:'#333333', weight:'bold', align:'end' }
+      ]
+    },
+    ...(payLabel ? [{
+      type:'box', layout:'horizontal', margin:'xs',
+      contents:[
+        { type:'text', text:'ชำระเงิน', size:'sm', color:'#888888', flex:1 },
+        { type:'text', text: payLabel, size:'sm', color: payColor, weight:'bold', align:'end' }
+      ]
+    }] : []),
+    { type:'separator', margin:'md' }
+  ];
 
   return {
     type: 'flex',
@@ -286,6 +312,7 @@ async function buildOrderSummaryFlex(order) {
       body: {
         type:'box', layout:'vertical', spacing:'md', paddingAll:'lg',
         contents: [
+          ...orderInfoRows,
           { type:'text', text:'📦 รายการสินค้า', size:'sm', color:'#888888', weight:'bold' },
           ...itemRows,
           ...moreItems,
@@ -671,7 +698,8 @@ app.post('/send-order', async (req, res) => {
     items, total, orderType, extra,
     mapLat, mapLng,             // 📍 พิกัด GPS
     couponId, discountAmount,    // 🎟️ ส่วนลด/คูปอง
-    refCode                        // 🎁 referral code
+    refCode,                       // 🎁 referral code
+    paymentMethod, paymentLabel    // 💳 วิธีชำระเงิน
   } = req.body;
 
   if (!customerId || !customerName || !items?.length || total == null)
@@ -794,7 +822,12 @@ app.post('/send-order', async (req, res) => {
     coupon_id: appliedCouponId,
     coupon_code: appliedCouponCode,
     discount_amount: finalDiscount,
-    ref_code: finalRefCode          // 💼 รหัสเซลที่แนะนำ
+    ref_code: finalRefCode,          // 💼 รหัสเซลที่แนะนำ
+    payment_method: paymentMethod || null,  // 💳 'cod' หรือ 'transfer'
+    payment_label:  paymentLabel  || null,   // 💳 ป้ายแสดง เช่น '🏍️ เก็บปลายทาง'
+    payment_status: paymentMethod === 'transfer' ? 'pending_slip' : null,  // 🧾 รอสลิป / paid / confirmed
+    slip_url      : null,            // 🧾 URL สลิปที่ลูกค้าส่ง
+    slip_amount   : null,            // 🧾 ยอดที่ลูกค้าแจ้ง
   };
 
   const { error: dbErr } = await supabase.from('orders').insert([order]);
@@ -1708,7 +1741,116 @@ app.post('/webhook', async (req, res) => {
 
     }
 
-    if (ev.type !== 'message' || ev.message?.type !== 'text') continue;
+    if (ev.type !== 'message' || ev.message?.type !== 'text') {
+      // ── รับรูปสลิปจาก LINE ลูกค้า ──────────────────────────
+      if (ev.type === 'message' && ev.message?.type === 'image') {
+        const replyToken = ev.replyToken;
+        try {
+          const { data: orders } = await supabase
+            .from('orders')
+            .select('order_id, total, customer_id, customer_name, payment_status')
+            .eq('line_user_id', userId)
+            .in('payment_status', ['pending_slip', 'slip_mismatch'])
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+          const order = orders?.[0];
+          if (!order) {
+            await safeReply(replyToken, userId, [{ type: 'text', text: '⚠️ ไม่พบออเดอร์ที่รอสลิปค่ะ\nถ้าเพิ่งสั่งซื้อ กรุณารอสักครู่แล้วส่งใหม่นะคะ' }]);
+            continue;
+          }
+
+          const contentRes = await fetch(`https://api-data.line.me/v2/bot/message/${ev.message.id}/content`, {
+            headers: { Authorization: `Bearer ${process.env.LINE_TOKEN}` }
+          });
+          if (!contentRes.ok) throw new Error('ดึงรูปไม่ได้');
+          const imgBuffer = await contentRes.arrayBuffer();
+          const base64 = 'data:image/jpeg;base64,' + Buffer.from(imgBuffer).toString('base64');
+
+          // OCR อ่านยอดจากสลิป
+          let detectedAmount = null;
+          try {
+            const ocrRes = await fetch(`${process.env.BACKEND_URL || 'http://localhost:' + PORT}/read-slip`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ image_base64: base64 })
+            });
+            const ocrData = await ocrRes.json();
+            if (ocrData.success && ocrData.amount > 0) detectedAmount = ocrData.amount;
+          } catch(ocrErr) { console.warn('OCR error:', ocrErr.message); }
+
+          // อัปโหลดรูปไป Cloudinary
+          let slipUrl = null;
+          if (process.env.CLOUDINARY_CLOUD && process.env.CLOUDINARY_PRESET) {
+            try {
+              const FormData = require('form-data');
+              const fd = new FormData();
+              fd.append('file', Buffer.from(imgBuffer), { filename: 'slip.jpg', contentType: 'image/jpeg' });
+              fd.append('upload_preset', process.env.CLOUDINARY_PRESET);
+              fd.append('folder', 'slips');
+              const upRes = await fetch(
+                `https://api.cloudinary.com/v1_1/${process.env.CLOUDINARY_CLOUD}/image/upload`,
+                { method: 'POST', body: fd, headers: fd.getHeaders() }
+              );
+              if (upRes.ok) { const ud = await upRes.json(); slipUrl = ud.secure_url; }
+            } catch(upErr) { console.warn('Cloudinary LINE slip upload error:', upErr.message); }
+          }
+
+          const expectedTotal = Number(order.total) || 0;
+          const paidAmount    = detectedAmount || 0;
+          const diff          = expectedTotal - paidAmount;
+          const isMatch       = detectedAmount && Math.abs(diff) < 1;
+          const newPayStatus  = detectedAmount
+            ? (isMatch ? 'paid' : 'slip_mismatch')
+            : 'pending_slip';
+
+          const now = new Date().toISOString();
+          await supabase.from('orders').update({
+            slip_url   : slipUrl || null,
+            slip_amount: paidAmount || null,
+            payment_status: newPayStatus,
+            ...(isMatch ? { status: 'confirmed' } : {})
+          }).eq('order_id', order.order_id);
+
+          await supabase.from('messages').insert([{
+            order_id: order.order_id, customer_id: order.customer_id,
+            sender: 'system',
+            text: slipUrl
+              ? `📷 ส่งสลิปผ่าน LINE${detectedAmount ? ` — อ่านได้ ฿${paidAmount.toLocaleString()}` : ' — รอแอดมินตรวจสอบ'}`
+              : '📷 ส่งสลิปผ่าน LINE (อ่านยอดไม่ได้)',
+            slip_url: slipUrl || null,
+            created_at: now
+          }]).catch(() => {});
+
+          let replyText = '';
+          if (isMatch) {
+            replyText = `✅ ยืนยันการโอนสำเร็จ!\n\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n\n🎉 ทางร้านได้รับการชำระเรียบร้อยแล้ว ขอบคุณค่ะ`;
+          } else if (detectedAmount && diff > 0) {
+            replyText = `⚠️ ยอดที่โอนไม่ครบ\n\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\nขาดอีก: ฿${diff.toFixed(2)}\n\nกรุณาโอนเพิ่มแล้วส่งสลิปใหม่ค่ะ`;
+          } else {
+            replyText = `📋 ได้รับสลิปแล้ว #${order.order_id}\n\nอยู่ระหว่างตรวจสอบค่ะ กรุณารอสักครู่นะคะ 🙏`;
+          }
+
+          await safeReply(replyToken, userId, [{ type: 'text', text: replyText }]);
+
+          if (process.env.LINE_TOKEN) {
+            const adminMsgs = [{
+              type: 'text',
+              text: isMatch
+                ? `💳 สลิปผ่าน LINE ✅ #${order.order_id}\nชื่อ: ${order.customer_name}\nยอด: ฿${paidAmount.toLocaleString()} = ฿${expectedTotal.toLocaleString()}\nยืนยันอัตโนมัติแล้ว`
+                : detectedAmount
+                  ? `💳 สลิปผ่าน LINE ⚠️ #${order.order_id}\nชื่อ: ${order.customer_name}\nยอดที่โอน: ฿${paidAmount.toLocaleString()} / ออเดอร์: ฿${expectedTotal.toLocaleString()}\n${diff > 0 ? `ขาด ฿${diff.toFixed(2)}` : `เกิน ฿${Math.abs(diff).toFixed(2)}`}`
+                  : `📷 ลูกค้าส่งสลิปใน LINE #${order.order_id}\nชื่อ: ${order.customer_name} — อ่านยอดไม่ได้ กรุณาตรวจ manual ค่ะ`
+            }];
+            if (slipUrl) adminMsgs.push({ type: 'image', originalContentUrl: slipUrl, previewImageUrl: slipUrl });
+            notifyAllAdmins(adminMsgs).catch(() => {});
+          }
+        } catch(imgErr) {
+          console.error('LINE image slip error:', imgErr.message);
+          try { await safeReply(ev.replyToken, userId, [{ type:'text', text:'❌ เกิดข้อผิดพลาด กรุณาลองใหม่ค่ะ' }]); } catch(_) {}
+        }
+      }
+      continue;
+    }
     const rawText = ev.message.text || '';
     const text = rawText.trim().toLowerCase();
     const replyToken = ev.replyToken;
@@ -2524,7 +2666,230 @@ app.post('/shop-hours', async (req, res) => {
   res.json({ success: true, config: cfg });
 });
 
-// ── GET /my-referral ─────────────────────────────────────────
+// ── GET /qr-config ───────────────────────────────────────────
+// อ่านการตั้งค่า QR โอนเงิน (ลูกค้าและแอดมินใช้)
+app.get('/qr-config', async (req, res) => {
+  const { data, error } = await supabase
+    .from('settings')
+    .select('value')
+    .eq('key', 'qr_config')
+    .maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  const defaults = { enabled: false, promptpay_number: '', account_name: '', qr_image_url: '', note: '' };
+  res.json(data ? { ...defaults, ...data.value } : defaults);
+});
+
+// ── POST /qr-config ──────────────────────────────────────────
+// บันทึกการตั้งค่า QR โอนเงิน (แอดมิน)
+app.post('/qr-config', async (req, res) => {
+  const cfg = {
+    enabled          : !!req.body.enabled,
+    promptpay_number : String(req.body.promptpay_number  || '').trim(),
+    account_name     : String(req.body.account_name      || '').trim(),
+    qr_image_url     : String(req.body.qr_image_url      || '').trim(),
+    note             : String(req.body.note              || '').trim(),
+  };
+  const { error } = await supabase
+    .from('settings')
+    .upsert({ key: 'qr_config', value: cfg }, { onConflict: 'key' });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true, config: cfg });
+});
+
+// ── POST /submit-slip ────────────────────────────────────────
+// ลูกค้าส่งสลิป + ยอดที่โอน → เปรียบเทียบกับ order.total
+app.post('/submit-slip', async (req, res) => {
+  const { order_id, customer_id, slip_url, slip_amount } = req.body;
+  if (!order_id || !customer_id)
+    return res.status(400).json({ error: 'order_id/customer_id required' });
+
+  const { data: order, error: oErr } = await supabase
+    .from('orders').select('*').eq('order_id', order_id).maybeSingle();
+  if (oErr) {
+    console.error('submit-slip DB error:', oErr.message);
+    return res.status(500).json({ error: 'DB error: ' + oErr.message });
+  }
+  if (!order)
+    return res.status(404).json({ error: `ไม่พบออเดอร์ #${order_id} — กรุณารีเฟรชแล้วลองใหม่` });
+  // อนุญาต customer_id ที่ลงท้ายด้วย prefix เดียวกัน (กรณี session ต่างกันเล็กน้อย)
+  if (order.customer_id !== customer_id && !order.customer_id?.startsWith(customer_id?.slice(0, 8)))
+    return res.status(403).json({ error: 'ไม่ใช่ออเดอร์ของคุณ' });
+
+  const expectedTotal = Number(order.total) || 0;
+  const paidAmount    = parseFloat(slip_amount) || 0;
+  const diff          = expectedTotal - paidAmount;
+  const isMatch       = Math.abs(diff) < 1;
+
+  const now = new Date().toISOString();
+  const newPayStatus = isMatch ? 'paid' : 'slip_mismatch';
+
+  await supabase.from('orders').update({
+    slip_url   : slip_url   || null,
+    slip_amount: paidAmount || null,
+    payment_status: newPayStatus,
+    ...(isMatch ? { status: 'confirmed' } : {})
+  }).eq('order_id', order_id);
+
+  let chatMsg = '';
+  let adminMsg = '';
+  if (isMatch) {
+    chatMsg  = `✅ ยืนยันการโอนเงินสำเร็จ!\n\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n\n🎉 ทางร้านได้รับการชำระเรียบร้อยแล้ว ขอบคุณค่ะ`;
+    adminMsg = `💳 ลูกค้าโอนเงินแล้ว! #${order_id}\n\nชื่อ: ${order.customer_name}\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n✅ ยอดตรง — ยืนยันอัตโนมัติแล้ว`;
+  } else if (diff > 0) {
+    chatMsg  = `⚠️ ยอดที่โอนไม่ครบ\n\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\nขาดอีก: ฿${diff.toFixed(2)}\n\nกรุณาโอนเพิ่ม ฿${diff.toFixed(2)} แล้วส่งสลิปใหม่ หรือติดต่อร้านค้าเพื่อยืนยันค่ะ`;
+    adminMsg = `💳 สลิปยอดไม่ตรง #${order_id}\n\nชื่อ: ${order.customer_name}\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n⚠️ ขาดอีก ฿${diff.toFixed(2)}\n\n📲 กด "ยืนยันชำระแล้ว" ใน Admin เพื่อยืนยัน manual`;
+  } else {
+    chatMsg  = `✅ ได้รับสลิปแล้ว!\n\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n\nทางร้านจะตรวจสอบและยืนยันเร็วๆ นี้ค่ะ`;
+    adminMsg = `💳 สลิปโอนเกิน #${order_id}\n\nชื่อ: ${order.customer_name}\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n\n📲 กด "ยืนยันชำระแล้ว" ใน Admin Panel`;
+  }
+
+  await supabase.from('messages').insert([{
+    order_id, customer_id, sender: 'system', text: chatMsg, created_at: now
+  }]).catch(e => console.warn('insert slip msg:', e.message));
+
+  if (process.env.LINE_TOKEN) {
+    const msgs = [{ type:'text', text: adminMsg }];
+    if (slip_url) msgs.push({ type:'image', originalContentUrl: slip_url, previewImageUrl: slip_url });
+    notifyAllAdmins(msgs).catch(e => console.warn('slip notify:', e.message));
+  }
+
+  res.json({ success: true, status: newPayStatus, isMatch, diff });
+});
+
+// ── POST /read-slip ──────────────────────────────────────────
+// อ่านยอดจากรูปสลิปด้วย Tesseract OCR (ฟรี ไม่ต้อง API key)
+app.post('/read-slip', async (req, res) => {
+  const { image_base64 } = req.body;
+  if (!image_base64)
+    return res.status(400).json({ error: 'ต้องส่ง image_base64' });
+
+  // ป้องกัน base64 ใหญ่เกิน 10MB (หลัง decode ~7.5MB)
+  const b64Raw = image_base64.replace(/^data:image\/\w+;base64,/, '');
+  if (b64Raw.length > 10 * 1024 * 1024)
+    return res.status(413).json({ success: false, amount: null, message: 'รูปใหญ่เกินไป กรุณากรอกยอดเอง' });
+
+  const tesseract = require('node-tesseract-ocr');
+  const os   = require('os');
+  const path = require('path');
+  const fs   = require('fs');
+
+  // บันทึกรูปชั่วคราวเป็นไฟล์ (Tesseract ต้องการไฟล์)
+  const b64      = image_base64.replace(/^data:image\/\w+;base64,/, '');
+  const ext      = image_base64.match(/^data:image\/(\w+);base64,/)?.[1] || 'jpg';
+  const tmpFile  = path.join(os.tmpdir(), `slip_${Date.now()}.${ext}`);
+
+  try {
+    fs.writeFileSync(tmpFile, Buffer.from(b64, 'base64'));
+
+    const config = {
+      lang       : 'tha+eng',  // ภาษาไทย + อังกฤษ
+      oem        : 1,           // LSTM engine
+      psm        : 6,           // Assume uniform block of text
+    };
+
+    const rawText = await tesseract.recognize(tmpFile, config);
+    fs.unlink(tmpFile, () => {}); // ลบไฟล์ temp
+
+    if (!rawText || !rawText.trim()) {
+      return res.json({ success: false, amount: null, message: 'อ่านตัวอักษรไม่ได้' });
+    }
+
+    const amount = extractAmountFromSlip(rawText);
+
+    if (!amount) {
+      return res.json({ success: false, amount: null, raw: rawText, message: 'หายอดไม่เจอ กรุณากรอกเอง' });
+    }
+
+    res.json({ success: true, amount, raw: rawText });
+  } catch (e) {
+    try { fs.unlinkSync(tmpFile); } catch(_) {}
+    // ถ้า Tesseract ไม่ได้ติดตั้ง → แจ้ง error ชัดเจน
+    const msg = e.message?.includes('tesseract') || e.message?.includes('spawn')
+      ? 'Tesseract ยังไม่ได้ติดตั้งบน server'
+      : e.message;
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ── helper: แยกยอดเงินจากข้อความ OCR สลิปโอนเงิน ──────────
+function extractAmountFromSlip(text) {
+  const lines = text.split(/\n/).map(l => l.trim()).filter(Boolean);
+
+  // keyword ที่มักอยู่ก่อนยอดเงิน
+  const amountKeywords = /จำนวนเงิน|ยอดโอน|ยอดเงิน|จำนวน|amount|total|โอนเงิน|เงิน/i;
+
+  // ลองหา keyword แล้วดึงตัวเลขจากบรรทัดเดียวกันหรือถัดไป
+  for (let i = 0; i < lines.length; i++) {
+    if (amountKeywords.test(lines[i])) {
+      // ดึงตัวเลขจากบรรทัดเดียวกัน
+      const sameLineNum = parseThaiNumber(lines[i]);
+      if (sameLineNum) return sameLineNum;
+      // ดึงตัวเลขจากบรรทัดถัดไป
+      if (lines[i + 1]) {
+        const nextLineNum = parseThaiNumber(lines[i + 1]);
+        if (nextLineNum) return nextLineNum;
+      }
+    }
+  }
+
+  // fallback: หาตัวเลขที่ใหญ่ที่สุดในสลิป (มักเป็นยอดโอน)
+  // กรองเฉพาะตัวเลขที่สมเหตุ (1 - 999999 บาท)
+  const allNumbers = [];
+  for (const line of lines) {
+    const nums = line.match(/\d[\d,]*\.?\d*/g) || [];
+    for (const n of nums) {
+      const val = parseFloat(n.replace(/,/g, ''));
+      if (val >= 1 && val <= 999999) allNumbers.push(val);
+    }
+  }
+
+  if (!allNumbers.length) return null;
+
+  // เลือกตัวเลขที่ใหญ่ที่สุดที่เป็นจำนวนเต็มหรือ .00
+  const wholeNumbers = allNumbers.filter(n => n === Math.floor(n) || (n * 100) % 1 === 0);
+  if (wholeNumbers.length) return Math.max(...wholeNumbers);
+  return Math.max(...allNumbers);
+}
+
+function parseThaiNumber(str) {
+  // แปลงตัวเลขไทย ๐-๙ → 0-9
+  const normalized = str.replace(/[๐-๙]/g, d => d.charCodeAt(0) - 3664);
+  const match = normalized.match(/(\d[\d,]*\.?\d*)/);
+  if (!match) return null;
+  const val = parseFloat(match[1].replace(/,/g, ''));
+  return (val >= 1 && val <= 999999) ? val : null;
+}
+
+// ── POST /confirm-payment ────────────────────────────────────
+// แอดมินยืนยัน manual ว่าชำระแล้ว
+app.post('/confirm-payment', async (req, res) => {
+  const { order_id } = req.body;
+  if (!order_id) return res.status(400).json({ error: 'order_id required' });
+
+  const { data: order } = await supabase.from('orders')
+    .select('customer_name, line_user_id, customer_id, total, payment_method')
+    .eq('order_id', order_id).maybeSingle();
+  if (!order) return res.status(404).json({ error: 'ไม่พบออเดอร์' });
+
+  await supabase.from('orders').update({
+    payment_status: 'confirmed', status: 'confirmed'
+  }).eq('order_id', order_id);
+
+  const confirmMsg = `✅ แอดมินยืนยันการชำระเงินแล้ว!\n\nออเดอร์ #${order_id}\nยอด: ฿${Number(order.total).toLocaleString()}\n\nขอบคุณที่อุดหนุนร้านค้านะคะ 🙏`;
+  await supabase.from('messages').insert([{
+    order_id, customer_id: order.customer_id,
+    sender: 'system', text: confirmMsg,
+    created_at: new Date().toISOString()
+  }]).catch(e => console.warn('confirm msg:', e.message));
+
+  if (process.env.LINE_TOKEN && order.line_user_id) {
+    linePush(order.line_user_id, [{ type:'text', text: confirmMsg }])
+      .catch(e => console.warn('confirm LINE push:', e.message));
+  }
+
+  res.json({ success: true });
+});
+
 // สร้าง/ดึงลิงก์ referral ของลูกค้า
 app.get('/my-referral', async (req, res) => {
   const { customerId } = req.query;
