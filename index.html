@@ -5895,6 +5895,15 @@ function qrToggleChange() {
   cur.enabled = on;
   _qrSaveLS(cur);
   _qrCfgCache = cur;
+  // sync ไป backend ทันทีด้วย เพื่อไม่ให้ refresh แล้วกลับมาเปิด
+  const bu = typeof BACKEND_URL !== 'undefined' ? BACKEND_URL : null;
+  if (bu) {
+    fetch(`${bu}/qr-config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cur)
+    }).catch(() => {});
+  }
 }
 
 function qrPreviewImg() {
@@ -5966,10 +5975,16 @@ async function loadQRConfig() {
     const r = await fetch(`${bu}/qr-config`, { signal: AbortSignal.timeout(5000) });
     if (!r.ok) return;
     const ct = r.headers.get('content-type') || '';
-    if (!ct.includes('application/json')) return; // backend ยังไม่ deploy
+    if (!ct.includes('application/json')) return;
     const d = await r.json();
+    // ถ้า localStorage มีค่า enabled อยู่แล้ว → ให้ localStorage ชนะ (user ตั้งค่าเอง)
+    // backend ส่งแค่ข้อมูลอื่น (promptpay, account_name ฯลฯ) มา merge
+    const lsCurrent = _qrLoadLS();
+    if (lsCurrent && typeof lsCurrent.enabled !== 'undefined') {
+      d.enabled = lsCurrent.enabled; // คงค่า enabled จาก localStorage
+    }
     _qrApplyUI(d);
-    _qrSaveLS(d); // sync ลง localStorage
+    _qrSaveLS(d);
   } catch(e) { /* backend ยังไม่ deploy — ใช้ localStorage ต่อไป */ }
 }
 
