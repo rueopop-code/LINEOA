@@ -3302,11 +3302,12 @@ app.listen(PORT, () => {
   console.log(`👥 Admins    : ${adminCount} คน`);
   console.log(`📍 Routes    : /shop, /admin, /api`);
 
-  // ── Keep-alive: ping ตัวเองทุก 14 นาที ป้องกัน Render หลับ ──
-  // Render free tier หลับหลังไม่มี request 15 นาที
-  // ping /health ทุก 14 นาที = ไม่หลับตลอดเวลา
-  const SELF_URL = process.env.RENDER_EXTERNAL_URL || process.env.SHOP_URL || ('http://localhost:' + PORT);
-  const PING_INTERVAL = 14 * 60 * 1000; // 14 นาที
+  // ── Keep-alive: ping ตัวเองทุก 10 นาที ป้องกัน Render หลับ ──
+  const SELF_URL = process.env.RENDER_EXTERNAL_URL
+    || process.env.BACKEND_URL
+    || process.env.SHOP_URL
+    || ('http://localhost:' + PORT);
+  const PING_INTERVAL = 10 * 60 * 1000; // 10 นาที (ต่ำกว่า 15 นาที ที่ Render sleep)
 
   setInterval(async () => {
     try {
@@ -3317,5 +3318,5 @@ app.listen(PORT, () => {
     }
   }, PING_INTERVAL);
 
-  console.log('🏓 Keep-alive เปิดแล้ว (ping ทุก 14 นาที →', SELF_URL, ')');
+  console.log('🏓 Keep-alive เปิดแล้ว (ping ทุก 10 นาที →', SELF_URL, ')');
 });
