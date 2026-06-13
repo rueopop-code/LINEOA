@@ -1748,15 +1748,16 @@ app.post('/webhook', async (req, res) => {
         try {
           const { data: orders } = await supabase
             .from('orders')
-            .select('order_id, total, customer_id, customer_name, payment_status')
+            .select('order_id, total, customer_id, customer_name, payment_status, payment_method')
             .eq('line_user_id', userId)
-            .in('payment_status', ['pending_slip', 'slip_mismatch'])
+            .eq('payment_method', 'transfer')
+            .not('status', 'in', '("done","cancelled")')
             .order('created_at', { ascending: false })
             .limit(1);
 
           const order = orders?.[0];
           if (!order) {
-            await safeReply(replyToken, userId, [{ type: 'text', text: '⚠️ ไม่พบออเดอร์ที่รอสลิปค่ะ\nถ้าเพิ่งสั่งซื้อ กรุณารอสักครู่แล้วส่งใหม่นะคะ' }]);
+            await safeReply(replyToken, userId, [{ type: 'text', text: '⚠️ ไม่พบออเดอร์โอนเงินที่ยังค้างอยู่ค่ะ\nถ้าเพิ่งสั่งซื้อ กรุณารอสักครู่แล้วส่งใหม่นะคะ' }]);
             continue;
           }
 
@@ -1819,7 +1820,7 @@ app.post('/webhook', async (req, res) => {
               : '📷 ส่งสลิปผ่าน LINE (อ่านยอดไม่ได้)',
             slip_url: slipUrl || null,
             created_at: now
-          }]).catch(() => {});
+          }]).then(() => {}).catch(() => {});
 
           let replyText = '';
           if (isMatch) {
@@ -2743,9 +2744,11 @@ app.post('/submit-slip', async (req, res) => {
     adminMsg = `💳 สลิปโอนเกิน #${order_id}\n\nชื่อ: ${order.customer_name}\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n\n📲 กด "ยืนยันชำระแล้ว" ใน Admin Panel`;
   }
 
-  await supabase.from('messages').insert([{
-    order_id, customer_id, sender: 'system', text: chatMsg, created_at: now
-  }]).catch(e => console.warn('insert slip msg:', e.message));
+  try {
+    await supabase.from('messages').insert([{
+      order_id, customer_id, sender: 'system', text: chatMsg, created_at: now
+    }]);
+  } catch(e) { console.warn('insert slip msg:', e.message); }
 
   if (process.env.LINE_TOKEN) {
     const msgs = [{ type:'text', text: adminMsg }];
@@ -2876,11 +2879,13 @@ app.post('/confirm-payment', async (req, res) => {
   }).eq('order_id', order_id);
 
   const confirmMsg = `✅ แอดมินยืนยันการชำระเงินแล้ว!\n\nออเดอร์ #${order_id}\nยอด: ฿${Number(order.total).toLocaleString()}\n\nขอบคุณที่อุดหนุนร้านค้านะคะ 🙏`;
-  await supabase.from('messages').insert([{
-    order_id, customer_id: order.customer_id,
-    sender: 'system', text: confirmMsg,
-    created_at: new Date().toISOString()
-  }]).catch(e => console.warn('confirm msg:', e.message));
+  try {
+    await supabase.from('messages').insert([{
+      order_id, customer_id: order.customer_id,
+      sender: 'system', text: confirmMsg,
+      created_at: new Date().toISOString()
+    }]);
+  } catch(e) { console.warn('confirm msg:', e.message); }
 
   if (process.env.LINE_TOKEN && order.line_user_id) {
     linePush(order.line_user_id, [{ type:'text', text: confirmMsg }])
