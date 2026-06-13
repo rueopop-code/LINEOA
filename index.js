@@ -1827,6 +1827,9 @@ app.post('/webhook', async (req, res) => {
             replyText = `✅ ยืนยันการโอนสำเร็จ!\n\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n\n🎉 ทางร้านได้รับการชำระเรียบร้อยแล้ว ขอบคุณค่ะ`;
           } else if (detectedAmount && diff > 0) {
             replyText = `⚠️ ยอดที่โอนไม่ครบ\n\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\nขาดอีก: ฿${diff.toFixed(2)}\n\nกรุณาโอนเพิ่มแล้วส่งสลิปใหม่ค่ะ`;
+          } else if (!detectedAmount) {
+            // OCR อ่านยอดไม่ได้ → ขอให้ลูกค้าพิมพ์ยอดเอง
+            replyText = `📷 ได้รับสลิปแล้วค่ะ #${order.order_id}\n\nระบบอ่านยอดจากสลิปไม่ได้\nกรุณาพิมพ์ยอดที่โอนมาในห้องแชทนี้เลยค่ะ\nเช่น: 58 หรือ 580.00`;
           } else {
             replyText = `📋 ได้รับสลิปแล้ว #${order.order_id}\n\nอยู่ระหว่างตรวจสอบค่ะ กรุณารอสักครู่นะคะ 🙏`;
           }
@@ -1855,6 +1858,64 @@ app.post('/webhook', async (req, res) => {
     const rawText = ev.message.text || '';
     const text = rawText.trim().toLowerCase();
     const replyToken = ev.replyToken;
+
+    // ── รับยอดที่ลูกค้าพิมพ์มา (กรณี OCR อ่านไม่ได้) ─────────
+    // ลูกค้าพิมพ์ตัวเลข เช่น "58" หรือ "580.00" หรือ "฿580"
+    const amountTyped = parseFloat(rawText.trim().replace(/[฿,\s]/g, ''));
+    if (!isNaN(amountTyped) && amountTyped > 0 && amountTyped < 1000000) {
+      // หาออเดอร์โอนที่รอสลิปหรืออ่านยอดไม่ได้
+      const { data: amtOrders } = await supabase
+        .from('orders')
+        .select('order_id, total, customer_id, customer_name, payment_status, slip_url')
+        .eq('line_user_id', userId)
+        .eq('payment_method', 'transfer')
+        .in('payment_status', ['pending_slip', 'slip_mismatch'])
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      const amtOrder = amtOrders?.[0];
+      if (amtOrder) {
+        const expectedTotal = Number(amtOrder.total) || 0;
+        const diff   = expectedTotal - amountTyped;
+        const isMatch = Math.abs(diff) < 1;
+        const newStatus = isMatch ? 'paid' : 'slip_mismatch';
+        const now = new Date().toISOString();
+
+        await supabase.from('orders').update({
+          slip_amount   : amountTyped,
+          payment_status: newStatus,
+          ...(isMatch ? { status: 'confirmed' } : {})
+        }).eq('order_id', amtOrder.order_id);
+
+        try {
+          await supabase.from('messages').insert([{
+            order_id: amtOrder.order_id, customer_id: amtOrder.customer_id,
+            sender: 'system',
+            text: `💬 ลูกค้าแจ้งยอดโอน ฿${amountTyped.toLocaleString()} — ${isMatch ? 'ยืนยันอัตโนมัติ' : `ขาด ฿${Math.abs(diff).toFixed(2)}`}`,
+            created_at: now
+          }]);
+        } catch(e) { console.warn('insert amount msg:', e.message); }
+
+        let replyAmt = '';
+        if (isMatch) {
+          replyAmt = `✅ ยืนยันการโอนสำเร็จ!\n\nยอดที่โอน: ฿${amountTyped.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n\n🎉 ทางร้านได้รับการชำระเรียบร้อยแล้ว ขอบคุณค่ะ`;
+        } else if (diff > 0) {
+          replyAmt = `⚠️ ยอดที่โอนไม่ครบ\n\nยอดที่โอน: ฿${amountTyped.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\nขาดอีก: ฿${diff.toFixed(2)}\n\nกรุณาโอนเพิ่มแล้วส่งสลิปใหม่ค่ะ`;
+        } else {
+          replyAmt = `✅ ได้รับแล้ว ยอดครบค่ะ!\n\nยอดที่โอน: ฿${amountTyped.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n\nขอบคุณค่ะ 🙏`;
+        }
+        await safeReply(replyToken, userId, [{ type: 'text', text: replyAmt }]);
+
+        if (process.env.LINE_TOKEN) {
+          notifyAllAdmins([{ type: 'text',
+            text: isMatch
+              ? `💳 ลูกค้าแจ้งยอด ✅ #${amtOrder.order_id}\nชื่อ: ${amtOrder.customer_name}\nยอด: ฿${amountTyped.toLocaleString()} = ฿${expectedTotal.toLocaleString()}\nยืนยันอัตโนมัติแล้ว`
+              : `💳 ลูกค้าแจ้งยอด ⚠️ #${amtOrder.order_id}\nชื่อ: ${amtOrder.customer_name}\nยอดที่แจ้ง: ฿${amountTyped.toLocaleString()} / ออเดอร์: ฿${expectedTotal.toLocaleString()}\nขาด ฿${diff.toFixed(2)}`
+          }]).catch(() => {});
+        }
+        continue;
+      }
+    }
 
     // อัปเดต LINE user_id ในออเดอร์ทั้งหมดที่มีเบอร์ตรงกัน (ผูกอัตโนมัติเมื่อพิมพ์เบอร์)
     // ตรวจว่า text เป็นเบอร์โทรไหม (8-12 หลัก)
@@ -2766,7 +2827,7 @@ app.post('/read-slip', async (req, res) => {
   if (!image_base64)
     return res.status(400).json({ error: 'ต้องส่ง image_base64' });
 
-  // ป้องกัน base64 ใหญ่เกิน 10MB (หลัง decode ~7.5MB)
+  // ป้องกัน base64 ใหญ่เกิน 10MB
   const b64Raw = image_base64.replace(/^data:image\/\w+;base64,/, '');
   if (b64Raw.length > 10 * 1024 * 1024)
     return res.status(413).json({ success: false, amount: null, message: 'รูปใหญ่เกินไป กรุณากรอกยอดเอง' });
@@ -2776,37 +2837,54 @@ app.post('/read-slip', async (req, res) => {
   const path = require('path');
   const fs   = require('fs');
 
-  // บันทึกรูปชั่วคราวเป็นไฟล์ (Tesseract ต้องการไฟล์)
-  const b64      = image_base64.replace(/^data:image\/\w+;base64,/, '');
-  const ext      = image_base64.match(/^data:image\/(\w+);base64,/)?.[1] || 'jpg';
-  const tmpFile  = path.join(os.tmpdir(), `slip_${Date.now()}.${ext}`);
+  const b64     = b64Raw;
+  const tmpOrig = path.join(os.tmpdir(), `slip_orig_${Date.now()}.jpg`);
+  const tmpProc = path.join(os.tmpdir(), `slip_proc_${Date.now()}.png`);
 
   try {
-    fs.writeFileSync(tmpFile, Buffer.from(b64, 'base64'));
+    fs.writeFileSync(tmpOrig, Buffer.from(b64, 'base64'));
+
+    // ── Preprocess ด้วย sharp ────────────────────────────────
+    let processedFile = tmpOrig;
+    try {
+      const sharp = require('sharp');
+      await sharp(tmpOrig)
+        .resize({ width: 1200, withoutEnlargement: false }) // ขยายให้ใหญ่ขึ้น OCR อ่านได้ดีขึ้น
+        .grayscale()                                         // แปลงเป็น grayscale ตัดสีลายน้ำ
+        .normalise()                                         // เพิ่ม contrast อัตโนมัติ
+        .sharpen()                                           // เพิ่มความคมชัด
+        .threshold(128)                                      // ขาว-ดำ ชัดขึ้น
+        .png()
+        .toFile(tmpProc);
+      processedFile = tmpProc;
+    } catch(sharpErr) {
+      console.warn('sharp preprocess failed, using original:', sharpErr.message);
+    }
 
     const config = {
-      lang       : 'tha+eng',  // ภาษาไทย + อังกฤษ
-      oem        : 1,           // LSTM engine
-      psm        : 6,           // Assume uniform block of text
+      lang: 'tha+eng',
+      oem : 1,
+      psm : 6,
     };
 
-    const rawText = await tesseract.recognize(tmpFile, config);
-    fs.unlink(tmpFile, () => {}); // ลบไฟล์ temp
+    const rawText = await tesseract.recognize(processedFile, config);
+    fs.unlink(tmpOrig, () => {});
+    fs.unlink(tmpProc, () => {});
 
     if (!rawText || !rawText.trim()) {
-      return res.json({ success: false, amount: null, message: 'อ่านตัวอักษรไม่ได้' });
+      return res.json({ success: false, amount: null, message: 'อ่านตัวอักษรไม่ได้ — กรุณากรอกยอดที่โอนด้วยนะคะ' });
     }
 
     const amount = extractAmountFromSlip(rawText);
 
     if (!amount) {
-      return res.json({ success: false, amount: null, raw: rawText, message: 'หายอดไม่เจอ กรุณากรอกเอง' });
+      return res.json({ success: false, amount: null, raw: rawText, message: 'หายอดไม่เจอ — กรุณากรอกยอดที่โอนด้วยนะคะ' });
     }
 
     res.json({ success: true, amount, raw: rawText });
   } catch (e) {
-    try { fs.unlinkSync(tmpFile); } catch(_) {}
-    // ถ้า Tesseract ไม่ได้ติดตั้ง → แจ้ง error ชัดเจน
+    try { fs.unlinkSync(tmpOrig); } catch(_) {}
+    try { fs.unlinkSync(tmpProc); } catch(_) {}
     const msg = e.message?.includes('tesseract') || e.message?.includes('spawn')
       ? 'Tesseract ยังไม่ได้ติดตั้งบน server'
       : e.message;
@@ -2818,25 +2896,46 @@ app.post('/read-slip', async (req, res) => {
 function extractAmountFromSlip(text) {
   const lines = text.split(/\n/).map(l => l.trim()).filter(Boolean);
 
-  // keyword ที่มักอยู่ก่อนยอดเงิน
-  const amountKeywords = /จำนวนเงิน|ยอดโอน|ยอดเงิน|จำนวน|amount|total|โอนเงิน|เงิน/i;
+  // Pattern 1: ตัวเลขที่ขึ้นต้นบรรทัดเดียวหรือมีแค่ตัวเลข+จุด (ยอดหลักในสลิป PromptPay/KTB)
+  // เช่น "2,000.00" หรือ "58.00" อยู่บรรทัดเดียวกัน
+  for (const line of lines) {
+    const stripped = line.replace(/\s/g, '');
+    const soloNum = stripped.match(/^(\d{1,3}(,\d{3})*(\.\d{2})?)$|^(\d+\.\d{2})$/);
+    if (soloNum) {
+      const val = parseFloat(stripped.replace(/,/g, ''));
+      if (val >= 1 && val <= 999999) return val;
+    }
+  }
 
-  // ลองหา keyword แล้วดึงตัวเลขจากบรรทัดเดียวกันหรือถัดไป
+  // Pattern 2: keyword ที่มักอยู่ก่อนยอดเงิน (ไทย + Krungthai + KBank + SCB)
+  const amountKeywords = /จำนวนเงิน|ยอดโอน|ยอดเงิน|จำนวน|amount|total|โอนเงิน|เงิน|จํานวนเงิน|จํานวน|รายการโอนเงิน|การโอนเงิน/i;
   for (let i = 0; i < lines.length; i++) {
     if (amountKeywords.test(lines[i])) {
-      // ดึงตัวเลขจากบรรทัดเดียวกัน
       const sameLineNum = parseThaiNumber(lines[i]);
       if (sameLineNum) return sameLineNum;
-      // ดึงตัวเลขจากบรรทัดถัดไป
       if (lines[i + 1]) {
         const nextLineNum = parseThaiNumber(lines[i + 1]);
         if (nextLineNum) return nextLineNum;
       }
+      if (lines[i + 2]) {
+        const next2LineNum = parseThaiNumber(lines[i + 2]);
+        if (next2LineNum) return next2LineNum;
+      }
     }
   }
 
-  // fallback: หาตัวเลขที่ใหญ่ที่สุดในสลิป (มักเป็นยอดโอน)
-  // กรองเฉพาะตัวเลขที่สมเหตุ (1 - 999999 บาท)
+  // Pattern 3: หาตัวเลขที่มี .00 (มักเป็นยอดเงิน เช่น 2,000.00 หรือ 58.00)
+  for (const line of lines) {
+    const dotZero = line.match(/(\d[\d,]*\.00)/g);
+    if (dotZero) {
+      for (const n of dotZero) {
+        const val = parseFloat(n.replace(/,/g, ''));
+        if (val >= 1 && val <= 999999) return val;
+      }
+    }
+  }
+
+  // Pattern 4: fallback — ตัวเลขที่ใหญ่ที่สุดที่สมเหตุ
   const allNumbers = [];
   for (const line of lines) {
     const nums = line.match(/\d[\d,]*\.?\d*/g) || [];
@@ -2847,8 +2946,6 @@ function extractAmountFromSlip(text) {
   }
 
   if (!allNumbers.length) return null;
-
-  // เลือกตัวเลขที่ใหญ่ที่สุดที่เป็นจำนวนเต็มหรือ .00
   const wholeNumbers = allNumbers.filter(n => n === Math.floor(n) || (n * 100) % 1 === 0);
   if (wholeNumbers.length) return Math.max(...wholeNumbers);
   return Math.max(...allNumbers);
