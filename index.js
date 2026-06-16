@@ -1752,102 +1752,30 @@ app.post('/webhook', async (req, res) => {
             .eq('line_user_id', userId)
             .eq('payment_method', 'transfer')
             .not('status', 'in', '("done","cancelled")')
+            .gt('total', 0)
+            .like('order_id', 'ORD%')
             .order('created_at', { ascending: false })
             .limit(1);
 
           const order = orders?.[0];
           if (!order) {
-            // ไม่พบออเดอร์โอนเงิน → ไม่ตอบ เพราะอาจเป็นรูปทั่วไปที่ลูกค้าส่งมา
+            // ไม่พบออเดอร์โอนเงิน → ไม่ตอบและไม่ดึงรูป
             continue;
           }
 
-          const contentRes = await fetch(`https://api-data.line.me/v2/bot/message/${ev.message.id}/content`, {
-            headers: { Authorization: `Bearer ${process.env.LINE_TOKEN}` }
-          });
-          if (!contentRes.ok) throw new Error('ดึงรูปไม่ได้');
-          const imgBuffer = await contentRes.arrayBuffer();
-          const base64 = 'data:image/jpeg;base64,' + Buffer.from(imgBuffer).toString('base64');
+          // ไม่ดึงรูปจาก LINE Content API เพราะจะทำให้รูปหายจาก chat
+          // แจ้งลูกค้าให้ส่งสลิปผ่านหน้าร้านแทน
+          await safeReply(replyToken, userId, [{
+            type: 'text',
+            text: `📋 ได้รับรูปแล้วค่ะ #${order.order_id}\n\nกรุณาส่งสลิปผ่านหน้าร้านด้วยนะคะ เพื่อให้ระบบตรวจยอดอัตโนมัติได้ค่ะ 🙏\n\n👉 กดปุ่ม "สั่งสินค้า" ในเมนู → เลือก "ออเดอร์ของฉัน" → แนบสลิป`
+          }]);
 
-          // OCR อ่านยอดจากสลิป
-          let detectedAmount = null;
-          try {
-            const ocrRes = await fetch(`${process.env.BACKEND_URL || 'http://localhost:' + PORT}/read-slip`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ image_base64: base64 })
-            });
-            const ocrData = await ocrRes.json();
-            if (ocrData.success && ocrData.amount > 0) detectedAmount = ocrData.amount;
-          } catch(ocrErr) { console.warn('OCR error:', ocrErr.message); }
+          // แจ้งแอดมินด้วยว่ามีลูกค้าส่งรูปมา
+          notifyAllAdmins([{
+            type: 'text',
+            text: `📷 ลูกค้าส่งรูปใน LINE #${order.order_id}\nชื่อ: ${order.customer_name}\nกรุณาตรวจสอบในหน้าแอดมินค่ะ`
+          }]).catch(() => {});
 
-          // อัปโหลดรูปไป Cloudinary
-          let slipUrl = null;
-          if (process.env.CLOUDINARY_CLOUD && process.env.CLOUDINARY_PRESET) {
-            try {
-              const FormData = require('form-data');
-              const fd = new FormData();
-              fd.append('file', Buffer.from(imgBuffer), { filename: 'slip.jpg', contentType: 'image/jpeg' });
-              fd.append('upload_preset', process.env.CLOUDINARY_PRESET);
-              fd.append('folder', 'slips');
-              const upRes = await fetch(
-                `https://api.cloudinary.com/v1_1/${process.env.CLOUDINARY_CLOUD}/image/upload`,
-                { method: 'POST', body: fd, headers: fd.getHeaders() }
-              );
-              if (upRes.ok) { const ud = await upRes.json(); slipUrl = ud.secure_url; }
-            } catch(upErr) { console.warn('Cloudinary LINE slip upload error:', upErr.message); }
-          }
-
-          const expectedTotal = Number(order.total) || 0;
-          const paidAmount    = detectedAmount || 0;
-          const diff          = expectedTotal - paidAmount;
-          const isMatch       = detectedAmount && Math.abs(diff) < 1;
-          const newPayStatus  = detectedAmount
-            ? (isMatch ? 'paid' : 'slip_mismatch')
-            : 'pending_slip';
-
-          const now = new Date().toISOString();
-          await supabase.from('orders').update({
-            slip_url   : slipUrl || null,
-            slip_amount: paidAmount || null,
-            payment_status: newPayStatus,
-            ...(isMatch ? { status: 'confirmed' } : {})
-          }).eq('order_id', order.order_id);
-
-          await supabase.from('messages').insert([{
-            order_id: order.order_id, customer_id: order.customer_id,
-            sender: 'system',
-            text: slipUrl
-              ? `📷 ส่งสลิปผ่าน LINE${detectedAmount ? ` — อ่านได้ ฿${paidAmount.toLocaleString()}` : ' — รอแอดมินตรวจสอบ'}`
-              : '📷 ส่งสลิปผ่าน LINE (อ่านยอดไม่ได้)',
-            slip_url: slipUrl || null,
-            created_at: now
-          }]).then(() => {}).catch(() => {});
-
-          let replyText = '';
-          if (isMatch) {
-            replyText = `✅ ยืนยันการโอนสำเร็จ!\n\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n\n🎉 ทางร้านได้รับการชำระเรียบร้อยแล้ว ขอบคุณค่ะ`;
-          } else if (detectedAmount && diff > 0) {
-            replyText = `⚠️ ยอดที่โอนไม่ครบ\n\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\nขาดอีก: ฿${diff.toFixed(2)}\n\nกรุณาโอนเพิ่มแล้วส่งสลิปใหม่ค่ะ`;
-          } else if (!detectedAmount) {
-            // OCR อ่านยอดไม่ได้ → ขอให้ลูกค้าพิมพ์ยอดเอง
-            replyText = `📷 ได้รับสลิปแล้วค่ะ #${order.order_id}\n\nระบบอ่านยอดจากสลิปไม่ได้\nกรุณาพิมพ์ยอดที่โอนมาในห้องแชทนี้เลยค่ะ\nเช่น: 58 หรือ 580.00`;
-          } else {
-            replyText = `📋 ได้รับสลิปแล้ว #${order.order_id}\n\nอยู่ระหว่างตรวจสอบค่ะ กรุณารอสักครู่นะคะ 🙏`;
-          }
-
-          await safeReply(replyToken, userId, [{ type: 'text', text: replyText }]);
-
-          if (process.env.LINE_TOKEN) {
-            const adminMsgs = [{
-              type: 'text',
-              text: isMatch
-                ? `💳 สลิปผ่าน LINE ✅ #${order.order_id}\nชื่อ: ${order.customer_name}\nยอด: ฿${paidAmount.toLocaleString()} = ฿${expectedTotal.toLocaleString()}\nยืนยันอัตโนมัติแล้ว`
-                : detectedAmount
-                  ? `💳 สลิปผ่าน LINE ⚠️ #${order.order_id}\nชื่อ: ${order.customer_name}\nยอดที่โอน: ฿${paidAmount.toLocaleString()} / ออเดอร์: ฿${expectedTotal.toLocaleString()}\n${diff > 0 ? `ขาด ฿${diff.toFixed(2)}` : `เกิน ฿${Math.abs(diff).toFixed(2)}`}`
-                  : `📷 ลูกค้าส่งสลิปใน LINE #${order.order_id}\nชื่อ: ${order.customer_name} — อ่านยอดไม่ได้ กรุณาตรวจ manual ค่ะ`
-            }];
-            if (slipUrl) adminMsgs.push({ type: 'image', originalContentUrl: slipUrl, previewImageUrl: slipUrl });
-            notifyAllAdmins(adminMsgs).catch(() => {});
-          }
         } catch(imgErr) {
           console.error('LINE image slip error:', imgErr.message);
           try { await safeReply(ev.replyToken, userId, [{ type:'text', text:'❌ เกิดข้อผิดพลาด กรุณาลองใหม่ค่ะ' }]); } catch(_) {}
