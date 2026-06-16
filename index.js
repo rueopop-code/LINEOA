@@ -1757,7 +1757,7 @@ app.post('/webhook', async (req, res) => {
 
           const order = orders?.[0];
           if (!order) {
-            await safeReply(replyToken, userId, [{ type: 'text', text: '⚠️ ไม่พบออเดอร์โอนเงินที่ยังค้างอยู่ค่ะ\nถ้าเพิ่งสั่งซื้อ กรุณารอสักครู่แล้วส่งใหม่นะคะ' }]);
+            // ไม่พบออเดอร์โอนเงิน → ไม่ตอบ เพราะอาจเป็นรูปทั่วไปที่ลูกค้าส่งมา
             continue;
           }
 
