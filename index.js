@@ -615,6 +615,257 @@ app.get('/api', (req, res) => res.json({
   lineToken: process.env.LINE_TOKEN  ? '✅' : '❌'
 }));
 
+// ═══════════════════════════════════════════════════════════
+//  🔐 LINE LOGIN — สำหรับเปิดเว็บจากภายนอก (Facebook Ad ฯลฯ)
+// ═══════════════════════════════════════════════════════════
+// ต้องตั้ง env:
+//   LINE_LOGIN_CHANNEL_ID     — Channel ID จาก LINE Login Channel
+//   LINE_LOGIN_CHANNEL_SECRET — Channel Secret จาก LINE Login Channel
+//   BACKEND_URL               — URL ของ backend นี้ เช่น https://xxx.onrender.com
+
+const LINE_LOGIN_CHANNEL_ID     = process.env.LINE_LOGIN_CHANNEL_ID     || '';
+const LINE_LOGIN_CHANNEL_SECRET = process.env.LINE_LOGIN_CHANNEL_SECRET || '';
+
+// สร้าง state สำหรับ CSRF — เก็บใน Map (expire 10 นาที)
+const loginStateMap = new Map();
+function genLoginState() {
+  const state = 'S' + Math.random().toString(36).slice(2, 18);
+  loginStateMap.set(state, { expiresAt: Date.now() + 10 * 60 * 1000 });
+  return state;
+}
+function verifyLoginState(state) {
+  const entry = loginStateMap.get(state);
+  if (!entry) return false;
+  loginStateMap.delete(state);
+  return entry.expiresAt > Date.now();
+}
+
+// ── GET /line-login ───────────────────────────────────────
+// เริ่ม flow: redirect ไปหน้า LINE ขออนุญาต
+app.get('/line-login', (req, res) => {
+  if (!LINE_LOGIN_CHANNEL_ID) {
+    return res.status(500).send('LINE_LOGIN_CHANNEL_ID ยังไม่ได้ตั้งค่า');
+  }
+  const backendUrl = (process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT || 3000}`).replace(/\/$/, '');
+  const redirectUri = encodeURIComponent(`${backendUrl}/line-login/callback`);
+  const state       = genLoginState();
+  const scope       = 'profile%20openid';
+  const url = `https://access.line.me/oauth2/v2.1/authorize?response_type=code&client_id=${LINE_LOGIN_CHANNEL_ID}&redirect_uri=${redirectUri}&state=${state}&scope=${scope}`;
+  res.redirect(url);
+});
+
+// ── GET /line-login/callback ──────────────────────────────
+// LINE redirect กลับมาพร้อม ?code=...&state=...
+app.get('/line-login/callback', async (req, res) => {
+  const { code, state, error } = req.query;
+
+  if (error) {
+    return res.redirect(`${SHOP_URL.replace(/\/$/, '')}?login_error=cancelled`);
+  }
+  if (!verifyLoginState(state)) {
+    return res.redirect(`${SHOP_URL.replace(/\/$/, '')}?login_error=invalid_state`);
+  }
+  if (!code) {
+    return res.redirect(`${SHOP_URL.replace(/\/$/, '')}?login_error=no_code`);
+  }
+
+  try {
+    const backendUrl  = (process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT || 3000}`).replace(/\/$/, '');
+    const redirectUri = `${backendUrl}/line-login/callback`;
+
+    // แลก code → access token
+    const tokenRes = await fetch('https://api.line.me/oauth2/v2.1/token', {
+      method : 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body   : new URLSearchParams({
+        grant_type   : 'authorization_code',
+        code,
+        redirect_uri : redirectUri,
+        client_id    : LINE_LOGIN_CHANNEL_ID,
+        client_secret: LINE_LOGIN_CHANNEL_SECRET,
+      })
+    });
+    const tokenData = await tokenRes.json();
+    if (!tokenData.access_token) throw new Error('ไม่ได้รับ access_token');
+
+    // ดึง profile
+    const profileRes = await fetch('https://api.line.me/v2/profile', {
+      headers: { 'Authorization': `Bearer ${tokenData.access_token}` }
+    });
+    const profile = await profileRes.json();
+    const lineUserId = profile.userId;
+    if (!lineUserId) throw new Error('ไม่ได้รับ userId');
+
+    // upsert ลง Supabase (เหมือนระบบ LIFF เดิม)
+    upsertLineUser(lineUserId).catch(() => {});
+
+    // สร้าง link token แล้ว redirect ไปหน้าร้านพร้อม ?lid=TOKEN
+    const token    = createLinkToken(lineUserId);
+    const shopUrl  = SHOP_URL.replace(/\/$/, '');
+    res.redirect(`${shopUrl}?lid=${token}`);
+
+  } catch (e) {
+    console.error('LINE Login callback error:', e.message);
+    res.redirect(`${SHOP_URL.replace(/\/$/, '')}?login_error=server_error`);
+  }
+});
+
+// ── GET /line-login/page ──────────────────────────────────
+// หน้า Landing Page สำหรับยิงแอด Facebook — มีปุ่ม "เข้าสู่ระบบด้วย LINE"
+app.get('/line-login/page', (req, res) => {
+  const backendUrl = (process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT || 3000}`).replace(/\/$/, '');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(`<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>มนชิน ซัพพลาย — เข้าสู่ระบบ</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #fff8f0;
+      font-family: 'Sarabun', sans-serif;
+      padding: 24px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 20px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+      padding: 40px 32px;
+      max-width: 400px;
+      width: 100%;
+      text-align: center;
+    }
+    .logo { font-size: 48px; margin-bottom: 12px; }
+    .shop-name {
+      font-size: 22px;
+      font-weight: 700;
+      color: #C0392B;
+      margin-bottom: 6px;
+    }
+    .tagline {
+      font-size: 14px;
+      color: #888;
+      margin-bottom: 32px;
+    }
+    .btn-line {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      background: #06C755;
+      color: #fff;
+      font-size: 16px;
+      font-weight: 600;
+      border: none;
+      border-radius: 12px;
+      padding: 14px 24px;
+      width: 100%;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.2s;
+    }
+    .btn-line:hover { background: #05b04a; }
+    .btn-line svg { flex-shrink: 0; }
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 20px 0;
+      color: #ccc;
+      font-size: 13px;
+    }
+    .divider::before, .divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: #eee;
+    }
+    .btn-guest {
+      display: block;
+      width: 100%;
+      padding: 13px;
+      border: 1.5px solid #ddd;
+      border-radius: 12px;
+      background: transparent;
+      color: #666;
+      font-size: 15px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: border-color 0.2s;
+    }
+    .btn-guest:hover { border-color: #C0392B; color: #C0392B; }
+    .note {
+      margin-top: 24px;
+      font-size: 12px;
+      color: #bbb;
+      line-height: 1.6;
+    }
+    .error-msg {
+      background: #fff0f0;
+      border: 1px solid #f5c2c2;
+      border-radius: 8px;
+      color: #C0392B;
+      font-size: 13px;
+      padding: 10px 14px;
+      margin-bottom: 20px;
+      display: none;
+    }
+    .error-msg.show { display: block; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">🏪</div>
+    <div class="shop-name">มนชิน ซัพพลาย</div>
+    <div class="tagline">เข้าสู่ระบบเพื่อเริ่มสั่งซื้อสินค้า</div>
+
+    <div class="error-msg" id="errMsg"></div>
+
+    <a class="btn-line" href="${backendUrl}/line-login">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="white">
+        <path d="M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.63 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63h2.386c.349 0 .63.285.63.63 0 .349-.281.63-.63.63H17.61v1.125h1.755zm-3.855 3.016c0 .27-.174.51-.432.596-.064.021-.133.031-.199.031-.211 0-.391-.09-.51-.25l-2.443-3.317v2.94c0 .344-.279.629-.631.629-.346 0-.626-.285-.626-.629V8.108c0-.27.173-.51.43-.595.06-.023.136-.033.194-.033.195 0 .375.104.495.254l2.462 3.33V8.108c0-.345.282-.63.63-.63.345 0 .63.285.63.63v4.771zm-5.741 0c0 .344-.282.629-.631.629-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63.349 0 .631.285.631.63v4.771zm-2.466.629H4.917c-.345 0-.63-.285-.63-.629V8.108c0-.345.285-.63.63-.63.348 0 .63.285.63.63v4.141h1.756c.348 0 .629.283.629.63 0 .344-.281.629-.629.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.766.038 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314"/>
+      </svg>
+      เข้าสู่ระบบด้วย LINE
+    </a>
+
+    <div class="divider">หรือ</div>
+
+    <a class="btn-guest" href="${SHOP_URL.replace(/\/$/, '')}">
+      เข้าชมร้านโดยไม่ล็อกอิน
+    </a>
+
+    <p class="note">
+      เมื่อล็อกอินด้วย LINE ระบบจะบันทึกประวัติการสั่งซื้อ<br>และแจ้งเตือนสถานะออเดอร์ผ่าน LINE โดยอัตโนมัติ
+    </p>
+  </div>
+
+  <script>
+    // แสดง error ถ้า redirect กลับมาพร้อม ?login_error=
+    const params = new URLSearchParams(window.location.search);
+    const err = params.get('login_error');
+    if (err) {
+      const msgs = {
+        cancelled   : 'คุณยกเลิกการเข้าสู่ระบบ',
+        invalid_state: 'Session หมดอายุ กรุณาลองใหม่',
+        no_code     : 'เกิดข้อผิดพลาด กรุณาลองใหม่',
+        server_error: 'เซิร์ฟเวอร์มีปัญหา กรุณาลองใหม่ภายหลัง',
+      };
+      const el = document.getElementById('errMsg');
+      el.textContent = msgs[err] || 'เกิดข้อผิดพลาด: ' + err;
+      el.classList.add('show');
+    }
+  </script>
+</body>
+</html>`);
+});
+
 // ── GET /liff-entry ───────────────────────────────────────
 // Endpoint สำหรับ LIFF App — ตั้ง Endpoint URL ใน LINE Developers Console ชี้มาที่นี่
 // Rich Menu ตั้ง URL: https://liff.line.me/{LIFF_ID}
