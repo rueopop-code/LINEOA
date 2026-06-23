@@ -700,10 +700,154 @@ app.get('/line-login/callback', async (req, res) => {
     // upsert ลง Supabase (เหมือนระบบ LIFF เดิม)
     upsertLineUser(lineUserId).catch(() => {});
 
-    // สร้าง link token แล้ว redirect ไปหน้าร้านพร้อม ?lid=TOKEN
+    // สร้าง link token แล้ว redirect ไปหน้าเพิ่มเพื่อน LINE OA ก่อน แล้วค่อยไปร้าน
     const token    = createLinkToken(lineUserId);
     const shopUrl  = SHOP_URL.replace(/\/$/, '');
-    res.redirect(`${shopUrl}?lid=${token}`);
+    const backendUrl2 = (process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT || 3000}`).replace(/\/$/, '');
+    const lineOaBasicId = process.env.LINE_OA_ID || process.env.LINE_OA_BASIC_ID || '@monshin';
+    const shopTarget = `${shopUrl}?lid=${token}`;
+
+    // ตรวจสอบว่าลูกค้าเป็นเพื่อนกับ LINE OA แล้วหรือยัง
+    let isFriend = false;
+    try {
+      const friendRes = await fetch(`https://api.line.me/v2/bot/profile/${lineUserId}`, {
+        headers: { 'Authorization': `Bearer ${process.env.LINE_TOKEN}` }
+      });
+      isFriend = friendRes.ok; // ถ้าดึงโปรไฟล์ได้ = เป็นเพื่อนแล้ว
+    } catch(e) { isFriend = false; }
+
+    if (isFriend) {
+      // เป็นเพื่อนแล้ว → ไปร้านเลย
+      res.redirect(shopTarget);
+    } else {
+      // ยังไม่ได้เพิ่มเพื่อน → แสดงหน้ากลางให้เพิ่มเพื่อนก่อน
+      const lineAddUrl = `https://line.me/R/ti/p/${encodeURIComponent(lineOaBasicId)}`;
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.send(`<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>เพิ่มเพื่อน LINE OA</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #fff8f0;
+      font-family: 'Sarabun', sans-serif;
+      padding: 24px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 20px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+      padding: 36px 28px;
+      max-width: 400px;
+      width: 100%;
+      text-align: center;
+    }
+    .icon { font-size: 56px; margin-bottom: 12px; }
+    .title {
+      font-size: 20px;
+      font-weight: 700;
+      color: #2C3E50;
+      margin-bottom: 8px;
+    }
+    .desc {
+      font-size: 14px;
+      color: #666;
+      line-height: 1.6;
+      margin-bottom: 28px;
+    }
+    .desc strong { color: #C0392B; }
+    .btn-add {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      background: #06C755;
+      color: #fff;
+      font-size: 16px;
+      font-weight: 700;
+      border: none;
+      border-radius: 12px;
+      padding: 14px 24px;
+      width: 100%;
+      cursor: pointer;
+      text-decoration: none;
+      margin-bottom: 12px;
+    }
+    .btn-skip {
+      display: block;
+      font-size: 13px;
+      color: #aaa;
+      text-decoration: underline;
+      cursor: pointer;
+      background: none;
+      border: none;
+      width: 100%;
+      padding: 8px;
+    }
+    .benefit {
+      background: #f0fff4;
+      border: 1px solid #c3e6cb;
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 24px;
+      text-align: left;
+    }
+    .benefit p {
+      font-size: 13px;
+      color: #333;
+      margin-bottom: 4px;
+    }
+    .benefit p:last-child { margin-bottom: 0; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">💚</div>
+    <div class="title">เพิ่มเพื่อน LINE OA</div>
+    <div class="desc">เพื่อรับการแจ้งเตือนออเดอร์และติดต่อกับร้านได้สะดวก</div>
+
+    <div class="benefit">
+      <p>✅ รับสรุปออเดอร์ทันทีหลังสั่งซื้อ</p>
+      <p>✅ แจ้งเตือนสถานะ จัดส่ง เสร็จสิ้น</p>
+      <p>✅ ติดต่อร้านได้โดยตรงผ่าน LINE</p>
+      <p>✅ รับโปรโมชั่นและส่วนลดพิเศษ</p>
+    </div>
+
+    <a class="btn-add" href="${lineAddUrl}" onclick="addAndGo()">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="white">
+        <path d="M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.63 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63h2.386c.349 0 .63.285.63.63 0 .349-.281.63-.63.63H17.61v1.125h1.755zm-3.855 3.016c0 .27-.174.51-.432.596-.064.021-.133.031-.199.031-.211 0-.391-.09-.51-.25l-2.443-3.317v2.94c0 .344-.279.629-.631.629-.346 0-.626-.285-.626-.629V8.108c0-.27.173-.51.43-.595.06-.023.136-.033.194-.033.195 0 .375.104.495.254l2.462 3.33V8.108c0-.345.282-.63.63-.63.345 0 .63.285.63.63v4.771zm-5.741 0c0 .344-.282.629-.631.629-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63.349 0 .631.285.631.63v4.771zm-2.466.629H4.917c-.345 0-.63-.285-.63-.629V8.108c0-.345.285-.63.63-.63.348 0 .63.285.63.63v4.141h1.756c.348 0 .629.283.629.63 0 .344-.281.629-.629.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.766.038 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314"/>
+      </svg>
+      เพิ่มเพื่อน LINE OA ของร้าน
+    </a>
+
+    <a class="btn-skip" href="${shopTarget}">ข้ามขั้นตอนนี้ เข้าร้านเลย →</a>
+  </div>
+
+  <script>
+    function addAndGo() {
+      // หลังกดเพิ่มเพื่อน รอ 2 วินาทีแล้วไปร้าน
+      setTimeout(() => {
+        window.location.href = '${shopTarget}';
+      }, 2000);
+    }
+    // ถ้าผู้ใช้กลับมาจาก LINE แล้วหน้านี้ยังเปิดอยู่ → ไปร้านเลย
+    window.addEventListener('focus', () => {
+      setTimeout(() => {
+        window.location.href = '${shopTarget}';
+      }, 500);
+    });
+  </script>
+</body>
+</html>`);
+    }
 
   } catch (e) {
     console.error('LINE Login callback error:', e.message);
