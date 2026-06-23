@@ -828,7 +828,7 @@ app.get('/line-login/callback', async (req, res) => {
       เพิ่มเพื่อน LINE OA ของร้าน
     </a>
 
-    <a class="btn-skip" href="${shopTarget}">ข้ามขั้นตอนนี้ เข้าร้านเลย →</a>
+
   </div>
 
   <script>
