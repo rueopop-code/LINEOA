@@ -650,7 +650,7 @@ app.get('/line-login', (req, res) => {
   const redirectUri = encodeURIComponent(`${backendUrl}/line-login/callback`);
   const state       = genLoginState();
   const scope       = 'profile%20openid';
-  const url = `https://access.line.me/oauth2/v2.1/authorize?response_type=code&client_id=${LINE_LOGIN_CHANNEL_ID}&redirect_uri=${redirectUri}&state=${state}&scope=${scope}`;
+  const url = `https://access.line.me/oauth2/v2.1/authorize?response_type=code&client_id=${LINE_LOGIN_CHANNEL_ID}&redirect_uri=${redirectUri}&state=${state}&scope=${scope}&bot_prompt=aggressive`;
   res.redirect(url);
 });
 
