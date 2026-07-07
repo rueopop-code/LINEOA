@@ -2562,10 +2562,27 @@ async function deleteOne(id) {
 // ═══════════════════════════════════════════
 //  CATEGORIES
 // ═══════════════════════════════════════════
+const PROMO_CAT = '⭐ สินค้ามีโปรโมชั่น';
+function hasAnyPromo() {
+  return products.some(p => (p.sizes||[]).some(s => getBundle(s)));
+}
 function renderCatBar() {
-  const catHtml = cats.map(c =>
+  let catHtml = cats.map(c =>
     `<div class="cat-chip${c===activeCat?' active':''}" onclick="setACat('${c}')">${c}</div>`
   ).join('');
+  if (hasAnyPromo()) {
+    const promoChip = `<div class="cat-chip${PROMO_CAT===activeCat?' active':''}" onclick="setACat('${PROMO_CAT}')">${PROMO_CAT}</div>`;
+    const idx = cats.indexOf('ทั้งหมด');
+    if (idx > -1) {
+      const parts = cats.map(c =>
+        `<div class="cat-chip${c===activeCat?' active':''}" onclick="setACat('${c}')">${c}</div>`
+      );
+      parts.splice(idx + 1, 0, promoChip);
+      catHtml = parts.join('');
+    } else {
+      catHtml = promoChip + catHtml;
+    }
+  }
   document.getElementById('catBar').innerHTML = catHtml;
   const mob = document.getElementById('mobileCatsBar');
   if(mob) mob.innerHTML = catHtml;
@@ -2905,6 +2922,7 @@ function applyFilter() {
   const srt = document.getElementById('sortSel').value;
   let list  = [...products];
   if (activeCat==='สินค้าใหม่') list=list.filter(p=>p.isNew);
+  else if (activeCat===PROMO_CAT) list=list.filter(p=>(p.sizes||[]).some(s=>getBundle(s)));
   else if (activeCat!=='ทั้งหมด') list=list.filter(p=>p.cat===activeCat);
   if (q) list=list.filter(p=>p.name.toLowerCase().includes(q)||p.cat.toLowerCase().includes(q)||(p.desc||'').toLowerCase().includes(q));
   // sort
@@ -7335,7 +7353,6 @@ setTimeout(shInit,600);
         var btn = document.createElement('button');
         btn.className = 'cat-sec-all';
         btn.innerHTML = 'ดูทั้งหมด <span style="font-size:15px;">›</span>';
-        if (cat === '⭐ สินค้ามีโปรโมชั่น') btn.style.display = 'none';
         btn.onclick = function () {
           var target = (cat === '🆕 สินค้าใหม่') ? 'สินค้าใหม่' : cat;
           if (typeof setACat === 'function') setACat(target);
