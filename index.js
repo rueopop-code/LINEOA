@@ -3076,6 +3076,40 @@ app.post('/qr-config', async (req, res) => {
   res.json({ success: true, config: cfg });
 });
 
+// ── GET /hero-banner ─────────────────────────────────────────
+// ป้ายโฆษณาหน้าร้าน (ลูกค้าและแอดมินใช้)
+app.get('/hero-banner', async (req, res) => {
+  const { data, error } = await supabase
+    .from('settings')
+    .select('value')
+    .eq('key', 'hero_banner')
+    .maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  const defaults = { enabled: false, autoplaySec: 5, items: [] };
+  res.json(data ? { ...defaults, ...data.value } : defaults);
+});
+
+// ── POST /hero-banner ────────────────────────────────────────
+// บันทึกป้ายโฆษณาหน้าร้าน (แอดมิน)
+app.post('/hero-banner', async (req, res) => {
+  const items = Array.isArray(req.body.items) ? req.body.items.slice(0, 10).map(it => ({
+    type    : ['image', 'video', 'youtube'].includes(it.type) ? it.type : 'image',
+    url     : String(it.url || '').slice(0, 1000),
+    caption : String(it.caption || '').slice(0, 200),
+    link    : String(it.link || '').slice(0, 1000)
+  })).filter(it => it.url) : [];
+  const cfg = {
+    enabled     : !!req.body.enabled,
+    autoplaySec : Math.min(30, Math.max(2, parseInt(req.body.autoplaySec) || 5)),
+    items
+  };
+  const { error } = await supabase
+    .from('settings')
+    .upsert({ key: 'hero_banner', value: cfg }, { onConflict: 'key' });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true, config: cfg });
+});
+
 // ── POST /submit-slip ────────────────────────────────────────
 // ลูกค้าส่งสลิป + ยอดที่โอน → เปรียบเทียบกับ order.total
 app.post('/submit-slip', async (req, res) => {
