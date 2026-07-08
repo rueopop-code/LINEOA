@@ -232,6 +232,37 @@ function statusColor(s) {
 }
 
 // Flex: สรุปออเดอร์ใหม่ (ส่งหาลูกค้าหลังสั่ง)
+// 🎨 Theme: Bright Red × Gold (แดงสด #D62828 / ทอง #FFC94A)
+const BRAND_RED       = '#D62828';
+const BRAND_RED_DARK  = '#A4161A';
+const BRAND_GOLD      = '#FFC94A';
+const BRAND_GOLD_SOFT = '#FFD97D';
+const BRAND_GOLD_PALE = '#FFE3B3';
+const BRAND_CREAM     = '#FFF7E8';
+const BRAND_CREAM_BD  = '#F5E1B8';
+const BRAND_GOLD_TXT  = '#8a6d1f';
+
+// แถบตราร้าน (โลโก้ดาว + ชื่อร้าน) ใช้ซ้ำบนหัวการ์ดทุกใบ
+function brandHeaderRow(small = false) {
+  const size = small ? '30px' : '38px';
+  return {
+    type:'box', layout:'horizontal', alignItems:'center', spacing:'md',
+    contents:[
+      { type:'box', layout:'vertical', width:size, height:size,
+        cornerRadius:'999px', backgroundColor:'#ffffff',
+        justifyContent:'center', alignItems:'center',
+        contents:[ { type:'text', text:'★', size: small ? 'md' : 'lg', color: BRAND_RED, align:'center' } ]
+      },
+      { type:'box', layout:'vertical', flex:1,
+        contents:[
+          { type:'text', text:'MONSHIN SUPPLY', size:'xxs', color: BRAND_GOLD_SOFT, weight:'bold' },
+          ...(small ? [] : [{ type:'text', text:'ขอบคุณสำหรับการสั่งซื้อ', size:'sm', color:'#ffffff' }])
+        ]
+      }
+    ]
+  };
+}
+
 async function buildOrderSummaryFlex(order) {
   // ป้องกันค่า undefined/NaN
   const safe = (v, fallback = '') => (v === undefined || v === null ? fallback : v);
@@ -250,9 +281,9 @@ async function buildOrderSummaryFlex(order) {
     return {
       type: 'box', layout: 'horizontal', margin: 'sm',
       contents: [
-        { type:'text', text:`${emoji} ${name}`, size:'sm', color:'#333333', flex:5, wrap:true },
-        { type:'text', text:`×${qty}`, size:'sm', color:'#888888', flex:1, align:'end' },
-        { type:'text', text:`฿${lineTotal.toLocaleString()}`, size:'sm', color:'#C0392B', weight:'bold', flex:2, align:'end' }
+        { type:'text', text:`${emoji} ${name}`, size:'sm', color:'#3d3428', flex:5, wrap:true },
+        { type:'text', text:`×${qty}`, size:'sm', color:'#a89d8c', flex:1, align:'end' },
+        { type:'text', text:`฿${lineTotal.toLocaleString()}`, size:'sm', color: BRAND_RED, weight:'bold', flex:2, align:'end' }
       ]
     };
   });
@@ -261,12 +292,12 @@ async function buildOrderSummaryFlex(order) {
   if (!itemRows.length) {
     itemRows.push({
       type: 'text', text: '— ไม่มีรายการสินค้า —',
-      size: 'sm', color: '#888888', align: 'center', margin: 'sm'
+      size: 'sm', color: '#a89d8c', align: 'center', margin: 'sm'
     });
   }
 
   const moreItems = items.length > 6
-    ? [{ type:'text', text:`+${items.length - 6} รายการ`, size:'xs', color:'#888888', margin:'sm' }]
+    ? [{ type:'text', text:`+${items.length - 6} รายการ`, size:'xs', color:'#a89d8c', margin:'sm' }]
     : [];
 
   const total = safeNum(order.total);
@@ -274,24 +305,24 @@ async function buildOrderSummaryFlex(order) {
   const customerName = String(safe(order.customer_name, '-')).trim() || '-';
   const orderTypeLabel = order.order_type === 'delivery' ? '🚚 จัดส่ง' : '📦 จอง/รับเอง';
   const payLabel = order.payment_label || (order.payment_method === 'cod' ? '🏍️ เก็บปลายทาง' : order.payment_method === 'transfer' ? '📲 โอน/สแกน QR' : null);
-  const payColor = order.payment_method === 'cod' ? '#e74c3c' : '#2980b9';
+  const payColor = order.payment_method === 'cod' ? BRAND_RED : '#2980b9';
 
   // แถวข้อมูลออเดอร์ (ประเภท + ชำระ)
   const orderInfoRows = [
     { type:'box', layout:'horizontal', margin:'sm',
       contents:[
-        { type:'text', text:'ประเภท', size:'sm', color:'#888888', flex:1 },
-        { type:'text', text: orderTypeLabel, size:'sm', color:'#333333', weight:'bold', align:'end' }
+        { type:'text', text:'ประเภท', size:'sm', color:'#8a8378', flex:1 },
+        { type:'text', text: orderTypeLabel, size:'sm', color:'#3d3428', weight:'bold', align:'end' }
       ]
     },
     ...(payLabel ? [{
       type:'box', layout:'horizontal', margin:'xs',
       contents:[
-        { type:'text', text:'ชำระเงิน', size:'sm', color:'#888888', flex:1 },
+        { type:'text', text:'ชำระเงิน', size:'sm', color:'#8a8378', flex:1 },
         { type:'text', text: payLabel, size:'sm', color: payColor, weight:'bold', align:'end' }
       ]
     }] : []),
-    { type:'separator', margin:'md' }
+    { type:'separator', margin:'md', color:'#f5e6e6' }
   ];
 
   return {
@@ -301,22 +332,30 @@ async function buildOrderSummaryFlex(order) {
       type: 'bubble',
       header: {
         type: 'box', layout: 'vertical',
-        backgroundColor: '#C0392B',
-        paddingAll: 'lg',
+        backgroundColor: BRAND_RED,
+        paddingAll: '0px',
         contents: [
-          { type:'text', text:'🎉 ขอบคุณสำหรับการสั่งซื้อ', color:'#ffffff', size:'sm', weight:'regular' },
-          { type:'text', text:`#${orderId}`, color:'#ffffff', size:'xl', weight:'bold', margin:'sm' },
-          { type:'text', text:`คุณ ${customerName}`, color:'#ffffff', size:'sm', margin:'xs' }
+          // แถบเข้มคาดบนสุด — ให้หัวการ์ดมีมิติ
+          { type:'box', layout:'vertical', height:'6px', backgroundColor: BRAND_RED_DARK, contents:[{ type:'filler' }] },
+          { type:'box', layout:'vertical', paddingAll:'lg',
+            contents: [
+              brandHeaderRow(),
+              { type:'text', text:`#${orderId}`, color:'#ffffff', size:'xl', weight:'bold', margin:'md' },
+              { type:'text', text:`คุณ ${customerName}`, color: BRAND_GOLD_PALE, size:'sm', margin:'xs' }
+            ]
+          },
+          // เส้นทองคาดใต้หัว
+          { type:'box', layout:'vertical', height:'3px', backgroundColor: BRAND_GOLD, contents:[{ type:'filler' }] }
         ]
       },
       body: {
         type:'box', layout:'vertical', spacing:'md', paddingAll:'lg',
         contents: [
           ...orderInfoRows,
-          { type:'text', text:'📦 รายการสินค้า', size:'sm', color:'#888888', weight:'bold' },
+          { type:'text', text:'รายการสินค้า', size:'xs', color:'#C8912A', weight:'bold' },
           ...itemRows,
           ...moreItems,
-          { type:'separator', margin:'lg' },
+          { type:'separator', margin:'lg', color:'#f5e6e6' },
           // 🎟️ แสดงส่วนลดคูปอง (ถ้ามี)
           ...(() => {
             const discount = safeNum(order.discount_amount);
@@ -326,26 +365,30 @@ async function buildOrderSummaryFlex(order) {
             return [
               { type:'box', layout:'horizontal', margin:'md',
                 contents:[
-                  { type:'text', text:'ราคาก่อนลด', size:'sm', color:'#888888', flex:1 },
-                  { type:'text', text:`฿${subtotal.toLocaleString()}`, size:'sm', color:'#888888', align:'end' }
+                  { type:'text', text:'ราคาก่อนลด', size:'sm', color:'#8a8378', flex:1 },
+                  { type:'text', text:`฿${subtotal.toLocaleString()}`, size:'sm', color:'#8a8378', align:'end' }
                 ]
               },
               { type:'box', layout:'horizontal', margin:'xs',
                 contents:[
-                  { type:'text', text:`🎟️ คูปอง [${code}]`, size:'sm', color:'#e8593c', flex:1 },
-                  { type:'text', text:`-฿${discount.toLocaleString()}`, size:'sm', color:'#e8593c', weight:'bold', align:'end' }
+                  { type:'text', text:`🎟️ คูปอง [${code}]`, size:'sm', color: BRAND_RED, flex:1 },
+                  { type:'text', text:`-฿${discount.toLocaleString()}`, size:'sm', color: BRAND_RED, weight:'bold', align:'end' }
                 ]
               },
-              { type:'separator', margin:'sm' }
+              { type:'separator', margin:'sm', color:'#f5e6e6' }
             ];
           })(),
+          // กล่องยอดสุทธิ พื้นครีมทอง ขอบทอง
           { type:'box', layout:'horizontal', margin:'md',
+            backgroundColor: BRAND_CREAM, cornerRadius:'8px',
+            borderColor: BRAND_CREAM_BD, borderWidth:'1px',
+            paddingAll:'md', alignItems:'center',
             contents:[
-              { type:'text', text:'ยอดสุทธิ', size:'md', color:'#333333', flex:1 },
-              { type:'text', text:`฿${total.toLocaleString()}`, size:'lg', color:'#C0392B', weight:'bold', align:'end' }
+              { type:'text', text:'ยอดสุทธิ', size:'sm', color: BRAND_GOLD_TXT, flex:1 },
+              { type:'text', text:`฿${total.toLocaleString()}`, size:'xl', color: BRAND_RED, weight:'bold', align:'end' }
             ]
           },
-          { type:'text', text:'⏳ ร้านกำลังตรวจสอบและจะแจ้งให้ทราบเร็วๆ นี้', size:'xs', color:'#888888', wrap:true, margin:'lg', align:'center' },
+          { type:'text', text:'⏳ ร้านกำลังตรวจสอบและจะแจ้งให้ทราบเร็วๆ นี้', size:'xs', color:'#a89d8c', wrap:true, margin:'lg', align:'center' },
           ...await (async () => {
             try {
               const { data } = await supabase.from('settings').select('value').eq('key','shop_hours').maybeSingle();
@@ -368,11 +411,11 @@ async function buildOrderSummaryFlex(order) {
               const daysMap = ['อา.','จ.','อ.','พ.','พฤ.','ศ.','ส.'];
               const daysStr = openDays.map(d=>daysMap[d]).join(' ');
               return [
-                { type:'separator', margin:'lg' },
+                { type:'separator', margin:'lg', color:'#f5e6e6' },
                 { type:'box', layout:'vertical', margin:'md', backgroundColor: '#fdf2f0', cornerRadius:'8px', paddingAll:'sm',
                   contents:[
-                    { type:'text', text: '🔴 ร้านปิดแล้ว', size:'xs', color: '#c0392b', weight:'bold' },
-                    { type:'text', text: '🕐 '+daysStr+' '+openStr+'–'+closeStr+' น.', size:'xs', color:'#888888', margin:'xs' },
+                    { type:'text', text: '🔴 ร้านปิดแล้ว', size:'xs', color: BRAND_RED_DARK, weight:'bold' },
+                    { type:'text', text: '🕐 '+daysStr+' '+openStr+'–'+closeStr+' น.', size:'xs', color:'#8a8378', margin:'xs' },
                     { type:'text', text: msg, size:'xs', color:'#555555', wrap:true, margin:'xs' }
                   ]
                 }
@@ -384,13 +427,18 @@ async function buildOrderSummaryFlex(order) {
       footer: {
         type:'box', layout:'vertical', spacing:'sm', paddingAll:'lg', paddingTop:'none',
         contents: [
-          { type:'button', style:'primary', color:'#C0392B', height:'sm',
+          { type:'button', style:'primary', color: BRAND_RED, height:'sm',
             action: { type:'postback', label:'📋 ดูสถานะออเดอร์',
                       data:`action=view_order&id=${orderId}`,
                       displayText:`📋 ดูสถานะ #${orderId}` }
           },
-          { type:'button', style:'secondary', height:'sm',
-            action: { type:'uri', label:'🛒 สั่งซื้อเพิ่ม', uri: SHOP_URL }
+          // ปุ่มรอง — กรอบทอง ตัวหนังสือทอง
+          { type:'box', layout:'vertical', cornerRadius:'10px',
+            borderColor:'#E8B94A', borderWidth:'1px', paddingAll:'md',
+            action: { type:'uri', label:'สั่งซื้อเพิ่ม', uri: SHOP_URL },
+            contents:[
+              { type:'text', text:'🛒 สั่งซื้อเพิ่ม', size:'sm', color:'#B07E1E', align:'center', weight:'bold' }
+            ]
           }
         ]
       }
@@ -399,6 +447,7 @@ async function buildOrderSummaryFlex(order) {
 }
 
 // Flex: อัปเดตสถานะออเดอร์
+// 🎨 Theme: Bright Red × Gold — หัวการ์ดแดงสดทุกสถานะ + Progress Tracker 4 ขั้น
 async function buildStatusUpdateFlex(order, status) {
   const labels = {
     pending  : { emoji:'⏳', text:'รอดำเนินการ', desc:'ร้านกำลังตรวจสอบออเดอร์ของคุณ' },
@@ -411,6 +460,87 @@ async function buildStatusUpdateFlex(order, status) {
   };
   const lbl = labels[status] || { emoji:'📦', text:status, desc:'' };
 
+  // ─── Progress Tracker 4 ขั้น ───
+  // สถานะปกติ: รับแล้ว → ยืนยัน → จัดส่ง → สำเร็จ
+  // ยกเลิก/ผิดพลาด: ไม่แสดง tracker แต่แสดงกล่องแจ้งเตือนแทน
+  const STEP_LABELS = ['รับแล้ว', 'ยืนยัน', 'จัดส่ง', 'สำเร็จ'];
+  const STEP_IDX = { pending: 0, sent: 0, confirmed: 1, shipped: 2, done: 3 };
+  const isTracked = status in STEP_IDX;
+  const curIdx = STEP_IDX[status];
+
+  const COLOR_DONE_STEP = '#2E8B57';   // เขียว = ผ่านแล้ว
+  const COLOR_WAIT_STEP = '#f2e8dc';   // เทาครีม = ยังไม่ถึง
+  const COLOR_WAIT_TEXT = '#b5ab99';
+
+  function stepCircle(i) {
+    const isDone    = status === 'done' ? true : i < curIdx;
+    const isCurrent = status !== 'done' && i === curIdx;
+    if (isDone) {
+      return { type:'box', layout:'vertical', width:'22px', height:'22px',
+        cornerRadius:'999px', backgroundColor: COLOR_DONE_STEP,
+        justifyContent:'center', alignItems:'center',
+        contents:[ { type:'text', text:'✓', size:'xs', color:'#ffffff', align:'center', weight:'bold' } ] };
+    }
+    if (isCurrent) {
+      return { type:'box', layout:'vertical', width:'22px', height:'22px',
+        cornerRadius:'999px', backgroundColor: BRAND_RED,
+        borderColor: BRAND_GOLD, borderWidth:'2px',
+        justifyContent:'center', alignItems:'center',
+        contents:[ { type:'text', text:'●', size:'xxs', color:'#ffffff', align:'center' } ] };
+    }
+    return { type:'box', layout:'vertical', width:'22px', height:'22px',
+      cornerRadius:'999px', backgroundColor: COLOR_WAIT_STEP,
+      contents:[ { type:'filler' } ] };
+  }
+
+  function stepBlock(i) {
+    const isDone    = status === 'done' ? true : i < curIdx;
+    const isCurrent = status !== 'done' && i === curIdx;
+    const txtColor  = isDone ? COLOR_DONE_STEP : isCurrent ? BRAND_RED : COLOR_WAIT_TEXT;
+    return {
+      type:'box', layout:'vertical', flex:1, alignItems:'center',
+      contents:[
+        stepCircle(i),
+        { type:'text', text: STEP_LABELS[i], size:'xxs', color: txtColor,
+          align:'center', margin:'sm', weight: isCurrent ? 'bold' : 'regular' }
+      ]
+    };
+  }
+
+  function stepConnector(i) {
+    // เส้นเชื่อมระหว่างขั้น i กับ i+1 — เขียวถ้าผ่านขั้น i แล้ว
+    const passed = status === 'done' ? true : i < curIdx;
+    return {
+      type:'box', layout:'vertical', flex:1, paddingTop:'10px',
+      contents:[
+        { type:'box', layout:'vertical', height:'2px',
+          backgroundColor: passed ? COLOR_DONE_STEP : '#eee0d0',
+          contents:[ { type:'filler' } ] }
+      ]
+    };
+  }
+
+  const trackerBox = isTracked ? [
+    { type:'box', layout:'horizontal', margin:'lg',
+      contents: [
+        stepBlock(0), stepConnector(0),
+        stepBlock(1), stepConnector(1),
+        stepBlock(2), stepConnector(2),
+        stepBlock(3)
+      ]
+    }
+  ] : [
+    // ยกเลิก/ผิดพลาด — กล่องแจ้งเตือน
+    { type:'box', layout:'vertical', margin:'lg',
+      backgroundColor: status === 'cancelled' ? '#f4f1ea' : '#fdf2f0',
+      cornerRadius:'8px', paddingAll:'md',
+      contents:[
+        { type:'text', text:`${lbl.emoji} ${lbl.text}`, size:'sm',
+          color: status === 'cancelled' ? '#6b6455' : BRAND_RED_DARK, weight:'bold' }
+      ]
+    }
+  ];
+
   return {
     type:'flex',
     altText: `${lbl.emoji} ออเดอร์ #${order.order_id} — ${lbl.text}`,
@@ -418,37 +548,71 @@ async function buildStatusUpdateFlex(order, status) {
       type:'bubble',
       header: {
         type:'box', layout:'vertical',
-        backgroundColor: statusColor(status),
-        paddingAll:'lg',
+        backgroundColor: BRAND_RED,
+        paddingAll:'0px',
         contents: [
-          { type:'text', text:`${lbl.emoji} อัปเดตสถานะ`, color:'#ffffff', size:'sm' },
-          { type:'text', text: lbl.text, color:'#ffffff', size:'xl', weight:'bold', margin:'sm' }
+          { type:'box', layout:'vertical', height:'6px', backgroundColor: BRAND_RED_DARK, contents:[{ type:'filler' }] },
+          { type:'box', layout:'vertical', paddingAll:'lg',
+            contents: [
+              { type:'box', layout:'horizontal', alignItems:'center',
+                contents:[
+                  { type:'box', layout:'horizontal', alignItems:'center', spacing:'md', flex:1,
+                    contents:[
+                      { type:'box', layout:'vertical', width:'30px', height:'30px',
+                        cornerRadius:'999px', backgroundColor:'#ffffff',
+                        justifyContent:'center', alignItems:'center',
+                        contents:[ { type:'text', text:'★', size:'md', color: BRAND_RED, align:'center' } ]
+                      },
+                      { type:'text', text:'MONSHIN SUPPLY', size:'xxs', color: BRAND_GOLD_SOFT, weight:'bold', flex:1 }
+                    ]
+                  },
+                  { type:'text', text:`#${order.order_id}`, size:'xxs', color: BRAND_GOLD_PALE, align:'end' }
+                ]
+              },
+              { type:'text', text:'อัปเดตสถานะออเดอร์', color:'#ffffff', size:'sm', margin:'md' },
+              // ป้ายสถานะ พื้นขาว ตัวแดง
+              { type:'box', layout:'vertical', margin:'sm',
+                contents:[
+                  { type:'box', layout:'horizontal',
+                    backgroundColor:'#ffffff', cornerRadius:'999px',
+                    paddingTop:'6px', paddingBottom:'6px', paddingStart:'14px', paddingEnd:'14px',
+                    justifyContent:'center',
+                    contents:[
+                      { type:'text', text:`${lbl.emoji} ${lbl.text}`, size:'md', color: BRAND_RED_DARK, weight:'bold', align:'center' }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          { type:'box', layout:'vertical', height:'3px', backgroundColor: BRAND_GOLD, contents:[{ type:'filler' }] }
         ]
       },
       body: {
-        type:'box', layout:'vertical', spacing:'md', paddingAll:'lg',
+        type:'box', layout:'vertical', spacing:'md', paddingAll:'lg', paddingTop:'sm',
         contents: [
-          { type:'box', layout:'horizontal',
+          ...trackerBox,
+          { type:'box', layout:'horizontal', margin:'md',
             contents: [
-              { type:'text', text:'ออเดอร์', size:'sm', color:'#888888', flex:1 },
-              { type:'text', text:`#${order.order_id}`, size:'sm', color:'#333333', weight:'bold', align:'end', flex:2 }
+              { type:'text', text:'ยอดรวม', size:'sm', color:'#8a8378', flex:1 },
+              { type:'text', text:`฿${(order.total||0).toLocaleString()}`, size:'sm', color: BRAND_RED, weight:'bold', align:'end', flex:2 }
             ]
           },
-          { type:'box', layout:'horizontal',
-            contents: [
-              { type:'text', text:'ยอดรวม', size:'sm', color:'#888888', flex:1 },
-              { type:'text', text:`฿${(order.total||0).toLocaleString()}`, size:'sm', color:'#C0392B', weight:'bold', align:'end', flex:2 }
+          // กล่องคำอธิบายสถานะ พื้นครีมทอง
+          { type:'box', layout:'vertical', margin:'sm',
+            backgroundColor: BRAND_CREAM, cornerRadius:'8px',
+            borderColor: BRAND_CREAM_BD, borderWidth:'1px', paddingAll:'md',
+            contents:[
+              { type:'text', text:`📦 ${lbl.desc}`, size:'xs', color: BRAND_GOLD_TXT, wrap:true }
             ]
           },
-          { type:'separator', margin:'md' },
-          { type:'text', text: lbl.desc, size:'sm', color:'#555555', wrap:true, margin:'md' },
           ...await (async () => {
             const hoursMsg = await shGetHoursMsg();
             if (!hoursMsg) return [];
             const txt = hoursMsg.replace('\n\n🔴 ','');
             return [
-              { type:'separator', margin:'md' },
-              { type:'text', text: '🔴 ร้านปิดแล้ว', size:'xs', color: '#c0392b', weight:'bold', margin:'md' },
+              { type:'separator', margin:'md', color:'#f5e6e6' },
+              { type:'text', text: '🔴 ร้านปิดแล้ว', size:'xs', color: BRAND_RED_DARK, weight:'bold', margin:'md' },
               { type:'text', text: txt, size:'xs', color:'#555555', wrap:true, margin:'xs' }
             ];
           })()
@@ -457,11 +621,159 @@ async function buildStatusUpdateFlex(order, status) {
       footer: {
         type:'box', layout:'vertical', paddingAll:'lg', paddingTop:'none',
         contents: [
-          { type:'button', style:'primary', color:'#C0392B', height:'sm',
+          { type:'button', style:'primary', color: BRAND_RED, height:'sm',
             action:{ type:'postback', label:'📋 ดูรายละเอียด',
                      data:`action=view_order&id=${order.order_id}`,
                      displayText:`📋 ดูรายละเอียด #${order.order_id}` }
           }
+        ]
+      }
+    }
+  };
+}
+
+// Flex: การชำระเงิน (สลิป/แจ้งยอด) — ใช้ร่วมกันทั้งฝั่งลูกค้าและแอดมิน
+// audience: 'customer' | 'admin'
+// result  : 'match' (ยอดตรง) | 'under' (โอนขาด) | 'over' (โอนเกิน/รอตรวจ)
+function buildPaymentFlex({ audience, result, order_id, customer_name, paid, expected, diff }) {
+  const paidStr     = `฿${Number(paid || 0).toLocaleString()}`;
+  const expectedStr = `฿${Number(expected || 0).toLocaleString()}`;
+  const diffStr     = `฿${Math.abs(Number(diff || 0)).toLocaleString(undefined,{maximumFractionDigits:2})}`;
+
+  // กล่องผลตรวจยอด 3 สี
+  const RESULT_BOX = {
+    match: { bg:'#E9F5EC', bd:'#bfe0c8', tx:'#1f5c38' },
+    under: { bg:'#FFF4E0', bd:'#F0D9A8', tx:'#8a5a12' },
+    over : { bg:'#E8F1FA', bd:'#bcd6ee', tx:'#1d5a8f' }
+  };
+  const ADMIN_RESULT_BOX = {
+    match: RESULT_BOX.match,
+    under: { bg:'#FDECEC', bd:'#F0C0C0', tx:'#A4161A' },
+    over : RESULT_BOX.under
+  };
+
+  const isAdmin = audience === 'admin';
+
+  const conf = isAdmin ? {
+    match: { title:'💳 ลูกค้าโอนเงินแล้ว!', boxText:'✓ ยอดตรง — ยืนยันอัตโนมัติแล้ว', box: ADMIN_RESULT_BOX.match },
+    under: { title:'💳 สลิปยอดไม่ตรง',    boxText:`⚠️ ขาดอีก ${diffStr} — รอยืนยัน manual`, box: ADMIN_RESULT_BOX.under },
+    over : { title:'💳 สลิปโอนเกิน',      boxText:`⚠️ โอนเกิน ${diffStr} — กด "ยืนยันชำระแล้ว" ใน Admin Panel`, box: ADMIN_RESULT_BOX.over }
+  }[result] : {
+    match: { badge:'✅ ชำระเงินสำเร็จ', badgeColor:'#1f7a45',
+             boxText:'✓ ยอดตรง — ร้านได้รับชำระเรียบร้อยแล้ว', box: RESULT_BOX.match,
+             note:'🎉 ขอบคุณที่อุดหนุนร้านเราค่ะ' },
+    under: { badge:'⚠️ ยอดโอนไม่ครบ', badgeColor:'#B07E1E',
+             boxText:`⚠️ ขาดอีก ${diffStr}`, box: RESULT_BOX.under,
+             desc:'กรุณาโอนเพิ่มแล้วส่งสลิปใหม่ หรือติดต่อร้านเพื่อยืนยันค่ะ' },
+    over : { badge:'✅ ได้รับสลิปแล้ว', badgeColor:'#1f7a45',
+             boxText:'✓ ได้รับยอดแล้ว', box: RESULT_BOX.over,
+             desc:'ทางร้านจะตรวจสอบและยืนยันเร็วๆ นี้ค่ะ' }
+  }[result];
+
+  const amountRows = [
+    ...(isAdmin && customer_name ? [{
+      type:'box', layout:'horizontal',
+      contents:[
+        { type:'text', text:'ชื่อลูกค้า', size:'sm', color:'#8a8378', flex:1 },
+        { type:'text', text:String(customer_name), size:'sm', color:'#3d3428', weight:'bold', align:'end', flex:2 }
+      ]
+    }] : []),
+    { type:'box', layout:'horizontal', margin:'xs',
+      contents:[
+        { type:'text', text:'ยอดที่โอน', size:'sm', color:'#8a8378', flex:1 },
+        { type:'text', text: paidStr, size:'sm', color:'#3d3428', weight:'bold', align:'end', flex:2 }
+      ]
+    },
+    { type:'box', layout:'horizontal', margin:'xs',
+      contents:[
+        { type:'text', text:'ยอดออเดอร์', size:'sm', color:'#8a8378', flex:1 },
+        { type:'text', text: expectedStr, size:'sm', color:'#3d3428', weight:'bold', align:'end', flex:2 }
+      ]
+    }
+  ];
+
+  const resultBox = {
+    type:'box', layout:'vertical', margin:'md',
+    backgroundColor: conf.box.bg, cornerRadius:'8px',
+    borderColor: conf.box.bd, borderWidth:'1px', paddingAll:'md',
+    contents:[
+      { type:'text', text: conf.boxText, size:'sm', color: conf.box.tx, weight:'bold', wrap:true },
+      ...(conf.desc ? [{ type:'text', text: conf.desc, size:'xs', color: conf.box.tx, wrap:true, margin:'xs' }] : [])
+    ]
+  };
+
+  // ── หัวการ์ด ──
+  const header = isAdmin ? {
+    type:'box', layout:'vertical', backgroundColor: BRAND_RED, paddingAll:'0px',
+    contents:[
+      { type:'box', layout:'vertical', height:'6px', backgroundColor: BRAND_RED_DARK, contents:[{ type:'filler' }] },
+      { type:'box', layout:'horizontal', paddingAll:'lg', alignItems:'center',
+        contents:[
+          { type:'text', text: conf.title, size:'md', color:'#ffffff', weight:'bold', flex:1 },
+          { type:'box', layout:'vertical', backgroundColor: BRAND_GOLD, cornerRadius:'999px',
+            paddingTop:'3px', paddingBottom:'3px', paddingStart:'10px', paddingEnd:'10px',
+            contents:[ { type:'text', text:`#${order_id}`, size:'xxs', color:'#3d2c00', weight:'bold' } ]
+          }
+        ]
+      },
+      { type:'box', layout:'vertical', height:'3px', backgroundColor: BRAND_GOLD, contents:[{ type:'filler' }] }
+    ]
+  } : {
+    type:'box', layout:'vertical', backgroundColor: BRAND_RED, paddingAll:'0px',
+    contents:[
+      { type:'box', layout:'vertical', height:'6px', backgroundColor: BRAND_RED_DARK, contents:[{ type:'filler' }] },
+      { type:'box', layout:'vertical', paddingAll:'lg',
+        contents:[
+          { type:'box', layout:'horizontal', alignItems:'center',
+            contents:[
+              { type:'box', layout:'horizontal', alignItems:'center', spacing:'md', flex:1,
+                contents:[
+                  { type:'box', layout:'vertical', width:'30px', height:'30px',
+                    cornerRadius:'999px', backgroundColor:'#ffffff',
+                    justifyContent:'center', alignItems:'center',
+                    contents:[ { type:'text', text:'★', size:'md', color: BRAND_RED, align:'center' } ]
+                  },
+                  { type:'text', text:'MONSHIN SUPPLY', size:'xxs', color: BRAND_GOLD_SOFT, weight:'bold', flex:1 }
+                ]
+              },
+              { type:'text', text:`#${order_id}`, size:'xxs', color: BRAND_GOLD_PALE, align:'end' }
+            ]
+          },
+          { type:'text', text:'การชำระเงิน', color:'#ffffff', size:'sm', margin:'md' },
+          { type:'box', layout:'vertical', margin:'sm',
+            contents:[
+              { type:'box', layout:'horizontal',
+                backgroundColor:'#ffffff', cornerRadius:'999px',
+                paddingTop:'6px', paddingBottom:'6px', paddingStart:'14px', paddingEnd:'14px',
+                justifyContent:'center',
+                contents:[
+                  { type:'text', text: conf.badge, size:'md', color: conf.badgeColor, weight:'bold', align:'center' }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      { type:'box', layout:'vertical', height:'3px', backgroundColor: BRAND_GOLD, contents:[{ type:'filler' }] }
+    ]
+  };
+
+  const altText = isAdmin
+    ? `${conf.title} #${order_id} — โอน ${paidStr} / ออเดอร์ ${expectedStr}`
+    : `${conf.badge} — ออเดอร์ #${order_id}`;
+
+  return {
+    type:'flex',
+    altText,
+    contents:{
+      type:'bubble',
+      header,
+      body:{
+        type:'box', layout:'vertical', spacing:'sm', paddingAll:'lg',
+        contents:[
+          ...amountRows,
+          resultBox,
+          ...(!isAdmin && conf.note ? [{ type:'text', text: conf.note, size:'xs', color: BRAND_GOLD_TXT, align:'center', margin:'md' }] : [])
         ]
       }
     }
@@ -2222,14 +2534,18 @@ app.post('/webhook', async (req, res) => {
         } else {
           replyAmt = `✅ ได้รับแล้ว ยอดครบค่ะ!\n\nยอดที่โอน: ฿${amountTyped.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n\nขอบคุณค่ะ 🙏`;
         }
-        await safeReply(replyToken, userId, [{ type: 'text', text: replyAmt }]);
+        const amtResult = isMatch ? 'match' : (diff > 0 ? 'under' : 'over');
+        await safeReply(replyToken, userId, [buildPaymentFlex({
+          audience:'customer', result: amtResult, order_id: amtOrder.order_id,
+          paid: amountTyped, expected: expectedTotal, diff
+        })]);
 
         if (process.env.LINE_TOKEN) {
-          notifyAllAdmins([{ type: 'text',
-            text: isMatch
-              ? `💳 ลูกค้าแจ้งยอด ✅ #${amtOrder.order_id}\nชื่อ: ${amtOrder.customer_name}\nยอด: ฿${amountTyped.toLocaleString()} = ฿${expectedTotal.toLocaleString()}\nยืนยันอัตโนมัติแล้ว`
-              : `💳 ลูกค้าแจ้งยอด ⚠️ #${amtOrder.order_id}\nชื่อ: ${amtOrder.customer_name}\nยอดที่แจ้ง: ฿${amountTyped.toLocaleString()} / ออเดอร์: ฿${expectedTotal.toLocaleString()}\nขาด ฿${diff.toFixed(2)}`
-          }]).catch(() => {});
+          notifyAllAdmins([buildPaymentFlex({
+            audience:'admin', result: amtResult, order_id: amtOrder.order_id,
+            customer_name: amtOrder.customer_name,
+            paid: amountTyped, expected: expectedTotal, diff
+          })]).catch(() => {});
         }
         continue;
       }
@@ -2237,8 +2553,15 @@ app.post('/webhook', async (req, res) => {
 
     // อัปเดต LINE user_id ในออเดอร์ทั้งหมดที่มีเบอร์ตรงกัน (ผูกอัตโนมัติเมื่อพิมพ์เบอร์)
     // ตรวจว่า text เป็นเบอร์โทรไหม (8-12 หลัก)
+    // 🐛 FIX: ต้องเช็คว่าข้อความ "หน้าตาเป็นเบอร์โทรจริงๆ" ก่อน
+    // เดิม normalizePhone ดึงตัวเลขจากทั้งข้อความ ทำให้ข้อความสั่งสินค้า
+    // เช่น "ถ้วย TB45= 1 ถุง 7*15 = 1" มีตัวเลขรวม 8-12 หลัก → หลงเข้าโหมดค้นหาเบอร์
+    // เงื่อนไขใหม่: หลังตัดคำนำหน้า (เบอร์/tel) แล้ว ต้องเหลือแต่ ตัวเลข ช่องว่าง - . ( ) + เท่านั้น
     const phoneOnly = normalizePhone(rawText);
-    if (phoneOnly.length >= 8 && phoneOnly.length <= 12 && /^\d+$/.test(phoneOnly)) {
+    const looksLikePhone = rawText.trim()
+      .replace(/^(เบอร์โทรศัพท์|เบอร์โทร|เบอร์|โทร|tel\.?|phone)[\s:：]*/i, '')
+      .replace(/[\d\s\-\.\(\)\+]/g, '') === '';
+    if (looksLikePhone && phoneOnly.length >= 8 && phoneOnly.length <= 12 && /^\d+$/.test(phoneOnly)) {
       // จับคู่ออเดอร์ที่มีเบอร์นี้ → set line_user_id
       // ไม่ใช้ limit — ป้องกัน miss ออเดอร์เก่า
       const { data: matched, error: phoneQueryErr } = await supabase.from('orders')
@@ -3164,7 +3487,12 @@ app.post('/submit-slip', async (req, res) => {
   } catch(e) { console.warn('insert slip msg:', e.message); }
 
   if (process.env.LINE_TOKEN) {
-    const msgs = [{ type:'text', text: adminMsg }];
+    const payResult = isMatch ? 'match' : (diff > 0 ? 'under' : 'over');
+    const msgs = [buildPaymentFlex({
+      audience:'admin', result: payResult, order_id,
+      customer_name: order.customer_name,
+      paid: paidAmount, expected: expectedTotal, diff
+    })];
     if (slip_url) msgs.push({ type:'image', originalContentUrl: slip_url, previewImageUrl: slip_url });
     notifyAllAdmins(msgs).catch(e => console.warn('slip notify:', e.message));
   }
@@ -3337,7 +3665,10 @@ app.post('/confirm-payment', async (req, res) => {
   } catch(e) { console.warn('confirm msg:', e.message); }
 
   if (process.env.LINE_TOKEN && order.line_user_id) {
-    linePush(order.line_user_id, [{ type:'text', text: confirmMsg }])
+    linePush(order.line_user_id, [buildPaymentFlex({
+      audience:'customer', result:'match', order_id,
+      paid: order.total, expected: order.total, diff: 0
+    })])
       .catch(e => console.warn('confirm LINE push:', e.message));
   }
 
