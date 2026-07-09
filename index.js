@@ -13,6 +13,16 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.options('*', cors()); // preflight สำหรับทุก route
+
+// ─── อนุญาตให้แอปเซล (Sale-Monshin) ฝังหน้าร้านใน iframe ได้ ───
+// ค่า default ของเบราว์เซอร์/proxy บางตัวจะบล็อก cross-origin iframe ถ้าไม่ประกาศนโยบาย
+// frame-ancestors: อนุญาตเว็บแอปเซลบน GitHub Pages + ตัวเอง + APK webview (https/file)
+app.use((req, res, next) => {
+  res.removeHeader('X-Frame-Options');
+  res.setHeader('Content-Security-Policy', "frame-ancestors 'self' https://rueopop-code.github.io https://*.github.io file:");
+  next();
+});
+
 app.use(express.json({ limit: '15mb' }));         // รับ base64 รูปสลิปขนาดใหญ่ได้
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
