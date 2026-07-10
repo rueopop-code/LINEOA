@@ -4662,6 +4662,7 @@ async function openOrderDetail(orderId) {
             : `<span style="color:#aaa;font-size:12px;">—</span>`}
       </div>
       ${o.note ? `<div style="display:flex;gap:8px;"><span style="color:#888;min-width:60px;">📝 หมายเหตุ</span><span style="color:#555;">${escapeShop(o.note)}</span></div>` : ''}
+      ${o.ref_code ? `<div style="display:flex;gap:8px;align-items:center;"><span style="color:#888;min-width:60px;">🤝 แนะนำโดย</span><span id="detRefName" style="background:#fdf6e3;color:#8a6d1f;border:1px solid #ecd9a0;border-radius:8px;padding:2px 10px;font-size:12px;font-weight:700;">${escapeShop(o.ref_code)}</span></div>` : ''}
     </div>
     <!-- ── ส่วนแนบสลิป (เฉพาะออเดอร์โอน) ─── -->
     ${o.payment_method === 'transfer' ? `
@@ -4767,6 +4768,20 @@ async function openOrderDetail(orderId) {
 
   await loadOrderChat(orderId);
   setupShopChatRealtime(orderId);
+
+  // 🤝 อัปเกรดป้าย "แนะนำโดย" จากรหัส → ชื่อ (เซล/เพื่อน) ผ่าน backend
+  if (o.ref_code) {
+    fetch(`${BACKEND_URL}/ref-info/${encodeURIComponent(o.ref_code)}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        const el = document.getElementById('detRefName');
+        if (el && d) {
+          const icon = d.type === 'sales' ? '💼' : '🎁';
+          el.textContent = `${icon} ${d.name ? `${d.name} (${d.code})` : d.code}`;
+        }
+      })
+      .catch(() => {});
+  }
 }
 
 async function loadOrderChat(orderId) {

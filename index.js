@@ -150,6 +150,72 @@ function statusLabel(s) {
   })[s] || s;
 }
 
+// ─── ผู้แนะนำ (เซล/เพื่อน): แปลง ref_code → ชื่อ ───────────
+// เซล (S001, S002, ...) → ดึงชื่อจาก Google Sheet ผ่าน GAS ตัวเดียวกับหน้า Admin (cache 10 นาที)
+// เพื่อนชวนเพื่อน (REFxxx) → ดึงชื่อเจ้าของโค้ดจากตาราง referrals + orders
+const SALES_GAS_URL = process.env.SALES_GAS_URL || 'https://script.google.com/macros/s/AKfycbw8PT4PBw0AVXiYiyp9LW4mZexvHxkBiohODVoTkq26Tu4YskhyDsbA821E2MBaLJjl/exec';
+let _salesStaffCache = { ts: 0, list: [] };
+
+async function getSalesStaffList() {
+  if (_salesStaffCache.list.length && (Date.now() - _salesStaffCache.ts) < 10 * 60 * 1000) {
+    return _salesStaffCache.list;
+  }
+  try {
+    const r = await fetch(SALES_GAS_URL, {
+      method : 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body   : JSON.stringify({ action: 'getSalesStaffList' })
+    });
+    const d = await r.json();
+    if (d && d.ok && Array.isArray(d.staff)) {
+      _salesStaffCache = { ts: Date.now(), list: d.staff };
+    }
+  } catch (e) {
+    console.warn('getSalesStaffList failed:', e.message);
+  }
+  return _salesStaffCache.list;
+}
+
+async function resolveRefInfo(refCode) {
+  if (!refCode) return null;
+  // 💼 รหัสเซล
+  if (/^S\d+$/i.test(refCode)) {
+    let name = '';
+    try {
+      const staff = await getSalesStaffList();
+      const s = staff.find(x => String(x.salesId || x.id || '').toUpperCase() === String(refCode).toUpperCase());
+      if (s) name = s.name || '';
+    } catch (e) {}
+    return {
+      type : 'sales',
+      code : refCode,
+      name,
+      label: name ? `💼 เซลแนะนำ: ${name} (${refCode})` : `💼 เซลแนะนำ: ${refCode}`
+    };
+  }
+  // 🎁 เพื่อนชวนเพื่อน
+  let name = '';
+  try {
+    const { data: ref } = await supabase
+      .from('referrals').select('customer_id').eq('ref_code', refCode).maybeSingle();
+    if (ref?.customer_id) {
+      const { data: anyOrder } = await supabase
+        .from('orders').select('customer_name, line_name')
+        .eq('customer_id', ref.customer_id)
+        .not('customer_name', 'eq', '')
+        .order('created_at', { ascending: false })
+        .limit(1).maybeSingle();
+      name = anyOrder?.line_name || anyOrder?.customer_name || '';
+    }
+  } catch (e) {}
+  return {
+    type : 'friend',
+    code : refCode,
+    name,
+    label: name ? `🎁 เพื่อนแนะนำ: ${name} (${refCode})` : `🎁 เพื่อนแนะนำ (${refCode})`
+  };
+}
+
 async function buildAdminMsg(order) {
   const { customer_name, items, total, order_id, created_at, phone, address, note,
           coupon_code, discount_amount, ref_code, order_type, payment_method, payment_label } = order;
@@ -159,12 +225,14 @@ async function buildAdminMsg(order) {
   let msg = `🛒 ออเดอร์ใหม่! #${order_id}\n`;
   msg += `${'─'.repeat(24)}\n`;
   msg += `👤 ${customer_name}\n`;
+  // 🤝 แสดงผู้แนะนำใต้ชื่อลูกค้า (เซล: ชื่อ+รหัส / เพื่อน: ชื่อเพื่อน)
+  const refInfo = await resolveRefInfo(ref_code);
+  if (refInfo) msg += `${refInfo.label}\n`;
   if (phone)   msg += `📞 ${phone}\n`;
   msg += `📋 ประเภท: ${typeLabel}\n`;
   if (payLabel) msg += `💳 ชำระ: ${payLabel}\n`;
   if (address) msg += `📍 ${address}\n`;
   msg += `📅 ${date}\n`;
-  if (ref_code) msg += `🎁 ชวนเพื่อน (${ref_code})\n`;
   msg += `${'─'.repeat(24)}\n`;
   (items || []).forEach(i => {
     msg += `${i.emoji || '•'} ${i.name}\n`;
@@ -313,6 +381,8 @@ async function buildOrderSummaryFlex(order) {
   const total = safeNum(order.total);
   const orderId = String(safe(order.order_id, '-'));
   const customerName = String(safe(order.customer_name, '-')).trim() || '-';
+  // 🤝 ผู้แนะนำ (เซล/เพื่อน) — แสดงใต้ชื่อลูกค้าบนหัวการ์ด
+  const refInfo = await resolveRefInfo(order.ref_code);
   const orderTypeLabel = order.order_type === 'delivery' ? '🚚 จัดส่ง' : '📦 จอง/รับเอง';
   const payLabel = order.payment_label || (order.payment_method === 'cod' ? '🏍️ เก็บปลายทาง' : order.payment_method === 'transfer' ? '📲 โอน/สแกน QR' : null);
   const payColor = order.payment_method === 'cod' ? BRAND_RED : '#2980b9';
@@ -351,7 +421,8 @@ async function buildOrderSummaryFlex(order) {
             contents: [
               brandHeaderRow(),
               { type:'text', text:`#${orderId}`, color:'#ffffff', size:'xl', weight:'bold', margin:'md' },
-              { type:'text', text:`คุณ ${customerName}`, color: BRAND_GOLD_PALE, size:'sm', margin:'xs' }
+              { type:'text', text:`คุณ ${customerName}`, color: BRAND_GOLD_PALE, size:'sm', margin:'xs' },
+              ...(refInfo ? [{ type:'text', text: refInfo.label, color: BRAND_GOLD_SOFT, size:'xs', margin:'xs', wrap:true }] : [])
             ]
           },
           // เส้นทองคาดใต้หัว
@@ -1924,6 +1995,15 @@ app.get('/my-orders/:customerId', async (req, res) => {
 
   if (error) return res.status(500).json({ error: error.message });
   res.json({ orders: data || [] });
+});
+
+// ── GET /ref-info/:code ───────────────────────────────────
+// แปลง ref_code → ชื่อผู้แนะนำ (เซล/เพื่อน) สำหรับ popup ออเดอร์หน้าร้าน
+// ส่งเฉพาะ type/code/name/label — ไม่เปิดเผยข้อมูลอื่นของเซล
+app.get('/ref-info/:code', async (req, res) => {
+  const info = await resolveRefInfo(req.params.code);
+  if (!info) return res.status(404).json({ error: 'not found' });
+  res.json({ type: info.type, code: info.code, name: info.name, label: info.label });
 });
 
 // ── GET /messages/:orderId ────────────────────────────────
