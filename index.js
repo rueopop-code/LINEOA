@@ -1511,9 +1511,87 @@ app.get('/go', (req, res) => {
   const addFriendUrl = process.env.LINE_ADD_FRIEND_URL || `https://line.me/R/ti/p/${encodeURIComponent(oaId)}`;
   const ua = String(req.headers['user-agent'] || '');
   const isMobile = /android|iphone|ipad|ipod|mobile/i.test(ua);
+  const isAndroid = /android/i.test(ua);
+  // Facebook / Instagram / Messenger in-app browser — เบราว์เซอร์ในตัวของแอปเหล่านี้
+  // จงใจบล็อกการ redirect อัตโนมัติออกไปเปิดแอปอื่น (เช่น LINE) ด้วยเหตุผลด้าน tracking/privacy ของตัวเขาเอง
+  const isInAppWebview = /FBAN|FBAV|FB_IAB|FBSV|Instagram|Messenger/i.test(ua);
+
+  if (isMobile && isInAppWebview) {
+    return res.send(renderInAppEscapePage({ addFriendUrl, isAndroid }));
+  }
   if (isMobile) return res.redirect(addFriendUrl);
   return res.redirect(`${backendUrl}/line-login/page`);
 });
+
+// ── หน้าคั่นสำหรับ escape ออกจาก in-app browser ของ Facebook/IG/Messenger ──
+// Android: ลองยิง intent:// ให้ระบบ Android เปิด Chrome เอง (หลุดจาก webview ได้จริง เพราะ OS เป็นคนจัดการ ไม่ใช่ตัว webview)
+//          ถ้าเปิด Chrome ได้ Chrome จะสานต่อ App Link ไปเปิด LINE ให้เองอัตโนมัติ
+// iOS: Apple/FB คุมเข้มกว่ามาก ไม่มีวิธี auto-escape ที่เชื่อถือได้ 100% — แสดงคำแนะนำให้กดเปิดในเบราว์เซอร์ภายนอกแทน
+function renderInAppEscapePage({ addFriendUrl, isAndroid }) {
+  let intentUrl = '';
+  try {
+    const u = new URL(addFriendUrl);
+    intentUrl = `intent://${u.host}${u.pathname}${u.search}#Intent;scheme=https;package=com.android.chrome;end`;
+  } catch (_) {}
+
+  return `<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>มนชิน ซัพพลาย — เปิดใน LINE</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    min-height: 100vh; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: #fff8f0; font-family: 'Sarabun', sans-serif; padding: 24px;
+  }
+  .card {
+    background: #fff; border-radius: 20px; box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    padding: 36px 28px; max-width: 400px; width: 100%; text-align: center;
+  }
+  .logo { font-size: 44px; margin-bottom: 10px; }
+  .title { font-size: 19px; font-weight: 700; color: #C0392B; margin-bottom: 8px; }
+  .desc { font-size: 14px; color: #666; line-height: 1.7; margin-bottom: 22px; }
+  .btn-line {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    background: #06C755; color: #fff; font-size: 15px; font-weight: 700;
+    border: none; border-radius: 12px; padding: 14px; text-decoration: none;
+    margin-bottom: 18px;
+  }
+  .steps { text-align: left; font-size: 13px; color: #444; background: #fff8e6;
+    border: 1px solid #f0dfa8; border-radius: 10px; padding: 14px 16px; line-height: 1.9; }
+  .steps b { color: #7E1610; }
+  .menu-dots { display:inline-block; font-weight:900; font-size:16px; background:#eee; border-radius:6px; padding:0 6px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">💬</div>
+    <div class="title">กำลังเปิดจาก Facebook/Instagram</div>
+    <div class="desc">แอปนี้บล็อกไม่ให้เด้งเข้า LINE อัตโนมัติ — แตะปุ่มด้านล่างเพื่อลองอีกครั้ง หรือทำตามขั้นตอนถ้ายังไม่เข้า</div>
+    <a class="btn-line" id="tryBtn" href="${addFriendUrl}">➕ เพิ่มเพื่อน LINE ตอนนี้</a>
+    <div class="steps">
+      <b>ถ้ากดแล้วไม่เข้า LINE:</b><br>
+      1. แตะเมนู <span class="menu-dots">⋮</span> หรือ <span class="menu-dots">•••</span> มุมขวาบนของหน้าจอ<br>
+      2. เลือก <b>"เปิดในเบราว์เซอร์"</b> (Open in Browser / Chrome / Safari)<br>
+      3. เมื่อเปิดในเบราว์เซอร์แล้ว ลิงก์จะพาไปหน้า LINE ให้อัตโนมัติ
+    </div>
+  </div>
+  <script>
+    (function () {
+      var isAndroid = ${JSON.stringify(!!isAndroid)};
+      var intentUrl = ${JSON.stringify(intentUrl)};
+      // Android: ลองยิง intent:// ทันทีตอนโหลดหน้า เพื่อพยายามหลุดออกจาก webview ไปเปิด Chrome เอง
+      if (isAndroid && intentUrl) {
+        try { window.location.href = intentUrl; } catch (_) {}
+      }
+    })();
+  </script>
+</body>
+</html>`;
+}
 
 app.get('/line-login/page', (req, res) => {
   const backendUrl = (process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT || 3000}`).replace(/\/$/, '');
