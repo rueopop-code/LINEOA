@@ -1571,7 +1571,7 @@ function renderInAppEscapePage({ addFriendUrl, isAndroid }) {
     <div class="logo">💬</div>
     <div class="title">กำลังเปิดจาก Facebook/Instagram</div>
     <div class="desc">แอปนี้บล็อกไม่ให้เด้งเข้า LINE อัตโนมัติ — แตะปุ่มด้านล่างเพื่อลองอีกครั้ง หรือทำตามขั้นตอนถ้ายังไม่เข้า</div>
-    <a class="btn-line" id="tryBtn" href="${addFriendUrl}">➕ เพิ่มเพื่อน LINE ตอนนี้</a>
+    <a class="btn-line" id="tryBtn" href="${addFriendUrl}" onclick="return handleTryClick(event)">➕ เพิ่มเพื่อน LINE ตอนนี้</a>
     <div class="steps">
       <b>ถ้ากดแล้วไม่เข้า LINE:</b><br>
       1. แตะเมนู <span class="menu-dots">⋮</span> หรือ <span class="menu-dots">•••</span> มุมขวาบนของหน้าจอ<br>
@@ -1580,14 +1580,18 @@ function renderInAppEscapePage({ addFriendUrl, isAndroid }) {
     </div>
   </div>
   <script>
-    (function () {
-      var isAndroid = ${JSON.stringify(!!isAndroid)};
-      var intentUrl = ${JSON.stringify(intentUrl)};
-      // Android: ลองยิง intent:// ทันทีตอนโหลดหน้า เพื่อพยายามหลุดออกจาก webview ไปเปิด Chrome เอง
-      if (isAndroid && intentUrl) {
-        try { window.location.href = intentUrl; } catch (_) {}
+    var _isAndroid = ${JSON.stringify(!!isAndroid)};
+    var _intentUrl = ${JSON.stringify(intentUrl)};
+    // สำคัญ: ไม่ auto-redirect ตอนโหลดหน้าโดยเด็ดขาด — Facebook แฟล็ก/บล็อกลิงก์ที่ redirect
+    // เองอัตโนมัติโดยไม่มีการกดของผู้ใช้ (เข้าข่ายเทคนิคหลอกลวงที่ระบบเขาคอยสแกนจับ)
+    // ต้องรอให้ผู้ใช้แตะปุ่มเองก่อนเสมอ ถึงจะปลอดภัยจากการโดนบล็อก
+    function handleTryClick(e) {
+      if (_isAndroid && _intentUrl) {
+        e.preventDefault();
+        window.location.href = _intentUrl;
       }
-    })();
+      return true; // iOS/อื่นๆ: ปล่อยให้ href ปกติทำงาน (เปิด addFriendUrl ตรงๆ)
+    }
   </script>
 </body>
 </html>`;
