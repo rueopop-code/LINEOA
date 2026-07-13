@@ -23,7 +23,254 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: '15mb' }));         // รับ base64 รูปสลิปขนาดใหญ่ได้
+app.use(express.json({ limit: '15mb', verify: (req, res, buf) => { req.rawBody = buf; } }));         // รับ base64 รูปสลิปขนาดใหญ่ได้ + เก็บ raw body ไว้ตรวจลายเซ็น LINE webhook
+
+// ═══ 🔐 Admin API Key — ป้องกัน endpoint ฝั่งจัดการร้าน ═══════════════
+// เปิดใช้เมื่อตั้ง env ADMIN_API_KEY (ตั้งเป็นรหัสลับอะไรก็ได้ยาว ๆ)
+// ถ้าไม่ตั้ง → ทำงานเหมือนเดิมทุกอย่าง (backward compatible)
+// ฝั่งหน้าเว็บส่ง key มาทาง header 'x-admin-key' หรือ query ?admin_key=
+function requireAdminKey(req, res, next) {
+  const key = process.env.ADMIN_API_KEY || '';
+  if (!key) return next();
+  const got = req.headers['x-admin-key'] || req.query.admin_key || '';
+  if (got === key) return next();
+  console.warn(`🚫 admin endpoint ถูกปฏิเสธ: ${req.method} ${req.path} จาก ${req.ip}`);
+  return res.status(401).json({ error: 'unauthorized — ต้องใส่ Admin API Key' });
+}
+
+// ═══ ⏱️ Rate limiter แบบเบา ๆ (in-memory ต่อ IP) ═══════════════════
+// ใช้กับ endpoint ที่กินแรงเครื่อง (OCR) กันโดนยิงถล่มจน server ล่ม
+const _rateBuckets = new Map(); // key → { count, resetAt }
+function rateLimit(maxPerMin) {
+  return (req, res, next) => {
+    const k = `${req.path}|${req.ip}`;
+    const now = Date.now();
+    let b = _rateBuckets.get(k);
+    if (!b || now > b.resetAt) { b = { count: 0, resetAt: now + 60000 }; _rateBuckets.set(k, b); }
+    b.count++;
+    if (_rateBuckets.size > 5000) { // กัน map บวม
+      for (const [kk, vv] of _rateBuckets) { if (now > vv.resetAt) _rateBuckets.delete(kk); }
+    }
+    if (b.count > maxPerMin) {
+      return res.status(429).json({ error: 'ส่งถี่เกินไป กรุณารอสักครู่แล้วลองใหม่' });
+    }
+    next();
+  };
+}
+
+// ═══ 📝 Error log ลง Supabase (fire-and-forget) ══════════════════════
+// ต้องมีตาราง error_logs (อยู่ใน supabase-schema.sql) — ถ้ายังไม่มีก็แค่ log ลง console เหมือนเดิม
+function logError(scope, err, extra) {
+  const message = (err && err.message) ? err.message : String(err);
+  console.error(`❌ [${scope}]`, message);
+  try {
+    supabase.from('error_logs').insert([{
+      scope, message: message.slice(0, 1000),
+      extra: extra ? JSON.stringify(extra).slice(0, 2000) : null,
+      created_at: new Date().toISOString()
+    }]).then(({ error }) => { /* เงียบ — ตารางอาจยังไม่ถูกสร้าง */ });
+  } catch (_) {}
+}
+process.on('unhandledRejection', (e) => logError('unhandledRejection', e));
+process.on('uncaughtException',  (e) => logError('uncaughtException', e));
+
+// ═══════════════════════════════════════════════════════════════════
+//  👤 ระบบบัญชีผู้ใช้แอดมิน + สิทธิ์การเข้าถึง (RBAC)
+//  บทบาท: owner (เจ้าของร้าน — ทำได้ทุกอย่าง) / manager / staff
+//  สิทธิ์ (perms): orders, customers, reports, sales, coupons, payments,
+//                  products, shop_settings, backup, users, settings
+//  รหัสผ่านเก็บแบบ scrypt hash + salt — ไม่มีทางกู้คืนเป็นข้อความได้
+//  token มีอายุ 12 ชม. เซ็นด้วย HMAC (secret = env AUTH_SECRET หรือ ADMIN_API_KEY)
+// ═══════════════════════════════════════════════════════════════════
+const _crypto = require('crypto');
+const ALL_PERMS = ['orders','customers','reports','sales','coupons','payments','products','shop_settings','backup','users','settings'];
+
+function _authSecret() { return process.env.AUTH_SECRET || process.env.ADMIN_API_KEY || 'monshin-no-secret'; }
+function _hashPw(pw, salt) { return _crypto.scryptSync(String(pw), salt, 32).toString('hex'); }
+function _b64u(s) { return Buffer.from(s).toString('base64url'); }
+
+function makeAuthToken(user) {
+  const payload = _b64u(JSON.stringify({
+    uid: user.id, un: user.username, dn: user.display_name,
+    role: user.role, perms: user.perms || [],
+    exp: Date.now() + 12 * 3600 * 1000
+  }));
+  const sig = _crypto.createHmac('sha256', _authSecret()).update(payload).digest('base64url');
+  return payload + '.' + sig;
+}
+function verifyAuthToken(token) {
+  try {
+    const [payload, sig] = String(token || '').split('.');
+    if (!payload || !sig) return null;
+    const expect = _crypto.createHmac('sha256', _authSecret()).update(payload).digest('base64url');
+    if (!_crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expect))) return null;
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    if (!data.exp || Date.now() > data.exp) return null;
+    return data;
+  } catch (_) { return null; }
+}
+
+// middleware: ผ่านได้ถ้า (1) Master Key ถูกต้อง หรือ (2) token ผู้ใช้ที่มีสิทธิ์ perm นั้น
+function requirePerm(perm) {
+  return (req, res, next) => {
+    const masterKey = process.env.ADMIN_API_KEY || '';
+    const gotKey = req.headers['x-admin-key'] || req.query.admin_key || '';
+    if (masterKey && gotKey === masterKey) {
+      req.adminUser = { role: 'owner', username: '__master__', master: true };
+      return next();
+    }
+    const bearer = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '');
+    const u = verifyAuthToken(bearer);
+    if (u) {
+      req.adminUser = u;
+      if (u.role === 'owner') return next();
+      if (!perm || (Array.isArray(u.perms) && u.perms.includes(perm))) return next();
+      return res.status(403).json({ error: 'ไม่มีสิทธิ์ใช้งานส่วนนี้ (' + perm + ')' });
+    }
+    if (!masterKey) return next(); // ยังไม่ได้ตั้งระบบล็อกเลย → ทำงานแบบเดิม
+    return res.status(401).json({ error: 'unauthorized — กรุณาเข้าสู่ระบบ' });
+  };
+}
+
+// ── POST /auth/setup — สร้างบัญชีเจ้าของร้านคนแรก (ต้องใช้ Master Key) ──
+app.post('/auth/setup', rateLimit(5), requireAdminKey, async (req, res) => {
+  try {
+    const { username, password, display_name } = req.body || {};
+    if (!username || !password) return res.status(400).json({ error: 'ต้องมี username และ password' });
+    if (String(password).length < 6) return res.status(400).json({ error: 'รหัสผ่านต้องยาวอย่างน้อย 6 ตัวอักษร' });
+    const { count } = await supabase.from('admin_users').select('id', { count: 'exact', head: true }).eq('role', 'owner');
+    if ((count || 0) > 0) return res.status(400).json({ error: 'มีบัญชีเจ้าของร้านอยู่แล้ว — เข้าสู่ระบบแทน' });
+    const salt = _crypto.randomBytes(16).toString('hex');
+    const { data, error } = await supabase.from('admin_users').insert([{
+      username: String(username).trim().toLowerCase(),
+      pass_hash: _hashPw(password, salt), salt,
+      display_name: display_name || username, role: 'owner',
+      perms: ALL_PERMS, is_active: true, created_by: '__setup__'
+    }]).select().maybeSingle();
+    if (error) throw error;
+    res.json({ success: true, token: makeAuthToken(data), user: { username: data.username, display_name: data.display_name, role: data.role, perms: data.perms } });
+  } catch (e) { logError('auth-setup', e); res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /auth/status — เช็คว่าระบบมีบัญชีแล้วหรือยัง (ใช้ซ่อน/แสดงปุ่ม setup) ──
+app.get('/auth/status', rateLimit(30), async (req, res) => {
+  try {
+    const { count } = await supabase.from('admin_users').select('id', { count: 'exact', head: true }).eq('role', 'owner');
+    res.json({ has_owner: (count || 0) > 0 });
+  } catch (_) { res.json({ has_owner: false }); }
+});
+
+// ── POST /auth/login ─────────────────────────────────────────────
+app.post('/auth/login', rateLimit(10), async (req, res) => {
+  try {
+    const { username, password } = req.body || {};
+    if (!username || !password) return res.status(400).json({ error: 'กรอก username และ password' });
+    const { count } = await supabase.from('admin_users').select('id', { count: 'exact', head: true });
+    if (!count) return res.status(404).json({ error: 'no_users' }); // ยังไม่มีผู้ใช้ → หน้าเว็บจะพาไป setup
+    const { data: u } = await supabase.from('admin_users').select('*')
+      .eq('username', String(username).trim().toLowerCase()).maybeSingle();
+    if (!u || !u.is_active) return res.status(401).json({ error: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' });
+    const hash = _hashPw(password, u.salt);
+    if (!_crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(u.pass_hash)))
+      return res.status(401).json({ error: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' });
+    supabase.from('admin_users').update({ last_login: new Date().toISOString() }).eq('id', u.id).then(() => {});
+    res.json({ success: true, token: makeAuthToken(u), user: { username: u.username, display_name: u.display_name, role: u.role, perms: u.perms || [] } });
+  } catch (e) { logError('auth-login', e); res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /auth/me — ตรวจ token + รีเฟรชสิทธิ์ล่าสุดจากฐานข้อมูล ──
+app.get('/auth/me', async (req, res) => {
+  const bearer = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '');
+  const t = verifyAuthToken(bearer);
+  if (!t) return res.status(401).json({ error: 'token หมดอายุ — เข้าสู่ระบบใหม่' });
+  const { data: u } = await supabase.from('admin_users').select('*').eq('id', t.uid).maybeSingle();
+  if (!u || !u.is_active) return res.status(401).json({ error: 'บัญชีถูกปิดใช้งาน' });
+  res.json({ success: true, token: makeAuthToken(u), user: { username: u.username, display_name: u.display_name, role: u.role, perms: u.perms || [] } });
+});
+
+// ── จัดการผู้ใช้ (ต้องมีสิทธิ์ 'users') ─────────────────────────
+// กติกา: manager สร้าง/แก้ได้เฉพาะ manager,staff — ห้ามแตะบัญชี owner
+app.get('/auth/users', requirePerm('users'), async (req, res) => {
+  const { data, error } = await supabase.from('admin_users')
+    .select('id,username,display_name,role,perms,is_active,created_at,last_login')
+    .order('created_at', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ users: data || [] });
+});
+
+app.post('/auth/users', requirePerm('users'), async (req, res) => {
+  try {
+    const me = req.adminUser;
+    let { username, password, display_name, role, perms } = req.body || {};
+    role = ['owner','manager','staff'].includes(role) ? role : 'staff';
+    if (role === 'owner' && me.role !== 'owner') return res.status(403).json({ error: 'เฉพาะเจ้าของร้านเท่านั้นที่สร้างบัญชี owner ได้' });
+    if (!username || !password) return res.status(400).json({ error: 'ต้องมี username และ password' });
+    if (String(password).length < 6) return res.status(400).json({ error: 'รหัสผ่านต้องยาวอย่างน้อย 6 ตัวอักษร' });
+    perms = Array.isArray(perms) ? perms.filter(p => ALL_PERMS.includes(p)) : [];
+    if (role === 'owner') perms = ALL_PERMS;
+    const salt = _crypto.randomBytes(16).toString('hex');
+    const { data, error } = await supabase.from('admin_users').insert([{
+      username: String(username).trim().toLowerCase(),
+      pass_hash: _hashPw(password, salt), salt,
+      display_name: display_name || username, role, perms,
+      is_active: true, created_by: me.username
+    }]).select('id,username,display_name,role,perms,is_active').maybeSingle();
+    if (error) {
+      if (/duplicate|unique/i.test(error.message)) return res.status(400).json({ error: 'username นี้ถูกใช้แล้ว' });
+      throw error;
+    }
+    res.json({ success: true, user: data });
+  } catch (e) { logError('auth-create-user', e); res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/auth/users/:id', requirePerm('users'), async (req, res) => {
+  try {
+    const me = req.adminUser;
+    const { data: target } = await supabase.from('admin_users').select('*').eq('id', req.params.id).maybeSingle();
+    if (!target) return res.status(404).json({ error: 'ไม่พบผู้ใช้' });
+    if (target.role === 'owner' && me.role !== 'owner') return res.status(403).json({ error: 'แก้ไขบัญชี owner ได้เฉพาะเจ้าของร้าน' });
+    const upd = {};
+    const b = req.body || {};
+    if (b.display_name !== undefined) upd.display_name = b.display_name;
+    if (b.is_active   !== undefined) upd.is_active = !!b.is_active;
+    if (Array.isArray(b.perms)) upd.perms = b.perms.filter(p => ALL_PERMS.includes(p));
+    if (b.role && ['owner','manager','staff'].includes(b.role)) {
+      if (b.role === 'owner' && me.role !== 'owner') return res.status(403).json({ error: 'เฉพาะเจ้าของร้านเท่านั้น' });
+      upd.role = b.role;
+      if (b.role === 'owner') upd.perms = ALL_PERMS;
+    }
+    if (b.new_password) {
+      if (String(b.new_password).length < 6) return res.status(400).json({ error: 'รหัสผ่านต้องยาวอย่างน้อย 6 ตัวอักษร' });
+      const salt = _crypto.randomBytes(16).toString('hex');
+      upd.salt = salt;
+      upd.pass_hash = _hashPw(b.new_password, salt);
+    }
+    // กันปิด/ลดสิทธิ์ owner คนสุดท้าย
+    if (target.role === 'owner' && (upd.is_active === false || (upd.role && upd.role !== 'owner'))) {
+      const { count } = await supabase.from('admin_users').select('id', { count: 'exact', head: true }).eq('role', 'owner').eq('is_active', true);
+      if ((count || 0) <= 1) return res.status(400).json({ error: 'ต้องมีบัญชีเจ้าของร้านที่ใช้งานได้อย่างน้อย 1 บัญชี' });
+    }
+    const { error } = await supabase.from('admin_users').update(upd).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (e) { logError('auth-update-user', e); res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/auth/users/:id', requirePerm('users'), async (req, res) => {
+  try {
+    const me = req.adminUser;
+    const { data: target } = await supabase.from('admin_users').select('*').eq('id', req.params.id).maybeSingle();
+    if (!target) return res.status(404).json({ error: 'ไม่พบผู้ใช้' });
+    if (target.role === 'owner') {
+      if (me.role !== 'owner') return res.status(403).json({ error: 'ลบบัญชี owner ได้เฉพาะเจ้าของร้าน' });
+      const { count } = await supabase.from('admin_users').select('id', { count: 'exact', head: true }).eq('role', 'owner');
+      if ((count || 0) <= 1) return res.status(400).json({ error: 'ลบเจ้าของร้านคนสุดท้ายไม่ได้' });
+    }
+    const { error } = await supabase.from('admin_users').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (e) { logError('auth-delete-user', e); res.status(500).json({ error: e.message }); }
+});
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
 // ─── Supabase ──────────────────────────────────────────────
@@ -135,7 +382,9 @@ function normalizePhone(p) {
 
 // ─── Helpers ──────────────────────────────────────────────
 function genOrderId() {
-  return 'ORD' + Date.now().toString().slice(-6);
+  // ⚠️ ห้ามใช้ slice(-6) เพราะเลขท้าย 6 หลักของ timestamp วนซ้ำทุก ~16.7 นาที → order_id ชนกันได้
+  // ใช้เลขท้าย 9 หลัก (วนซ้ำทุก ~11.5 วัน) + สุ่มอีก 2 หลัก → โอกาสชนแทบเป็นศูนย์
+  return 'ORD' + Date.now().toString().slice(-9) + String(Math.floor(Math.random() * 90) + 10);
 }
 
 function statusLabel(s) {
@@ -1250,6 +1499,22 @@ app.get('/line-login/callback', async (req, res) => {
 
 // ── GET /line-login/page ──────────────────────────────────
 // หน้า Landing Page สำหรับยิงแอด Facebook — มีปุ่ม "เข้าสู่ระบบด้วย LINE"
+// ── GET /go — 🎯 ลิงก์สำหรับยิงแอด (Facebook/TikTok/IG) แบบเด้งน้อยที่สุด ──
+// มือถือ: เด้งเข้าแอป LINE → หน้าเพิ่มเพื่อน OA ทันที (1 jump!)
+//   → พอเพิ่มเพื่อน บอทส่งลิงก์ร้าน (พร้อม token ผูกตัวตน) ให้ในแชทอัตโนมัติ
+//   → ลูกค้าแตะลิงก์เดียวถึงร้าน แบบระบบจำตัวตนได้เลย ไม่มีหน้า login ใด ๆ
+// คอมพิวเตอร์: ไปหน้า /line-login/page ตามเดิม (เพราะเปิดแอป LINE ไม่ได้)
+// ตั้งค่า (ถ้ามี): env LINE_ADD_FRIEND_URL = ลิงก์ lin.ee จากหน้าแอดมิน LINE OA
+app.get('/go', (req, res) => {
+  const backendUrl = (process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT || 3000}`).replace(/\/$/, '');
+  const oaId = process.env.LINE_OA_ID || process.env.LINE_OA_BASIC_ID || '@monshin';
+  const addFriendUrl = process.env.LINE_ADD_FRIEND_URL || `https://line.me/R/ti/p/${encodeURIComponent(oaId)}`;
+  const ua = String(req.headers['user-agent'] || '');
+  const isMobile = /android|iphone|ipad|ipod|mobile/i.test(ua);
+  if (isMobile) return res.redirect(addFriendUrl);
+  return res.redirect(`${backendUrl}/line-login/page`);
+});
+
 app.get('/line-login/page', (req, res) => {
   const backendUrl = (process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT || 3000}`).replace(/\/$/, '');
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -1366,11 +1631,21 @@ app.get('/line-login/page', (req, res) => {
 
     <div class="error-msg" id="errMsg"></div>
 
-    <a class="btn-line" href="${backendUrl}/line-login">
+    <!-- 🚀 ทางหลัก (มือถือ): เด้งเข้าแอป LINE → เพิ่มเพื่อน → บอทส่งลิงก์ร้านให้ทันที -->
+    <a class="btn-line" id="btnAddFriend" href="${process.env.LINE_ADD_FRIEND_URL || `https://line.me/R/ti/p/${encodeURIComponent(process.env.LINE_OA_ID || process.env.LINE_OA_BASIC_ID || '@monshin')}`}">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="white">
         <path d="M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.63 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63h2.386c.349 0 .63.285.63.63 0 .349-.281.63-.63.63H17.61v1.125h1.755zm-3.855 3.016c0 .27-.174.51-.432.596-.064.021-.133.031-.199.031-.211 0-.391-.09-.51-.25l-2.443-3.317v2.94c0 .344-.279.629-.631.629-.346 0-.626-.285-.626-.629V8.108c0-.27.173-.51.43-.595.06-.023.136-.033.194-.033.195 0 .375.104.495.254l2.462 3.33V8.108c0-.345.282-.63.63-.63.345 0 .63.285.63.63v4.771zm-5.741 0c0 .344-.282.629-.631.629-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63.349 0 .631.285.631.63v4.771zm-2.466.629H4.917c-.345 0-.63-.285-.63-.629V8.108c0-.345.285-.63.63-.63.348 0 .63.285.63.63v4.141h1.756c.348 0 .629.283.629.63 0 .344-.281.629-.629.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.766.038 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314"/>
       </svg>
-      เข้าสู่ระบบด้วย LINE
+      เปิดร้านผ่าน LINE (แตะเดียว)
+    </a>
+    <p style="font-size:12px;color:#888;margin-top:8px;line-height:1.6;">
+      กด "เพิ่มเพื่อน" ในแอป LINE แล้วระบบจะส่ง<br><b style="color:#C0392B;">ลิงก์เข้าร้าน</b>ให้ในแชททันที ✨
+    </p>
+
+    <div class="divider">หรือ (สำหรับคอมพิวเตอร์)</div>
+
+    <a class="btn-line" style="background:#fff;color:#06C755;border:1.5px solid #06C755;" href="${backendUrl}/line-login">
+      เข้าสู่ระบบด้วย LINE บนเบราว์เซอร์
     </a>
 
     <p class="note">
@@ -1578,7 +1853,7 @@ app.post('/send-order', async (req, res) => {
     }
   }
 
-  const order_id   = genOrderId();
+  let order_id     = genOrderId();
   const created_at = new Date().toISOString();
 
   // ถ้าไม่มี refCode ใน request → ดึงจาก LINK ghost row
@@ -1613,9 +1888,17 @@ app.post('/send-order', async (req, res) => {
     slip_amount   : null,            // 🧾 ยอดที่ลูกค้าแจ้ง
   };
 
-  const { error: dbErr } = await supabase.from('orders').insert([order]);
+  let { error: dbErr } = await supabase.from('orders').insert([order]);
+  // กันเหนียว: ถ้าเลขออเดอร์ชน (duplicate key) ให้สุ่มเลขใหม่แล้วลองอีกครั้ง
+  if (dbErr && /duplicate|unique/i.test(dbErr.message || '')) {
+    order_id = genOrderId();
+    order.order_id = order_id;
+    const retry = await supabase.from('orders').insert([order]);
+    dbErr = retry.error;
+  }
   if (dbErr) {
     console.error('DB insert error:', dbErr.message);
+    logError('send-order', dbErr, { customerId, total });
     return res.status(500).json({ error: 'บันทึกออเดอร์ไม่ได้: ' + dbErr.message });
   }
 
@@ -1978,7 +2261,14 @@ app.post('/send-order', async (req, res) => {
     }
   }
 
-  res.json({ success: true, orderId: order_id });
+  res.json({
+    success: true, orderId: order_id,
+    // 🎟️ บอกผลคูปองกลับไปให้หน้าร้าน — จะได้แจ้งลูกค้าถ้าคูปองใช้ไม่ได้ (เช่น ถูกใช้ไปแล้ว)
+    couponApplied : !!appliedCouponId,
+    couponRejected: !!(couponId && discountAmount > 0 && !appliedCouponId),
+    discount      : finalDiscount,
+    finalTotal
+  });
 });
 
 // ── GET /my-orders/:customerId ────────────────────────────
@@ -1986,15 +2276,116 @@ app.get('/my-orders/:customerId', async (req, res) => {
   const { customerId } = req.params;
   if (!customerId) return res.status(400).json({ error: 'missing customerId' });
 
+  // ── 🔗 รวมประวัติของลูกค้าคนเดียวกันที่มีหลาย customer_id ──
+  // (เกิดจากเข้าร้านคนละทาง: LIFF vs LINE Login) — ใช้ LINE UID เป็นตัวเชื่อม
+  let idList = [customerId];
+  try {
+    // หา LINE UID ของ customerId นี้
+    let uid = null;
+    const { data: myLink } = await supabase.from('orders')
+      .select('line_user_id').eq('order_id', `LINK-${customerId.slice(0, 20)}`)
+      .not('line_user_id', 'is', null).maybeSingle();
+    if (myLink?.line_user_id) uid = myLink.line_user_id;
+    if (!uid) {
+      const { data: lu } = await supabase.from('line_users')
+        .select('user_id').eq('customer_id', customerId)
+        .order('last_seen', { ascending: false }).limit(1).maybeSingle();
+      if (lu?.user_id) uid = lu.user_id;
+    }
+    // หา customer_id อื่น ๆ ที่ผูกกับ LINE UID เดียวกัน
+    if (uid) {
+      const { data: siblings } = await supabase.from('orders')
+        .select('customer_id').like('order_id', 'LINK-%')
+        .eq('line_user_id', uid).limit(10);
+      (siblings || []).forEach(r => {
+        if (r.customer_id && !idList.includes(r.customer_id)) idList.push(r.customer_id);
+      });
+      const { data: luSib } = await supabase.from('line_users')
+        .select('customer_id').eq('user_id', uid).limit(10);
+      (luSib || []).forEach(r => {
+        if (r.customer_id && !idList.includes(r.customer_id)) idList.push(r.customer_id);
+      });
+    }
+  } catch (e) { /* ถ้ารวมไม่ได้ ใช้ id เดียวตามเดิม */ }
+
   const { data, error } = await supabase
     .from('orders')
     .select('*')
-    .eq('customer_id', customerId)
+    .in('customer_id', idList)
+    .not('order_id', 'like', 'LINK-%')
     .order('created_at', { ascending: false })
     .limit(50);
 
   if (error) return res.status(500).json({ error: error.message });
   res.json({ orders: data || [] });
+});
+
+// ── 🔓 GET /admin/verify — เช็คว่า Admin API Key ถูกต้องไหม ─────────
+// ใช้เป็นด่านเข้าโหมดตั้งค่าหน้าร้าน (แทน PIN ที่เคยฝังในโค้ดหน้าเว็บ)
+// มี rate limit 10 ครั้ง/นาที/IP กันนั่งเดารหัส
+app.get('/admin/verify', rateLimit(10), requireAdminKey, (req, res) => {
+  res.json({ ok: true });
+});
+
+// ── 📥 GET /admin/export-orders — สำรองข้อมูลออเดอร์เป็น CSV ─────────
+// ใช้: {BACKEND}/admin/export-orders?admin_key=XXX&days=90 (days ไม่ใส่ = ทั้งหมด)
+app.get('/admin/export-orders', requirePerm('backup'), async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 0;
+    let q = supabase.from('orders').select('*')
+      .not('order_id', 'like', 'LINK-%')
+      .order('created_at', { ascending: false }).limit(5000);
+    if (days > 0) {
+      q = q.gte('created_at', new Date(Date.now() - days * 86400000).toISOString());
+    }
+    const { data, error } = await q;
+    if (error) throw error;
+    const rows = data || [];
+    const cols = ['order_id','created_at','customer_id','customer_name','line_name','phone','address','note','order_type','status','total','discount_amount','coupon_code','payment_method','payment_status','slip_amount','ref_code','items'];
+    const esc = v => {
+      if (v === null || v === undefined) return '';
+      let s = typeof v === 'object' ? JSON.stringify(v) : String(v);
+      if (/[",\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    };
+    const csv = '\uFEFF' + cols.join(',') + '\n' +
+      rows.map(r => cols.map(c => esc(r[c])).join(',')).join('\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="orders-backup-${new Date().toISOString().slice(0,10)}.csv"`);
+    res.send(csv);
+  } catch (e) {
+    logError('export-orders', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── 📦 จัดการสินค้าผ่าน backend (ทางที่ปลอดภัยกว่าเขียนตรงจากเบราว์เซอร์) ──
+// เมื่อเปิด RLS ให้ตาราง products เป็น read-only สำหรับ anon key แล้ว
+// หน้าร้าน (โหมดตั้งค่า) จะบันทึก/ลบสินค้าผ่าน 2 endpoint นี้แทน — มี admin key คุ้มกัน
+app.post('/admin/products/upsert', requirePerm('products'), async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : (req.body?.row ? [req.body.row] : []);
+    if (!rows.length) return res.status(400).json({ error: 'ไม่มีข้อมูลสินค้า (rows)' });
+    if (rows.length > 500) return res.status(400).json({ error: 'จำนวนสินค้าเกิน 500 รายการต่อครั้ง' });
+    const { error } = await supabase.from('products').upsert(rows, { onConflict: 'id' });
+    if (error) throw error;
+    res.json({ success: true, count: rows.length });
+  } catch (e) {
+    logError('products-upsert', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+app.post('/admin/products/delete', requirePerm('products'), async (req, res) => {
+  try {
+    const id = req.body?.id;
+    if (!id) return res.status(400).json({ error: 'ต้องระบุ id' });
+    const { error } = await supabase.from('products').delete().eq('id', id);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (e) {
+    logError('products-delete', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── GET /ref-info/:code ───────────────────────────────────
@@ -2137,7 +2528,7 @@ app.post('/link-line', async (req, res) => {
 // ── POST /backfill-line-links ─────────────────────────────
 // แก้ครั้งเดียวสำหรับออเดอร์เก่าที่ยังไม่ผูก line_user_id
 // จับคู่ ghost orders (LINE-) กับ ออเดอร์จริง โดยใช้ phone เป็น matching key
-app.post('/backfill-line-links', async (req, res) => {
+app.post('/backfill-line-links', requirePerm('orders'), async (req, res) => {
   const { data: ghosts } = await supabase.from('orders')
     .select('line_user_id, customer_name, phone')
     .like('order_id', 'LINE-%')
@@ -2182,7 +2573,7 @@ app.post('/backfill-line-links', async (req, res) => {
 // ── POST /resend-order/:orderId ───────────────────────────
 // แอดมิน trigger ส่ง Flex สรุปออเดอร์ไปหาลูกค้าใน LINE
 // ถ้าลูกค้ายังไม่ผูก → ลอง auto-link ด้วย phone/name ก่อน
-app.post('/resend-order/:orderId', async (req, res) => {
+app.post('/resend-order/:orderId', requirePerm('orders'), async (req, res) => {
   const { orderId } = req.params;
   if (!process.env.LINE_TOKEN)
     return res.status(500).json({ error: 'LINE_TOKEN not set' });
@@ -2378,6 +2769,24 @@ async function upsertLineUser(userId, extraFields = {}) {
 // ── POST /webhook ─────────────────────────────────────────
 // LINE bot — ลูกค้าทักมา → ตอบสถานะออเดอร์
 app.post('/webhook', async (req, res) => {
+  // 🔐 ตรวจลายเซ็น LINE (X-Line-Signature) — เปิดใช้เมื่อตั้ง env LINE_CHANNEL_SECRET
+  // กันคนนอกยิง webhook ปลอมมาสั่งบอทตอบ/สร้างข้อมูลมั่ว ถ้าไม่ตั้ง env จะทำงานเหมือนเดิม
+  const _lineSecret = process.env.LINE_CHANNEL_SECRET || '';
+  if (_lineSecret) {
+    try {
+      const crypto = require('crypto');
+      const sig = req.headers['x-line-signature'] || '';
+      const expected = crypto.createHmac('sha256', _lineSecret)
+        .update(req.rawBody || Buffer.from(JSON.stringify(req.body || {})))
+        .digest('base64');
+      if (sig !== expected) {
+        console.warn('🚫 webhook: signature ไม่ถูกต้อง — ปฏิเสธ');
+        return res.sendStatus(403);
+      }
+    } catch (e) {
+      console.warn('webhook signature check error:', e.message);
+    }
+  }
   res.sendStatus(200);
   const events = req.body?.events || [];
 
@@ -3038,6 +3447,7 @@ app.post('/webhook', async (req, res) => {
       // ถ้า event ใดๆ crash → log + push error จริงๆ ให้เห็น
       const errMsg = evErr?.message || String(evErr);
       console.error('⚠️ webhook event error:', errMsg, '| userId:', userId, '| type:', ev.type, '| stack:', evErr?.stack);
+      logError('webhook', evErr, { userId, evType: ev.type });
       if (userId) {
         linePush(userId, [{ type:'text', text:`❌ Error: ${errMsg.slice(0,200)}` }]).catch(() => {});
       }
@@ -3230,7 +3640,7 @@ app.get('/coupons', async (req, res) => {
 });
 
 // ── POST /coupons (admin) ─────────────────────────────────
-app.post('/coupons', async (req, res) => {
+app.post('/coupons', requirePerm('coupons'), async (req, res) => {
   const {
     name, description, code, discount_type, discount_value,
     max_discount, min_order, apply_type, condition_type,
@@ -3260,7 +3670,7 @@ app.post('/coupons', async (req, res) => {
 });
 
 // ── PATCH /coupons/:id (admin) ────────────────────────────
-app.patch('/coupons/:id', async (req, res) => {
+app.patch('/coupons/:id', requirePerm('coupons'), async (req, res) => {
   const id = parseInt(req.params.id);
   const updates = {};
   const fields = [
@@ -3277,7 +3687,7 @@ app.patch('/coupons/:id', async (req, res) => {
 });
 
 // ── DELETE /coupons/:id (admin) ───────────────────────────
-app.delete('/coupons/:id', async (req, res) => {
+app.delete('/coupons/:id', requirePerm('coupons'), async (req, res) => {
   const id = parseInt(req.params.id);
   const { error } = await supabase.from('coupons').delete().eq('id', id);
   if (error) return res.status(500).json({ error: error.message });
@@ -3301,7 +3711,7 @@ app.get('/orders', async (req, res) => {
 
 // ── POST /orders/:orderId/notify-status ───────────────────
 // Admin กด "📣 ส่งสถานะ" → ส่ง LINE Flex ให้ลูกค้าโดยไม่อัปเดต DB ซ้ำ
-app.post('/orders/:orderId/notify-status', async (req, res) => {
+app.post('/orders/:orderId/notify-status', requirePerm('orders'), async (req, res) => {
   const { orderId } = req.params;
 
   const { data: order, error } = await supabase
@@ -3335,7 +3745,7 @@ app.post('/orders/:orderId/notify-status', async (req, res) => {
 });
 
 // ── PATCH /orders/:orderId/status ─────────────────────────
-app.patch('/orders/:orderId/status', async (req, res) => {
+app.patch('/orders/:orderId/status', requirePerm('orders'), async (req, res) => {
   const { status } = req.body;
   const allowed = ['pending', 'sent', 'confirmed', 'shipped', 'done', 'cancelled', 'failed'];
   if (!allowed.includes(status))
@@ -3401,7 +3811,7 @@ app.get('/referral-config', async (req, res) => {
 
 // ── POST /referral-config ───────────────────────────────────
 // บันทึก config ระบบชวนเพื่อน (แอดมิน)
-app.post('/referral-config', async (req, res) => {
+app.post('/referral-config', requirePerm('shop_settings'), async (req, res) => {
   const cfg = {
     referral_reward_type : req.body.referral_reward_type  || 'fixed',
     referral_reward_value: parseFloat(req.body.referral_reward_value) || 50,
@@ -3440,7 +3850,7 @@ app.get('/shop-hours', async (req, res) => {
 
 // ── POST /shop-hours ─────────────────────────────────────────
 // บันทึกเวลาทำการร้าน (แอดมิน)
-app.post('/shop-hours', async (req, res) => {
+app.post('/shop-hours', requirePerm('shop_settings'), async (req, res) => {
   const cfg = {
     enabled   : !!req.body.enabled,
     openTime  : req.body.openTime  || '09:00',
@@ -3474,7 +3884,7 @@ app.get('/qr-config', async (req, res) => {
 
 // ── POST /qr-config ──────────────────────────────────────────
 // บันทึกการตั้งค่า QR โอนเงิน (แอดมิน)
-app.post('/qr-config', async (req, res) => {
+app.post('/qr-config', requirePerm('shop_settings'), async (req, res) => {
   const cfg = {
     enabled          : !!req.body.enabled,
     promptpay_number : String(req.body.promptpay_number  || '').trim(),
@@ -3504,7 +3914,7 @@ app.get('/hero-banner', async (req, res) => {
 
 // ── POST /hero-banner ────────────────────────────────────────
 // บันทึกป้ายโฆษณาหน้าร้าน (แอดมิน)
-app.post('/hero-banner', async (req, res) => {
+app.post('/hero-banner', requirePerm('shop_settings'), async (req, res) => {
   const items = Array.isArray(req.body.items) ? req.body.items.slice(0, 10).map(it => ({
     type    : ['image', 'video', 'youtube'].includes(it.type) ? it.type : 'image',
     url     : String(it.url || '').slice(0, 1000),
@@ -3525,7 +3935,7 @@ app.post('/hero-banner', async (req, res) => {
 
 // ── POST /submit-slip ────────────────────────────────────────
 // ลูกค้าส่งสลิป + ยอดที่โอน → เปรียบเทียบกับ order.total
-app.post('/submit-slip', async (req, res) => {
+app.post('/submit-slip', rateLimit(20), async (req, res) => {
   const { order_id, customer_id, slip_url, slip_amount } = req.body;
   if (!order_id || !customer_id)
     return res.status(400).json({ error: 'order_id/customer_id required' });
@@ -3592,7 +4002,7 @@ app.post('/submit-slip', async (req, res) => {
 
 // ── POST /read-slip ──────────────────────────────────────────
 // อ่านยอดจากรูปสลิปด้วย Tesseract OCR (ฟรี ไม่ต้อง API key)
-app.post('/read-slip', async (req, res) => {
+app.post('/read-slip', rateLimit(10), async (req, res) => {
   const { image_base64 } = req.body;
   if (!image_base64)
     return res.status(400).json({ error: 'ต้องส่ง image_base64' });
@@ -3732,7 +4142,7 @@ function parseThaiNumber(str) {
 
 // ── POST /confirm-payment ────────────────────────────────────
 // แอดมินยืนยัน manual ว่าชำระแล้ว
-app.post('/confirm-payment', async (req, res) => {
+app.post('/confirm-payment', requirePerm('payments'), async (req, res) => {
   const { order_id } = req.body;
   if (!order_id) return res.status(400).json({ error: 'order_id required' });
 

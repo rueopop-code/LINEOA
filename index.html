@@ -2108,7 +2108,8 @@ button,.pcard,.cat-chip,.atab,.hdr-btn{-webkit-tap-highlight-color:transparent}
 </div>
 
 <!-- FAB -->
-<button class="fab" onclick="askPin()" title="จัดการร้าน">⚙️</button>
+<!-- ⚙️ ปุ่มตั้งค่าถูกซ่อนจากลูกค้าแล้ว — เจ้าของร้านเข้าโหมดตั้งค่าโดย:
+     (1) แตะชื่อร้านบนหัวเว็บรัว ๆ 7 ครั้ง หรือ (2) เปิดลิงก์ต่อท้าย ?admin=1 -->
 
 <!-- TOAST -->
 <!-- ══ Ad Popup Overlay ═══════════════════════════════════ -->
@@ -2155,7 +2156,7 @@ const BACKEND_URL = (() => {
   // ถ้า host บน Render เอง → ใช้ origin ปกติ
   return origin;
 })();
-const ADMIN_PIN   = '140326';
+const ADMIN_PIN   = ''; // ⛔ เลิกใช้ PIN ฝังโค้ดแล้ว — เข้าโหมดตั้งค่าด้วย Admin API Key (ตรวจกับ server)
 
 // ── CUSTOMER ID — สร้างอัตโนมัติ เก็บใน localStorage ──
 function getOrCreateCustomerId() {
@@ -2481,8 +2482,11 @@ async function loadStore() {
 
     // 🚀 INSTANT LOAD: แสดง products จาก localStorage ทันที (ไม่ต้องรอ DB)
     // → ลูกค้าเห็นสินค้าทันทีที่เปิดเว็บ
+    // ⏳ TTL: cache เก่ากว่า 7 วันถือว่าเชื่อไม่ได้ (ราคาอาจเปลี่ยนไปแล้ว) — ทิ้งแล้วรอโหลดสด
     const cached = localStorage.getItem('ms_products');
-    if (cached) {
+    const cachedTs = parseInt(localStorage.getItem('ms_products_ts') || '0');
+    const cacheFresh = cachedTs && (Date.now() - cachedTs) < 7 * 86400000;
+    if (cached && cacheFresh) {
       try {
         products = JSON.parse(cached);
         // render ทันที (ก่อน Supabase โหลดเสร็จ)
@@ -2506,7 +2510,7 @@ async function loadStore() {
           dbLoaded = true;
           // sync cats จาก DB
           data.forEach(r => { if (r.cat && !cats.includes(r.cat)) cats.push(r.cat); });
-          try { localStorage.setItem('ms_products', JSON.stringify(products)); } catch(e) {}
+          try { localStorage.setItem('ms_products', JSON.stringify(products)); localStorage.setItem('ms_products_ts', String(Date.now())); } catch(e) {}
           // re-render เฉพาะถ้าข้อมูลเปลี่ยน (กัน flicker)
           if (isDifferent && typeof renderGrid === 'function') {
             try { renderGrid(); renderCatTags?.(); } catch(e){}
@@ -2531,21 +2535,80 @@ async function seedDemo() {
   await save();
 }
 
-// save = upsert สินค้าทั้งหมดไป Supabase + backup localStorage
+// ═══ 🔐 Admin API helper — เรียก endpoint จัดการร้านผ่าน backend ═══
+// เก็บ key ไว้ใน localStorage 'ms_admin_key' (ตรงกับ env ADMIN_API_KEY บน Render)
+// ถ้า backend ยังไม่ได้ตั้ง key จะทำงานเหมือนเดิมทุกอย่าง
+async function _adminApi(path, body) {
+  const r = await fetch(BACKEND_URL + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-admin-key': localStorage.getItem('ms_admin_key') || '' },
+    body: JSON.stringify(body)
+  });
+  if (r.status === 401) {
+    const k = prompt('🔐 ใส่ Admin API Key (ค่าเดียวกับ env ADMIN_API_KEY บน Render):');
+    if (k && k.trim()) { localStorage.setItem('ms_admin_key', k.trim()); return _adminApi(path, body); }
+    throw new Error('ไม่มีสิทธิ์ (ต้องใส่ Admin API Key)');
+  }
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+  return d;
+}
+
+// แนบ x-admin-key อัตโนมัติให้ทุก request ที่เป็นงานฝั่งจัดการร้าน
+// (คูปอง/เวลาทำการ/QR/แบนเนอร์/referral) — พร้อมถามคีย์ใหม่ถ้าโดน 401
+(function installAdminKeyInjector() {
+  const ADMIN_RE = [/\/coupons(\/|$)/, /\/shop-hours$/, /\/qr-config$/, /\/hero-banner$/, /\/referral-config$/, /\/admin\//];
+  const _origFetch = window.fetch.bind(window);
+  window.fetch = async function(url, opts) {
+    opts = opts || {};
+    let injected = false;
+    try {
+      const u = typeof url === 'string' ? url : (url && url.url) || '';
+      const m = (opts.method || 'GET').toUpperCase();
+      if (u.indexOf(BACKEND_URL) === 0 && m !== 'GET' && ADMIN_RE.some(re => re.test(u))) {
+        opts.headers = Object.assign({}, opts.headers, { 'x-admin-key': localStorage.getItem('ms_admin_key') || '' });
+        injected = true;
+      }
+    } catch (_) {}
+    let res = await _origFetch(url, opts);
+    if (injected && res.status === 401) {
+      const k = prompt('🔐 ใส่ Admin API Key (ค่าเดียวกับ env ADMIN_API_KEY บน Render):');
+      if (k && k.trim()) {
+        localStorage.setItem('ms_admin_key', k.trim());
+        opts.headers = Object.assign({}, opts.headers, { 'x-admin-key': k.trim() });
+        res = await _origFetch(url, opts);
+      }
+    }
+    return res;
+  };
+})();
+
+// save = upsert สินค้าทั้งหมด — ผ่าน backend (ปลอดภัย มี admin key) → fallback เขียนตรงถ้า backend ล่ม
 async function save() {
-  try { localStorage.setItem('ms_products', JSON.stringify(products)); } catch(e) {}
+  try { localStorage.setItem('ms_products', JSON.stringify(products)); localStorage.setItem('ms_products_ts', String(Date.now())); } catch(e) {}
   localStorage.setItem('ms_cats', JSON.stringify(cats));
+  if (!products.length) return;
+  const rows = products.map(toRow);
+  try {
+    await _adminApi('/admin/products/upsert', { rows });
+    return;
+  } catch(e) {
+    console.warn('บันทึกผ่าน backend ไม่สำเร็จ → ลองเขียนตรง:', e.message);
+  }
   const sb = getSB();
   if (!sb) return;
-  // upsert ทั้งหมด (on conflict id → update)
-  if (products.length) {
-    await sb.from('products').upsert(products.map(toRow), { onConflict: 'id' });
-  }
+  await sb.from('products').upsert(rows, { onConflict: 'id' });
 }
 
 // บันทึกสินค้าเดี่ยว (เร็วกว่า save ทั้งหมด)
 async function saveOne(p) {
-  try { localStorage.setItem('ms_products', JSON.stringify(products)); } catch(e) {}
+  try { localStorage.setItem('ms_products', JSON.stringify(products)); localStorage.setItem('ms_products_ts', String(Date.now())); } catch(e) {}
+  try {
+    await _adminApi('/admin/products/upsert', { row: toRow(p) });
+    return;
+  } catch(e) {
+    console.warn('บันทึกผ่าน backend ไม่สำเร็จ → ลองเขียนตรง:', e.message);
+  }
   const sb = getSB();
   if (!sb) return;
   await sb.from('products').upsert([toRow(p)], { onConflict: 'id' });
@@ -2553,7 +2616,13 @@ async function saveOne(p) {
 
 // ลบสินค้าเดี่ยวจาก DB
 async function deleteOne(id) {
-  try { localStorage.setItem('ms_products', JSON.stringify(products)); } catch(e) {}
+  try { localStorage.setItem('ms_products', JSON.stringify(products)); localStorage.setItem('ms_products_ts', String(Date.now())); } catch(e) {}
+  try {
+    await _adminApi('/admin/products/delete', { id });
+    return;
+  } catch(e) {
+    console.warn('ลบผ่าน backend ไม่สำเร็จ → ลองลบตรง:', e.message);
+  }
   const sb = getSB();
   if (!sb) return;
   await sb.from('products').delete().eq('id', id);
@@ -4408,6 +4477,10 @@ async function sendOrder() {
 
     const result = await res.json().catch(() => ({}));
     const orderId = result.orderId || '';
+    // 🎟️ ถ้า server ปัดตกคูปอง (เช่น ถูกใช้ไปแล้ว) → แจ้งลูกค้าตรง ๆ ว่าคิดราคาเต็ม
+    const couponWarn = result.couponRejected
+      ? '\n\n⚠️ คูปองส่วนลดใช้ไม่ได้ (อาจถูกใช้ไปแล้ว) — ออเดอร์นี้คิดราคาเต็ม ฿' + Number(result.finalTotal ?? 0).toLocaleString()
+      : '';
 
     // เก็บชื่อลูกค้าไว้ครั้งหน้าจะได้ไม่ต้องกรอกใหม่
     localStorage.setItem('ms_line_name', lineName);
@@ -4431,6 +4504,7 @@ async function sendOrder() {
       : (cartOT==='delivery'
           ? `ออเดอร์ #${orderId} ได้ส่งคำสั่งซื้อแล้ว!\nกรุณารอการยืนยันคำสั่งซื้อจากทางร้านค้า`
           : `ออเดอร์ #${orderId} ได้ส่งคำสั่งซื้อแล้ว!\nกรุณารอการยืนยันคำสั่งซื้อจากทางร้านค้า`);
+    if (couponWarn) document.getElementById('successMsg').textContent += couponWarn;
     // แสดง LINE banner ถ้ายังไม่ผูก
     document.getElementById('successLineBanner').style.display = isLinked ? 'none' : 'block';
     // แสดง referral banner ถ้ามาจากลิงก์ชวนเพื่อน
@@ -5184,22 +5258,73 @@ async function _successSlipSubmit() {
 }
 
 // ═══════════════════════════════════════════
-//  PIN
+//  PIN (ระบบเก่า — เลิกใช้แล้ว เปลี่ยนเป็นตรวจ Admin API Key กับ server)
 // ═══════════════════════════════════════════
-function askPin() { pinBuf=''; updPinDots(); document.getElementById('pinErr').textContent=''; document.getElementById('pinOv').classList.add('show'); }
-function closePin() { document.getElementById('pinOv').classList.remove('show'); }
-function pinKey(d) {
-  if (pinBuf.length>=6) return;
-  pinBuf+=d; updPinDots();
-  if (pinBuf.length===6) {
-    if (pinBuf===ADMIN_PIN) { closePin(); openAdmin(); }
-    else { document.getElementById('pinErr').textContent='PIN ไม่ถูกต้อง ลองใหม่'; pinBuf=''; setTimeout(()=>{ updPinDots(); },600); }
+function askPin() { askAdminKey(); } // เผื่อมีที่อื่นเรียกอยู่ → ส่งต่อไประบบใหม่
+function closePin() { const el = document.getElementById('pinOv'); if (el) el.classList.remove('show'); }
+function pinKey(d) {}
+function pinDel() {}
+function updPinDots() {}
+
+// ═══════════════════════════════════════════
+//  🔐 ด่านเข้าโหมดตั้งค่า (ระบบใหม่ — ปลอดภัยจริง)
+//  · ไม่มีรหัสฝังในโค้ดหน้าเว็บอีกต่อไป — ตรวจกับ server (env ADMIN_API_KEY)
+//  · ลูกค้าไม่เห็นปุ่มใด ๆ / เดารหัสถูกจำกัด 10 ครั้ง/นาที โดย server
+//  · วิธีเข้า: แตะชื่อร้านรัว ๆ 7 ครั้ง หรือเปิดลิงก์ ?admin=1
+// ═══════════════════════════════════════════
+async function _verifyAdminKey(key) {
+  try {
+    const r = await fetch(`${BACKEND_URL}/admin/verify`, {
+      headers: { 'x-admin-key': key || '' }
+    });
+    return r.ok;
+  } catch (_) { return false; }
+}
+
+let _adminGateBusy = false;
+async function askAdminKey() {
+  if (_adminGateBusy) return;
+  _adminGateBusy = true;
+  try {
+    // มี key เดิมในเครื่อง → ตรวจเงียบ ๆ ผ่านก็เข้าเลย
+    const saved = localStorage.getItem('ms_admin_key') || '';
+    if (saved && await _verifyAdminKey(saved)) { openAdmin(); return; }
+
+    const k = prompt('🔐 โหมดตั้งค่าร้าน\nใส่ Admin API Key (ค่าเดียวกับ env ADMIN_API_KEY บน Render):');
+    if (!k || !k.trim()) return;
+    if (await _verifyAdminKey(k.trim())) {
+      localStorage.setItem('ms_admin_key', k.trim());
+      toast('✅ ยืนยันตัวตนสำเร็จ');
+      openAdmin();
+    } else {
+      toast('❌ รหัสไม่ถูกต้อง หรือลองถี่เกินไป');
+    }
+  } finally { _adminGateBusy = false; }
+}
+
+// ทางเข้าลับ 1: แตะชื่อร้านบนหัวเว็บรัว ๆ 7 ครั้ง (ภายใน 3 วินาที)
+(function installSecretTap() {
+  let taps = 0, timer = null;
+  function onTap() {
+    taps++;
+    clearTimeout(timer);
+    timer = setTimeout(() => { taps = 0; }, 3000);
+    if (taps >= 7) { taps = 0; clearTimeout(timer); askAdminKey(); }
   }
-}
-function pinDel() { pinBuf=pinBuf.slice(0,-1); updPinDots(); document.getElementById('pinErr').textContent=''; }
-function updPinDots() {
-  document.querySelectorAll('.pin-dot').forEach((d,i)=>d.classList.toggle('filled',i<pinBuf.length));
-}
+  window.addEventListener('DOMContentLoaded', () => {
+    const el = document.getElementById('shopNameEl');
+    if (el) { el.style.cursor = 'default'; el.addEventListener('click', onTap); }
+  });
+})();
+
+// ทางเข้าลับ 2: เปิดลิงก์ต่อท้าย ?admin=1 (สะดวกบนคอม)
+window.addEventListener('DOMContentLoaded', () => {
+  try {
+    if (new URLSearchParams(location.search).get('admin') === '1') {
+      setTimeout(askAdminKey, 600);
+    }
+  } catch (_) {}
+});
 
 // ═══════════════════════════════════════════
 //  ADMIN
