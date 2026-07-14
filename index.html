@@ -7872,5 +7872,23 @@ setTimeout(shInit,600);
   else boot();
 })();
 </script>
+<script>
+// 🛰️ ส่ง error ของหน้าร้านเข้าระบบ Log (ดูได้ที่หน้าแอดมิน → 🧾 Log ระบบ)
+(function () {
+  let sent = 0;
+  function report(scope, msg, extra) {
+    if (sent >= 5) return;
+    sent++;
+    try {
+      fetch(BACKEND_URL + '/log-error', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: 'shop', scope, message: String(msg).slice(0, 500), extra: extra ? String(extra).slice(0, 500) : null })
+      }).catch(function(){});
+    } catch (_) {}
+  }
+  window.addEventListener('error', function (e) { report('js-error', e.message, (e.filename || '') + ':' + e.lineno); });
+  window.addEventListener('unhandledrejection', function (e) { report('promise-rejection', (e.reason && e.reason.message) || e.reason); });
+})();
+</script>
 </body>
 </html>

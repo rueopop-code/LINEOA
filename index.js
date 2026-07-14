@@ -10,7 +10,7 @@ const app = express();
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-key']
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.options('*', cors()); // preflight สำหรับทุก route
 
@@ -60,16 +60,50 @@ function rateLimit(maxPerMin) {
 
 // ═══ 📝 Error log ลง Supabase (fire-and-forget) ══════════════════════
 // ต้องมีตาราง error_logs (อยู่ใน supabase-schema.sql) — ถ้ายังไม่มีก็แค่ log ลง console เหมือนเดิม
-function logError(scope, err, extra) {
+// 🔔 แจ้งเตือนแอดมินผ่าน LINE อัตโนมัติ (throttle: scope ละไม่เกิน 1 ครั้ง/10 นาที กันสแปม)
+//    ปิดได้ด้วย env ERROR_NOTIFY_LINE=0
+const _errNotifyLast = new Map(); // `${source}|${scope}` → last notified ms
+// ⚙️ เปิด/ปิดแจ้งเตือน + ความถี่ ตั้งได้จากหน้าแอดมิน (settings key 'error_notify')
+let _errNotifyCfg = null, _errNotifyCfgAt = 0;
+async function _getErrNotifyCfg() {
+  if (_errNotifyCfg && Date.now() - _errNotifyCfgAt < 60000) return _errNotifyCfg;
+  let cfg = { enabled: (process.env.ERROR_NOTIFY_LINE || '1') !== '0', throttleMin: 10 };
+  try {
+    const { data } = await supabase.from('settings').select('value').eq('key', 'error_notify').maybeSingle();
+    if (data && data.value) cfg = Object.assign(cfg, data.value);
+  } catch (_) {}
+  _errNotifyCfg = cfg; _errNotifyCfgAt = Date.now();
+  return cfg;
+}
+function logError(scope, err, extra, source) {
+  source = source || 'backend';
   const message = (err && err.message) ? err.message : String(err);
-  console.error(`❌ [${scope}]`, message);
+  console.error(`❌ [${source}/${scope}]`, message);
   try {
     supabase.from('error_logs').insert([{
-      scope, message: message.slice(0, 1000),
-      extra: extra ? JSON.stringify(extra).slice(0, 2000) : null,
+      scope, source, message: message.slice(0, 1000),
+      extra: extra ? (typeof extra === 'string' ? extra : JSON.stringify(extra)).slice(0, 2000) : null,
       created_at: new Date().toISOString()
     }]).then(({ error }) => { /* เงียบ — ตารางอาจยังไม่ถูกสร้าง */ });
   } catch (_) {}
+  // 🔔 LINE แจ้งเตือนแอดมิน (แยก throttle ตาม ระบบ+จุดที่พัง)
+  _getErrNotifyCfg().then(cfg => {
+    try {
+      if (!cfg.enabled || !process.env.LINE_TOKEN) return;
+      const key = `${source}|${scope}`;
+      const now = Date.now();
+      const last = _errNotifyLast.get(key) || 0;
+      if (now - last > (cfg.throttleMin || 10) * 60 * 1000) {
+        _errNotifyLast.set(key, now);
+        if (_errNotifyLast.size > 500) _errNotifyLast.clear();
+        const srcTh = { backend:'🖥️ Backend', shop:'🛍️ หน้าร้าน', admin:'🛡️ หน้าแอดมิน', 'sales-app':'💼 แอปเซล' }[source] || source;
+        notifyAllAdmins([{
+          type: 'text',
+          text: `🚨 ระบบแจ้งเตือน Error\n🧩 ระบบ: ${srcTh}\n📍 ส่วน: ${scope}\n💬 ${message.slice(0, 300)}\n🕐 ${new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })}\n\nดูรายละเอียด → หน้าแอดมิน แท็บ "🧾 Log ระบบ"`
+        }]).catch(() => {});
+      }
+    } catch (_) {}
+  }).catch(() => {});
 }
 process.on('unhandledRejection', (e) => logError('unhandledRejection', e));
 process.on('uncaughtException',  (e) => logError('uncaughtException', e));
@@ -83,7 +117,7 @@ process.on('uncaughtException',  (e) => logError('uncaughtException', e));
 //  token มีอายุ 12 ชม. เซ็นด้วย HMAC (secret = env AUTH_SECRET หรือ ADMIN_API_KEY)
 // ═══════════════════════════════════════════════════════════════════
 const _crypto = require('crypto');
-const ALL_PERMS = ['orders','customers','reports','sales','coupons','payments','products','shop_settings','backup','users','settings'];
+const ALL_PERMS = ['orders','customers','reports','sales','coupons','payments','products','shop_settings','backup','users','settings','system'];
 
 function _authSecret() { return process.env.AUTH_SECRET || process.env.ADMIN_API_KEY || 'monshin-no-secret'; }
 function _hashPw(pw, salt) { return _crypto.scryptSync(String(pw), salt, 32).toString('hex'); }
@@ -1517,9 +1551,15 @@ app.get('/go', (req, res) => {
   const isInAppWebview = /FBAN|FBAV|FB_IAB|FBSV|Instagram|Messenger/i.test(ua);
 
   if (isMobile && isInAppWebview) {
-    return res.send(renderInAppEscapePage({ addFriendUrl, isAndroid }));
+    return res.send(renderInAppEscapePage({ addFriendUrl, isAndroid, inApp: true }));
   }
-  if (isMobile) return res.redirect(addFriendUrl);
+  // มือถือ (เบราว์เซอร์ปกติ เช่น Safari/Chrome): เสิร์ฟหน้า landing แล้วเด้งเข้า LINE อัตโนมัติ
+  // ❌ ไม่ใช้ res.redirect ตรง ๆ อีกต่อไป — เพราะ browser จะค้างที่ line.me (หน้าตาย)
+  //    พอลูกค้าสลับแอปกลับมาจะเจอ "ไม่พบเพจ" และกดอะไรต่อไม่ได้เลย
+  // ✅ วิธีนี้: หน้าเราค้างอยู่ที่โดเมนเราเสมอ กลับมาเมื่อไหร่ก็กดปุ่มเข้า LINE ซ้ำได้ตลอด
+  if (isMobile) {
+    return res.send(renderInAppEscapePage({ addFriendUrl, isAndroid, inApp: false }));
+  }
   return res.redirect(`${backendUrl}/line-login/page`);
 });
 
@@ -1527,12 +1567,16 @@ app.get('/go', (req, res) => {
 // Android: ลองยิง intent:// ให้ระบบ Android เปิด Chrome เอง (หลุดจาก webview ได้จริง เพราะ OS เป็นคนจัดการ ไม่ใช่ตัว webview)
 //          ถ้าเปิด Chrome ได้ Chrome จะสานต่อ App Link ไปเปิด LINE ให้เองอัตโนมัติ
 // iOS: Apple/FB คุมเข้มกว่ามาก ไม่มีวิธี auto-escape ที่เชื่อถือได้ 100% — แสดงคำแนะนำให้กดเปิดในเบราว์เซอร์ภายนอกแทน
-function renderInAppEscapePage({ addFriendUrl, isAndroid }) {
+function renderInAppEscapePage({ addFriendUrl, isAndroid, inApp }) {
   let intentUrl = '';
   try {
     const u = new URL(addFriendUrl);
     intentUrl = `intent://${u.host}${u.pathname}${u.search}#Intent;scheme=https;package=com.android.chrome;end`;
   } catch (_) {}
+  const title = inApp ? 'กำลังเปิดจาก Facebook/Instagram' : 'เปิดร้านผ่าน LINE';
+  const desc  = inApp
+    ? 'แอปนี้บล็อกไม่ให้เด้งเข้า LINE อัตโนมัติ — แตะปุ่มด้านล่างเพื่อลองอีกครั้ง หรือทำตามขั้นตอนถ้ายังไม่เข้า'
+    : 'แตะปุ่มด้านล่างเพื่อเปิดแอป LINE และเพิ่มเพื่อนร้านเรา';
 
   return `<!DOCTYPE html>
 <html lang="th">
@@ -1569,10 +1613,15 @@ function renderInAppEscapePage({ addFriendUrl, isAndroid }) {
 <body>
   <div class="card">
     <div class="logo">💬</div>
-    <div class="title">กำลังเปิดจาก Facebook/Instagram</div>
-    <div class="desc">แอปนี้บล็อกไม่ให้เด้งเข้า LINE อัตโนมัติ — แตะปุ่มด้านล่างเพื่อลองอีกครั้ง หรือทำตามขั้นตอนถ้ายังไม่เข้า</div>
+    <div class="title">${title}</div>
+    <div class="desc">${desc}</div>
+    <div id="afterBox" style="display:none;background:#e8f7ee;border:1px solid #bfe0c8;border-radius:10px;padding:12px 14px;margin-bottom:16px;text-align:left;font-size:13px;color:#1f5c38;line-height:1.8;">
+      ✅ <b>ถ้าเพิ่มเพื่อนเรียบร้อยแล้ว</b><br>
+      ระบบส่ง<b>ลิงก์เข้าร้าน</b>ให้ในแชท LINE แล้วค่ะ<br>
+      เปิดแอป LINE → แชท "มนชิน ซัพพลาย" → แตะลิงก์ได้เลย 🛍️
+    </div>
     <a class="btn-line" id="tryBtn" href="${addFriendUrl}" onclick="return handleTryClick(event)">➕ เพิ่มเพื่อน LINE ตอนนี้</a>
-    <div class="steps">
+    <div class="steps" id="stepsBox" ${inApp ? '' : 'style="display:none;"'}>
       <b>ถ้ากดแล้วไม่เข้า LINE:</b><br>
       1. แตะเมนู <span class="menu-dots">⋮</span> หรือ <span class="menu-dots">•••</span> มุมขวาบนของหน้าจอ<br>
       2. เลือก <b>"เปิดในเบราว์เซอร์"</b> (Open in Browser / Chrome / Safari)<br>
@@ -1582,16 +1631,29 @@ function renderInAppEscapePage({ addFriendUrl, isAndroid }) {
   <script>
     var _isAndroid = ${JSON.stringify(!!isAndroid)};
     var _intentUrl = ${JSON.stringify(intentUrl)};
-    // สำคัญ: ไม่ auto-redirect ตอนโหลดหน้าโดยเด็ดขาด — Facebook แฟล็ก/บล็อกลิงก์ที่ redirect
-    // เองอัตโนมัติโดยไม่มีการกดของผู้ใช้ (เข้าข่ายเทคนิคหลอกลวงที่ระบบเขาคอยสแกนจับ)
+    var _inApp     = ${JSON.stringify(!!inApp)};
+    var _tapped    = false;
+    // สำคัญ: ใน in-app browser ของ Facebook/IG ไม่ auto-redirect ตอนโหลดหน้าโดยเด็ดขาด —
+    // Facebook แฟล็ก/บล็อกลิงก์ที่ redirect เองโดยไม่มีการกดของผู้ใช้
     // ต้องรอให้ผู้ใช้แตะปุ่มเองก่อนเสมอ ถึงจะปลอดภัยจากการโดนบล็อก
     function handleTryClick(e) {
-      if (_isAndroid && _intentUrl) {
+      _tapped = true;
+      if (_isAndroid && _intentUrl && _inApp) {
         e.preventDefault();
         window.location.href = _intentUrl;
       }
-      return true; // iOS/อื่นๆ: ปล่อยให้ href ปกติทำงาน (เปิด addFriendUrl ตรงๆ)
+      return true; // เบราว์เซอร์ปกติ/iOS: ปล่อยให้ href ทำงาน (universal link เด้งเข้าแอป LINE เอง)
     }
+    // 🔁 ลูกค้าสลับแอปกลับมาที่หน้านี้ (หลังไป LINE) → หน้าเรายังอยู่ ไม่ใช่หน้า error
+    //    โชว์กล่องบอกทางต่อ + ปุ่มยังกดซ้ำได้เสมอ
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible' && _tapped) {
+        var b = document.getElementById('afterBox');
+        if (b) b.style.display = 'block';
+        var btn = document.getElementById('tryBtn');
+        if (btn) btn.textContent = '🔁 เปิด LINE อีกครั้ง';
+      }
+    });
   </script>
 </body>
 </html>`;
@@ -2400,6 +2462,148 @@ app.get('/my-orders/:customerId', async (req, res) => {
 
   if (error) return res.status(500).json({ error: error.message });
   res.json({ orders: data || [] });
+});
+
+// ── 📥 POST /log-client-error — รับ error จากหน้าเว็บ (หน้าร้าน/แอดมิน/แอปเซล) ──
+// ทุกหน้าเว็บมี hook window.onerror ยิงมาที่นี่ → เก็บลง error_logs + แจ้ง LINE
+app.post('/log-client-error', rateLimit(15), async (req, res) => {
+  try {
+    const { source, message, stack, url, line } = req.body || {};
+    const src = ['shop','admin','sales'].includes(source) ? source : 'unknown';
+    logError('client:' + src, new Error(String(message || 'unknown').slice(0, 500)), {
+      url: String(url || '').slice(0, 300),
+      line: line || null,
+      stack: String(stack || '').slice(0, 800)
+    });
+    res.json({ ok: true });
+  } catch (e) { res.json({ ok: false }); }
+});
+
+// ── 🧾 GET /admin/errors — ดึง error log ล่าสุด (หน้า Log ระบบ) ──
+app.get('/admin/errors', requirePerm('settings'), async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+    let q = supabase.from('error_logs').select('*').order('created_at', { ascending: false }).limit(limit);
+    if (req.query.scope) q = q.like('scope', `${req.query.scope}%`);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ errors: data || [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message, hint: 'อาจยังไม่ได้รันตาราง error_logs ใน supabase-schema.sql' });
+  }
+});
+
+// ── 📈 GET /admin/system-status — สถานะระบบ + คำแนะนำอัพเกรด ──
+const _serverStartedAt = Date.now();
+app.get('/admin/system-status', requirePerm('system'), async (req, res) => {
+  const t0 = Date.now();
+  const status = { checkedAt: new Date().toISOString(), services: {}, metrics: {}, recommendations: [] };
+  const rec = (level, title, detail) => status.recommendations.push({ level, title, detail });
+  try {
+    // ── เซิร์ฟเวอร์ (Render) ──
+    const mem = process.memoryUsage();
+    const memMB = Math.round(mem.rss / 1024 / 1024);
+    status.services.backend = { ok: true, uptimeMin: Math.round((Date.now() - _serverStartedAt) / 60000), memoryMB: memMB, node: process.version };
+    if (memMB > 400) rec('crit', 'หน่วยความจำใกล้เต็ม', `ใช้ ${memMB}MB จาก 512MB (Render free) — ควรอัพเกรด Render Starter ($7/เดือน) หรือรีสตาร์ท`);
+    else if (memMB > 300) rec('warn', 'หน่วยความจำเริ่มสูง', `ใช้ ${memMB}MB จาก 512MB — เฝ้าดูอาการ ถ้าเกิน 400MB บ่อยควรอัพเกรด`);
+
+    // ── ฐานข้อมูล orders (Supabase) ──
+    try {
+      const _tDb = Date.now();
+      const [{ count: totalOrders }, { count: todayOrders }, { count: msgCount }, { count: err24 }] = await Promise.all([
+        supabase.from('orders').select('id', { count: 'exact', head: true }),
+        supabase.from('orders').select('id', { count: 'exact', head: true }).gte('created_at', new Date(new Date().setHours(0,0,0,0)).toISOString()),
+        supabase.from('messages').select('id', { count: 'exact', head: true }),
+        supabase.from('error_logs').select('id', { count: 'exact', head: true }).gte('created_at', new Date(Date.now() - 86400000).toISOString()),
+      ]);
+      status.services.database = { ok: true, totalOrders: totalOrders || 0, todayOrders: todayOrders || 0, messages: msgCount || 0, errors24h: err24 || 0, latencyMs: Date.now() - _tDb };
+      if (status.services.database.latencyMs > 2000) rec('crit', 'ฐานข้อมูลตอบช้ามาก', `${status.services.database.latencyMs}ms — ลูกค้าจะรู้สึกว่าเว็บช้า ตรวจสถานะ Supabase`);
+      else if (status.services.database.latencyMs > 800) rec('warn', 'ฐานข้อมูลตอบช้า', `${status.services.database.latencyMs}ms — ปกติควรต่ำกว่า 500ms`);
+      // 📊 error 24 ชม. แยกตามระบบ (หน้าร้าน/แอดมิน/เซล/backend)
+      try {
+        const { data: errRows } = await supabase.from('error_logs').select('source').gte('created_at', new Date(Date.now() - 86400000).toISOString()).limit(1000);
+        const bySrc = {};
+        (errRows || []).forEach(r => { const k = r.source || 'backend'; bySrc[k] = (bySrc[k] || 0) + 1; });
+        status.metrics.errorsBySource = bySrc;
+      } catch (_) {}
+      // Supabase free: 500MB DB — ประเมินหยาบจากจำนวนแถว (ออเดอร์+แชท ~2-5KB/แถว)
+      let estMB = Math.round(((totalOrders || 0) * 3 + (msgCount || 0) * 1) / 1024);
+      status.metrics.dbSizeIsEstimate = true;
+      try {
+        const { data: realSize, error: szErr } = await supabase.rpc('db_size');
+        if (!szErr && realSize) { estMB = Math.round(realSize / 1048576); status.metrics.dbSizeIsEstimate = false; }
+      } catch (_) { /* ยังไม่ได้รัน SQL สร้าง db_size() → ใช้ประมาณการ */ }
+      status.metrics.dbEstimatedMB = estMB;
+      if (estMB > 400) rec('crit', 'ฐานข้อมูลใกล้เต็ม (ประมาณการ)', `~${estMB}MB จาก 500MB (Supabase free) — ควรอัพเกรด Supabase Pro ($25/เดือน ได้ 8GB + backup อัตโนมัติ) หรือลบข้อมูลเก่า`);
+      else if (estMB > 250) rec('warn', 'ฐานข้อมูลโตขึ้นเรื่อย ๆ', `~${estMB}MB จาก 500MB — วางแผนอัพเกรดหรือ archive ข้อมูลเก่าล่วงหน้า`);
+      if ((err24 || 0) > 50) rec('crit', 'Error เยอะผิดปกติใน 24 ชม.', `พบ ${err24} รายการ — เปิดแท็บ Log ระบบ ตรวจด่วน`);
+      else if ((err24 || 0) > 10) rec('warn', 'มี Error สะสมใน 24 ชม.', `พบ ${err24} รายการ — ควรเข้าไปไล่ดูใน Log ระบบ`);
+    } catch (e) {
+      status.services.database = { ok: false, error: e.message };
+      rec('crit', 'เชื่อมต่อฐานข้อมูลไม่ได้', e.message);
+    }
+
+    // ── LINE / ค่าตั้งสำคัญ ──
+    status.services.line = { ok: !!process.env.LINE_TOKEN, webhookSecured: !!process.env.LINE_CHANNEL_SECRET };
+    status.services.security = { adminKeySet: !!process.env.ADMIN_API_KEY };
+    if (!process.env.ADMIN_API_KEY) rec('crit', 'ยังไม่ได้ตั้ง ADMIN_API_KEY', 'endpoint จัดการร้านยังไม่ถูกล็อก — ตั้งใน Render → Environment ด่วน');
+    if (!process.env.LINE_CHANNEL_SECRET) rec('warn', 'Webhook ยังไม่ตรวจลายเซ็น', 'ตั้ง LINE_CHANNEL_SECRET เพื่อกันคนยิง webhook ปลอม');
+    if (!process.env.LINE_TOKEN) rec('crit', 'ไม่มี LINE_TOKEN', 'บอทตอบลูกค้า/แจ้งเตือนแอดมินไม่ทำงาน');
+
+    // ── คำแนะนำอัพเกรดตามแผนการใช้ (แสดงเสมอเป็นความรู้) ──
+    status.upgradeGuide = [
+      { service: 'Render (backend)', free: '512MB RAM, sleep เมื่อไม่มีคนใช้ (แก้ด้วย keep-alive แล้ว)', paid: 'Starter $7/เดือน: ไม่ sleep, เร็วขึ้นชัดเจนตอนลูกค้าเปิดร้าน', when: 'เมื่อยอดออเดอร์/วันเกิน ~30 หรือลูกค้าบ่นว่าเว็บโหลดช้าตอนเปิดครั้งแรก' },
+      { service: 'Supabase (ฐานข้อมูล)', free: '500MB, ไม่มี backup อัตโนมัติ, pause ถ้าไม่ใช้ 7 วัน', paid: 'Pro $25/เดือน: 8GB + backup รายวัน 7 วัน', when: 'เมื่อ DB ประมาณการเกิน 300MB หรือธุรกิจพึ่งข้อมูลนี้จริงจัง (backup สำคัญมาก)' },
+      { service: 'Cloudinary (รูปภาพ)', free: '25 เครดิต/เดือน (~25GB bandwidth)', paid: 'Plus $99/เดือน (แพง — ทางถูกกว่า: ย่อรูปก่อนอัป ซึ่งทำแล้ว)', when: 'เมื่อ dashboard ของ Cloudinary ขึ้นใช้เกิน 80% ติดกัน 2 เดือน' },
+    ];
+
+    status.responseMs = Date.now() - t0;
+    res.json(status);
+  } catch (e) {
+    logError('system-status', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── POST /log-error — รับ error จากหน้าเว็บ (หน้าร้าน/แอดมิน/แอปเซล) ──
+app.post('/log-error', rateLimit(20), (req, res) => {
+  try {
+    const { source, scope, message, extra } = req.body || {};
+    const okSource = ['shop','admin','sales-app'].includes(source) ? source : 'shop';
+    if (!message) return res.status(400).json({ error: 'ต้องมี message' });
+    logError(String(scope || 'client').slice(0, 100), String(message).slice(0, 800), extra ? String(extra).slice(0, 800) : null, okSource);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /admin/error-logs — ดู log (กรองตามระบบ/ช่วงเวลา) ──────────
+app.get('/admin/error-logs', requirePerm('system'), async (req, res) => {
+  try {
+    const hours  = Math.min(parseInt(req.query.hours) || 72, 24 * 30);
+    const source = req.query.source || '';
+    let q = supabase.from('error_logs').select('*')
+      .gte('created_at', new Date(Date.now() - hours * 3600000).toISOString())
+      .order('created_at', { ascending: false }).limit(300);
+    if (source && source !== 'all') q = q.eq('source', source);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ logs: data || [] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET/POST /admin/error-notify-config — เปิด/ปิดแจ้งเตือน LINE ────
+app.get('/admin/error-notify-config', requirePerm('system'), async (req, res) => {
+  const cfg = await _getErrNotifyCfg();
+  res.json({ config: cfg });
+});
+app.post('/admin/error-notify-config', requirePerm('system'), async (req, res) => {
+  try {
+    const { enabled, throttleMin } = req.body || {};
+    const cfg = { enabled: !!enabled, throttleMin: Math.max(1, Math.min(parseInt(throttleMin) || 10, 1440)) };
+    await supabase.from('settings').upsert([{ key: 'error_notify', value: cfg, updated_at: new Date().toISOString() }], { onConflict: 'key' });
+    _errNotifyCfg = null; // บังคับโหลดใหม่
+    res.json({ success: true, config: cfg });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── 🔓 GET /admin/verify — เช็คว่า Admin API Key ถูกต้องไหม ─────────
