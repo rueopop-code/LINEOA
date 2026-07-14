@@ -2379,6 +2379,63 @@ let bulkQueue = []; // [{name,img}]
 let mapLat = null, mapLng = null;
 
 // ═══════════════════════════════════════════
+//  สั่งแทนลูกค้า (เปิดมาจากแอปเซล) — เติมชื่อ/เบอร์/ที่อยู่/พิกัดให้อัตโนมัติ
+// ═══════════════════════════════════════════
+const _soParams = new URLSearchParams(window.location.search);
+const SO_ACTIVE = _soParams.get('so') === '1';
+const SO_NAME   = _soParams.get('soName')  || '';
+const SO_PHONE  = _soParams.get('soPhone') || '';
+const SO_ADDR   = _soParams.get('soAddr')  || '';
+const SO_NOTE   = _soParams.get('soNote')  || '';
+const SO_LAT    = parseFloat(_soParams.get('soLat'));
+const SO_LNG    = parseFloat(_soParams.get('soLng'));
+let _soApplied  = false;
+
+function _applySalesOrderPrefill() {
+  if (!SO_ACTIVE || _soApplied) return;
+  _soApplied = true;
+  if (SO_NAME) {
+    document.getElementById('cName').value     = SO_NAME;
+    document.getElementById('cLineName').value = SO_NAME; // ไม่ได้ล็อกอิน LINE จริง ใช้ชื่อเดียวกันไปก่อน แก้ไขได้
+  }
+  if (SO_PHONE) document.getElementById('cPhone').value = SO_PHONE;
+  if (SO_NOTE)  document.getElementById('cNote').value  = SO_NOTE;
+  selCOT('delivery');
+  if (SO_ADDR) {
+    document.getElementById('cAddrNo').value       = '-';
+    document.getElementById('cAddrMoo').value      = '-';
+    document.getElementById('cAddrSoi').value      = '-';
+    document.getElementById('cAddrRoad').value     = SO_ADDR;
+    document.getElementById('cAddrProvince').value = 'แพร่';
+  }
+  if (isFinite(SO_LAT) && isFinite(SO_LNG)) {
+    mapLat = SO_LAT; mapLng = SO_LNG;
+    showMapPin();
+  }
+  _showSalesOrderBanner();
+}
+
+function _showSalesOrderBanner() {
+  if (document.getElementById('soBanner')) return;
+  const anchor = document.getElementById('cLineName');
+  if (!anchor || !anchor.parentElement) return;
+  const bar = document.createElement('div');
+  bar.id = 'soBanner';
+  bar.style.cssText = 'padding:10px 14px;background:#fff4e5;border:1.5px solid #f0b429;border-radius:12px;font-size:12.5px;color:#8a5a13;font-weight:700;margin-bottom:10px;line-height:1.5;';
+  const line1 = document.createElement('div');
+  line1.textContent = '🧾 กำลังสั่งแทนลูกค้า: ' + SO_NAME + ' — กรุณาตรวจสอบที่อยู่/พิกัดก่อนกดยืนยันสั่งซื้อ (แก้ไขได้ถ้าไม่ตรง)';
+  bar.appendChild(line1);
+  if (SO_NOTE) {
+    // หมายเหตุลูกค้าจากฐานข้อมูลเซล — โชว์ไว้ให้เห็นเฉยๆ เพราะช่องหมายเหตุจริงถูกซ่อนตอนสั่งแบบจัดส่ง
+    const line2 = document.createElement('div');
+    line2.style.cssText = 'margin-top:4px;font-weight:400;';
+    line2.textContent = '📝 หมายเหตุลูกค้า: ' + SO_NOTE;
+    bar.appendChild(line2);
+  }
+  anchor.parentElement.insertBefore(bar, anchor);
+}
+
+// ═══════════════════════════════════════════
 //  INIT
 // ═══════════════════════════════════════════
 window.onload = async () => {
@@ -4298,6 +4355,8 @@ async function openCart() {
   // pre-select วิธีชำระที่เคยเลือก
   const _savedPm = localStorage.getItem('ms_payment_method');
   if (_savedPm && !paymentMethod) selectPayment(_savedPm);
+  // สั่งแทนลูกค้า (ถ้าเปิดมาจากแอปเซล) — เติมทับค่าด้านบนด้วยข้อมูลลูกค้าที่เซลเลือกไว้
+  _applySalesOrderPrefill();
 }
 
 async function sendOrder() {
