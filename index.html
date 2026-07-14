@@ -2382,11 +2382,13 @@ let mapLat = null, mapLng = null;
 //  สั่งแทนลูกค้า (เปิดมาจากแอปเซล) — เติมชื่อ/เบอร์/ที่อยู่/พิกัดให้อัตโนมัติ
 // ═══════════════════════════════════════════
 const _soParams = new URLSearchParams(window.location.search);
-const SO_ACTIVE = _soParams.get('so') === '1';
-const SO_NAME   = _soParams.get('soName')  || '';
-const SO_PHONE  = _soParams.get('soPhone') || '';
-const SO_ADDR   = _soParams.get('soAddr')  || '';
-const SO_NOTE   = _soParams.get('soNote')  || '';
+const SO_ACTIVE   = _soParams.get('so') === '1';
+const SO_NAME     = _soParams.get('soName')  || '';
+const SO_PHONE    = _soParams.get('soPhone') || '';
+const SO_ADDR     = _soParams.get('soAddr')  || '';
+const SO_NOTE     = _soParams.get('soNote')  || '';
+const SO_PROVINCE = _soParams.get('soProvince') || '';
+const SO_DISTRICT = _soParams.get('soDistrict') || '';
 const SO_LAT    = parseFloat(_soParams.get('soLat'));
 const SO_LNG    = parseFloat(_soParams.get('soLng'));
 let _soApplied  = false;
@@ -2404,9 +2406,10 @@ function _applySalesOrderPrefill() {
   if (SO_ADDR) {
     document.getElementById('cAddrNo').value       = '-';
     document.getElementById('cAddrMoo').value      = '-';
-    document.getElementById('cAddrSoi').value      = '-';
+    // ถ้ามีอำเภอที่บันทึกไว้จริงจากเซล ใส่ในช่องซอยไปก่อน (ฟอร์มไม่มีช่องอำเภอแยก) ผู้สั่งแก้ไขได้
+    document.getElementById('cAddrSoi').value      = SO_DISTRICT || '-';
     document.getElementById('cAddrRoad').value     = SO_ADDR;
-    document.getElementById('cAddrProvince').value = 'แพร่';
+    document.getElementById('cAddrProvince').value = SO_PROVINCE || 'แพร่'; // ถ้าไม่มีข้อมูลจริง ใช้แพร่เป็นค่าเริ่มต้น (ที่ตั้งร้าน)
   }
   if (isFinite(SO_LAT) && isFinite(SO_LNG)) {
     mapLat = SO_LAT; mapLng = SO_LNG;
