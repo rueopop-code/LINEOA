@@ -1640,12 +1640,12 @@ button,.pcard,.cat-chip,.atab,.hdr-btn{-webkit-tap-highlight-color:transparent}
   <div class="admin-page">
     <div class="admin-page-hdr">
       <div class="ph-deco pd1"></div><div class="ph-deco pd2"></div>
-      <button class="admin-page-back" onclick="closeAdmin()">←</button>
+      <button class="admin-page-back" onclick="closeAdmin()" title="ปิดหน้าจัดการร้าน">←</button>
       <div class="ph-txt">
         <span class="admin-page-title">จัดการร้าน</span>
         <span class="ph-sub">MONSHIN SUPPLY · DASHBOARD</span>
       </div>
-      <span class="ph-ic">⚙️</span>
+      <span class="ph-ic" onclick="logoutAdmin()" style="cursor:pointer;" title="ออกจากโหมดแอดมิน (ลบรหัสที่จำไว้ในเครื่องนี้)">🔓</span>
     </div>
     <div class="admin-sheet">
     <div class="admin-tabs">
@@ -5224,6 +5224,14 @@ function onSlipFileChange(input) {
     const statusEl  = document.getElementById('slipStatusMsg');
     if (!amountEl) return;
 
+    // 🐛 BUG FIX: หน้านี้ (รายละเอียดออเดอร์) เป็น implementation แยกจากหน้า "ชำระเงิน" หลัก
+    // แต่มีบั๊กเดียวกันทุกอย่าง — ไม่มีการปลุก server ก่อนเรียก และข้อความ error รวมทุกสาเหตุ
+    // (server ล่ม/เน็ตหลุด/OCR อ่านไม่เจอ) เป็นข้อความเดียวกันหมด แก้ให้ตรงกับหน้าหลักแล้ว
+    if (statusEl) { statusEl.textContent = '⏳ กำลังเชื่อมต่อ server...'; statusEl.style.color = '#2980b9'; }
+    try {
+      await fetch(`${BACKEND_URL}/health`, { signal: AbortSignal.timeout(40000) });
+    } catch(e) { console.warn('pre-read-slip wake failed:', e.message); }
+
     if (statusEl) { statusEl.textContent = '🔍 กำลังอ่านยอดจากสลิป...'; statusEl.style.color = '#2980b9'; }
 
     try {
@@ -5232,13 +5240,19 @@ function onSlipFileChange(input) {
       const r = await fetch(`${BACKEND_URL}/read-slip`, {
         method : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body   : JSON.stringify({ image_base64: compressed })
+        body   : JSON.stringify({ image_base64: compressed }),
+        signal : AbortSignal.timeout(30000)
       });
       if (r.status === 413) {
         if (statusEl) { statusEl.textContent = '⚠️ รูปใหญ่เกินไป — กรุณากรอกยอดเอง'; statusEl.style.color = '#e67e22'; }
         return;
       }
-      const d = await r.json();
+      const text = await r.text();
+      let d;
+      try { d = JSON.parse(text); } catch(_) {
+        if (statusEl) { statusEl.textContent = '⚠️ เชื่อมต่อ server ไม่ได้ — กรุณากรอกยอดเอง หรือลองแนบรูปใหม่'; statusEl.style.color = '#e67e22'; }
+        return;
+      }
 
       if (d.success && d.amount > 0) {
         amountEl.value = d.amount.toFixed(2);
@@ -5246,10 +5260,13 @@ function onSlipFileChange(input) {
         if (statusEl) { statusEl.textContent = `✅ อ่านได้ ฿${d.amount.toLocaleString()} — ตรวจสอบก่อนกดส่ง`; statusEl.style.color = '#27ae60'; }
       } else {
         amountEl.style.borderColor = '#e67e22';
-        if (statusEl) { statusEl.textContent = '⚠️ อ่านยอดไม่ได้ — กรุณากรอกเอง'; statusEl.style.color = '#e67e22'; }
+        if (statusEl) { statusEl.textContent = '⚠️ อ่านยอดจากรูปไม่เจอ — กรุณากรอกยอดเอง'; statusEl.style.color = '#e67e22'; }
       }
     } catch(e) {
-      if (statusEl) { statusEl.textContent = '⚠️ อ่านยอดไม่ได้ — กรุณากรอกเอง'; statusEl.style.color = '#e67e22'; }
+      const msg = (e.name === 'TimeoutError' || e.name === 'AbortError')
+        ? '⚠️ server ตอบช้าเกินไป — กรุณากรอกยอดเอง หรือลองแนบรูปใหม่อีกครั้ง'
+        : '⚠️ เชื่อมต่อ server ไม่ได้ — กรุณากรอกยอดเอง';
+      if (statusEl) { statusEl.textContent = msg; statusEl.style.color = '#e67e22'; }
     }
   };
   reader.readAsDataURL(file);
@@ -5282,6 +5299,14 @@ async function submitSlip(orderId) {
 
   if (!_slipFileData) { toast('⚠️ กรุณาเลือกรูปสลิปก่อน'); return; }
   if (!amount || amount <= 0) { toast('⚠️ กรุณากรอกยอดที่โอน'); return; }
+
+  // 🐛 BUG FIX: implementation นี้ (หน้ารายละเอียดออเดอร์) เดิมไม่มีการปลุก server ก่อนส่งเลย
+  // ต่างจาก _successSlipSubmit ของหน้า "ชำระเงิน" หลักที่มีอยู่แล้ว — เพิ่มให้ตรงกัน กัน
+  // Render หลับแล้ว request ทั้งชุด (อัปโหลด Cloudinary + ยืนยันสลิป) ล้มเหลวหรือช้ามาก
+  if (statusEl) { statusEl.textContent = '⏳ กำลังเชื่อมต่อ server...'; statusEl.style.color = '#2980b9'; }
+  try {
+    await fetch(`${BACKEND_URL}/health`, { signal: AbortSignal.timeout(40000) });
+  } catch(e) { console.warn('pre-slip wake failed:', e.message); }
 
   if (statusEl) statusEl.textContent = '⏳ กำลังอัปโหลดสลิป...';
 
@@ -5360,12 +5385,21 @@ function _successSlipSetPreview(base64) {
 
 async function _successSlipReadOCR(base64) {
   const statusEl = document.getElementById('successSlipStatus');
+  // 🐛 BUG FIX: เดิม endpoint นี้ไม่มีการ "ปลุก server" ก่อนเรียกเลย (ต่างจาก _successSlipSubmit
+  // ที่มีอยู่แล้ว) — ถ้า Render หลับอยู่ (ปกติของ free tier หลังไม่มีคนใช้สักพัก) การอ่านสลิป
+  // จะ timeout/fail แล้วขึ้น "อ่านยอดไม่ได้" ทั้งที่จริงๆ OCR น่าจะอ่านได้ถ้า server ตื่นทัน
+  if (statusEl) { statusEl.textContent = '⏳ กำลังเชื่อมต่อ server...'; statusEl.style.color = '#2980b9'; }
+  try {
+    await fetch(`${BACKEND_URL}/health`, { signal: AbortSignal.timeout(40000) });
+  } catch(e) { console.warn('pre-read-slip wake failed:', e.message); }
+
   if (statusEl) { statusEl.textContent = '🔍 กำลังอ่านยอดจากสลิป...'; statusEl.style.color = '#2980b9'; }
   try {
     const compressed = await _compressImgBase64(base64, 1200, 0.75);
     const r = await fetch(`${BACKEND_URL}/read-slip`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image_base64: compressed })
+      body: JSON.stringify({ image_base64: compressed }),
+      signal: AbortSignal.timeout(30000)
     });
     if (r.status === 413) {
       if (statusEl) { statusEl.textContent = '⚠️ รูปใหญ่เกินไป — กรุณากรอกยอดเอง'; statusEl.style.color = '#e67e22'; }
@@ -5374,7 +5408,10 @@ async function _successSlipReadOCR(base64) {
     const text = await r.text();
     let d;
     try { d = JSON.parse(text); } catch(_) {
-      if (statusEl) { statusEl.textContent = '⚠️ อ่านยอดไม่ได้ — กรุณากรอกเอง'; statusEl.style.color = '#e67e22'; }
+      // 🐛 BUG FIX: เดิมเคสนี้ (server ตอบกลับมาไม่ใช่ JSON เช่นหน้า error ของ Render/proxy)
+      // ก็ขึ้นข้อความเดียวกับ "OCR อ่านไม่เจอตัวเลข" ทำให้แยกไม่ออกว่าจริงๆ แล้ว "เชื่อมต่อ
+      // server ไม่ได้" ต่างหาก ไม่ใช่ปัญหาการอ่านสลิป
+      if (statusEl) { statusEl.textContent = '⚠️ เชื่อมต่อ server ไม่ได้ — กรุณากรอกยอดเอง หรือลองแนบรูปใหม่'; statusEl.style.color = '#e67e22'; }
       return;
     }
     const amountEl = document.getElementById('successSlipAmount');
@@ -5384,11 +5421,17 @@ async function _successSlipReadOCR(base64) {
       if (statusEl) { statusEl.textContent = `✅ อ่านได้ ฿${d.amount.toLocaleString()} — ตรวจสอบก่อนกดส่ง`; statusEl.style.color = '#27ae60'; }
     } else {
       amountEl.style.borderColor = '#e67e22';
-      if (statusEl) { statusEl.textContent = '⚠️ อ่านยอดไม่ได้ — กรุณากรอกเอง'; statusEl.style.color = '#e67e22'; }
+      // เคสนี้คือ server อ่านสลิปได้จริง แต่หาตัวเลขยอดในรูปไม่เจอ (เช่น รูปเบลอ/มุมกล้อง) — ข้อความเดิมถูกต้องแล้ว
+      if (statusEl) { statusEl.textContent = '⚠️ อ่านยอดจากรูปไม่เจอ — กรุณากรอกยอดเอง'; statusEl.style.color = '#e67e22'; }
     }
   } catch(e) {
-    const statusEl = document.getElementById('successSlipStatus');
-    if (statusEl) { statusEl.textContent = '⚠️ อ่านยอดไม่ได้ — กรุณากรอกเอง'; statusEl.style.color = '#e67e22'; }
+    const statusEl2 = document.getElementById('successSlipStatus');
+    // 🐛 BUG FIX: เคส timeout/network error (เช่น server ยังตื่นไม่ทัน) เดิมก็ขึ้นข้อความเดียวกับ
+    // "อ่านยอดไม่เจอ" ทำให้เข้าใจผิดว่าเป็นปัญหาของรูปสลิป ทั้งที่จริงคือเชื่อมต่อไม่ได้
+    const msg = (e.name === 'TimeoutError' || e.name === 'AbortError')
+      ? '⚠️ server ตอบช้าเกินไป — กรุณากรอกยอดเอง หรือลองแนบรูปใหม่อีกครั้ง'
+      : '⚠️ เชื่อมต่อ server ไม่ได้ — กรุณากรอกยอดเอง';
+    if (statusEl2) { statusEl2.textContent = msg; statusEl2.style.color = '#e67e22'; }
   }
 }
 
@@ -5523,19 +5566,23 @@ async function _verifyAdminKey(key) {
 }
 
 let _adminGateBusy = false;
+let _adminAuthed = false; // 🔒 SECURITY FIX: openAdmin() เดิมไม่มีการเช็คสิทธิ์ในตัวเอง — เรียกตรงๆ จาก
+// browser console (เช่นพิมพ์ openAdmin()) จะข้ามรหัสผ่านไปได้เลย ตอนนี้บังคับให้ต้องผ่าน askAdminKey()
+// (ซึ่งตรวจกับ server จริง) ก่อนเสมอ ถึงจะตั้ง flag นี้เป็น true และเข้า openAdmin() ได้
 async function askAdminKey() {
   if (_adminGateBusy) return;
   _adminGateBusy = true;
   try {
     // มี key เดิมในเครื่อง → ตรวจเงียบ ๆ ผ่านก็เข้าเลย
     const saved = localStorage.getItem('ms_admin_key') || '';
-    if (saved && await _verifyAdminKey(saved)) { openAdmin(); return; }
+    if (saved && await _verifyAdminKey(saved)) { _adminAuthed = true; openAdmin(); return; }
 
     const k = prompt('🔐 โหมดตั้งค่าร้าน\nใส่ Admin API Key (ค่าเดียวกับ env ADMIN_API_KEY บน Render):');
     if (!k || !k.trim()) return;
     if (await _verifyAdminKey(k.trim())) {
       localStorage.setItem('ms_admin_key', k.trim());
       toast('✅ ยืนยันตัวตนสำเร็จ');
+      _adminAuthed = true;
       openAdmin();
     } else {
       toast('❌ รหัสไม่ถูกต้อง หรือลองถี่เกินไป');
@@ -5571,6 +5618,9 @@ window.addEventListener('DOMContentLoaded', () => {
 //  ADMIN
 // ═══════════════════════════════════════════
 function openAdmin() {
+  // 🔒 SECURITY FIX: บังคับให้ต้องผ่าน askAdminKey() (ตรวจกับ server จริง) มาก่อนเสมอ
+  // กันกรณีมีคนเปิด browser console แล้วพิมพ์ openAdmin() ตรงๆ เพื่อข้ามรหัสผ่าน
+  if (!_adminAuthed) { askAdminKey(); return; }
   renderCatTags(); renderPMList();
   const sb = document.getElementById('szBuilder');
   if (sb && !sb.querySelector('.sz-row-wrap')) {
@@ -5589,6 +5639,15 @@ function openAdmin() {
   document.getElementById('adminOv').classList.add('show');
 }
 function closeAdmin() { document.getElementById('adminOv').classList.remove('show'); }
+// 🆕 ออกจากโหมดแอดมิน — ลบรหัสที่จำไว้ในเครื่องนี้ทิ้ง (สำคัญถ้าใช้เครื่องคอมร่วมกับคนอื่น/ยืมเครื่อง)
+// ครั้งต่อไปที่เข้าโหมดแอดมินจะต้องใส่รหัสใหม่เสมอ
+function logoutAdmin() {
+  if (!confirm('ออกจากโหมดแอดมิน และลบรหัสที่จำไว้ในเครื่องนี้?\nครั้งหน้าต้องใส่รหัสใหม่')) return;
+  localStorage.removeItem('ms_admin_key');
+  _adminAuthed = false;
+  closeAdmin();
+  toast('🔓 ออกจากโหมดแอดมินแล้ว');
+}
 function showTab(id, el) {
   document.querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('show'));
   document.querySelectorAll('.atab').forEach(t=>t.classList.remove('active'));
