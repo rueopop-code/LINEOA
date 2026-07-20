@@ -2690,6 +2690,7 @@ app.get('/messages/:orderId', async (req, res) => {
     .from('messages')
     .select('*')
     .eq('order_id', orderId)
+    .neq('sender', 'admin_note') // 🚨 BUG FIX: เดิมส่ง note ภายในของแอดมิน (เช่น คำเตือนสงสัยสลิปซ้ำ/ฉ้อโกง) ให้ลูกค้าเห็นด้วย! ต้องกันไว้ตรงนี้เพราะ endpoint นี้เป็นทางเดียวที่หน้าร้านใช้โหลดแชท
     .order('created_at', { ascending: true });
   if (error) return res.status(500).json({ error: error.message });
   res.json({ messages: data || [] });
@@ -3274,8 +3275,13 @@ app.post('/webhook', async (req, res) => {
     const text = rawText.trim().toLowerCase();
     const replyToken = ev.replyToken;
 
-    // ── รับยอดที่ลูกค้าพิมพ์มา (กรณี OCR อ่านไม่ได้) ─────────
-    // ลูกค้าพิมพ์ตัวเลข เช่น "58" หรือ "580.00" หรือ "฿580"
+    // ── รับยอดที่ลูกค้าพิมพ์มาทาง LINE (กรณี OCR อ่านไม่ได้) ─────────
+    // 🚨 SECURITY FIX: เดิมโค้ดตรงนี้ auto-confirm ออเดอร์เป็น "ชำระแล้ว" ทันทีถ้าตัวเลข
+    // ที่ลูกค้าพิมพ์ (เช่น "500") ตรงกับยอดออเดอร์ — โดยไม่มีการแนบสลิปหรือรูปใด ๆ เลย!
+    // เท่ากับใครก็ตามพิมพ์ยอดถูกก็ได้ออเดอร์ฟรีโดยไม่ต้องโอนเงินจริง
+    // แก้แล้ว: ข้อความที่พิมพ์มาใช้แค่ "บันทึกยอดที่ลูกค้าแจ้ง" ให้แอดมินเห็น/ตรวจ manual เท่านั้น
+    // การ auto-confirm (status: 'confirmed') จะเกิดได้จาก /submit-slip เท่านั้น ซึ่งต้องมีรูปสลิปจริง
+    // ให้ server อ่าน OCR ยืนยันอิสระเองก่อนเสมอ
     const amountTyped = parseFloat(rawText.trim().replace(/[฿,\s]/g, ''));
     if (!isNaN(amountTyped) && amountTyped > 0 && amountTyped < 1000000) {
       // หาออเดอร์โอนที่รอสลิปหรืออ่านยอดไม่ได้
@@ -3291,47 +3297,35 @@ app.post('/webhook', async (req, res) => {
       const amtOrder = amtOrders?.[0];
       if (amtOrder) {
         const expectedTotal = Number(amtOrder.total) || 0;
-        const diff   = expectedTotal - amountTyped;
-        const isMatch = Math.abs(diff) < 1;
-        const newStatus = isMatch ? 'paid' : 'slip_mismatch';
-        const now = new Date().toISOString();
+        const diff = expectedTotal - amountTyped;
+        const now  = new Date().toISOString();
 
+        // บันทึกแค่ "ยอดที่ลูกค้าแจ้ง" ไว้ให้แอดมินดูประกอบ — ไม่แตะ status/payment_status
+        // ให้เป็น 'confirmed'/'paid' อัตโนมัติจากข้อความเปล่า ๆ นี้เด็ดขาด
         await supabase.from('orders').update({
-          slip_amount   : amountTyped,
-          payment_status: newStatus,
-          ...(isMatch ? { status: 'confirmed' } : {})
+          slip_amount: amountTyped
         }).eq('order_id', amtOrder.order_id);
 
         try {
           await supabase.from('messages').insert([{
             order_id: amtOrder.order_id, customer_id: amtOrder.customer_id,
             sender: 'system',
-            text: `💬 ลูกค้าแจ้งยอดโอน ฿${amountTyped.toLocaleString()} — ${isMatch ? 'ยืนยันอัตโนมัติ' : `ขาด ฿${Math.abs(diff).toFixed(2)}`}`,
+            text: `💬 ลูกค้าแจ้งยอดโอน ฿${amountTyped.toLocaleString()} ทาง LINE (ยังไม่มีสลิปแนบ — รอแอดมินตรวจสอบ manual)`,
             created_at: now
           }]);
         } catch(e) { console.warn('insert amount msg:', e.message); }
 
-        let replyAmt = '';
-        if (isMatch) {
-          replyAmt = `✅ ยืนยันการโอนสำเร็จ!\n\nยอดที่โอน: ฿${amountTyped.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n\n🎉 ทางร้านได้รับการชำระเรียบร้อยแล้ว ขอบคุณค่ะ`;
-        } else if (diff > 0) {
-          replyAmt = `⚠️ ยอดที่โอนไม่ครบ\n\nยอดที่โอน: ฿${amountTyped.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\nขาดอีก: ฿${diff.toFixed(2)}\n\nกรุณาโอนเพิ่มแล้วส่งสลิปใหม่ค่ะ`;
-        } else {
-          replyAmt = `✅ ได้รับแล้ว ยอดครบค่ะ!\n\nยอดที่โอน: ฿${amountTyped.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n\nขอบคุณค่ะ 🙏`;
-        }
-        const amtResult = isMatch ? 'match' : (diff > 0 ? 'under' : 'over');
-        await safeReply(replyToken, userId, [buildPaymentFlex({
-          audience:'customer', result: amtResult, order_id: amtOrder.order_id,
-          paid: amountTyped, expected: expectedTotal, diff
-        })]);
+        // แจ้งลูกค้า: ให้แนบสลิปจริงผ่านหน้าเว็บเพื่อให้ระบบยืนยันอัตโนมัติ (ปลอดภัยกว่า)
+        await safeReply(replyToken, userId, [{
+          type: 'text',
+          text: `📋 รับทราบยอด ฿${amountTyped.toLocaleString()} แล้วค่ะ (ออเดอร์ #${amtOrder.order_id})\n\nกรุณาแนบรูปสลิปตัวจริงผ่านหน้าร้าน เพื่อให้ระบบตรวจสอบและยืนยันอัตโนมัติได้เลยนะคะ 🙏\n\n👉 กดปุ่ม "สั่งสินค้า" ในเมนู → เลือก "ออเดอร์ของฉัน" → แนบสลิป`
+        }]);
 
-        if (process.env.LINE_TOKEN) {
-          notifyAllAdmins([buildPaymentFlex({
-            audience:'admin', result: amtResult, order_id: amtOrder.order_id,
-            customer_name: amtOrder.customer_name,
-            paid: amountTyped, expected: expectedTotal, diff
-          })]).catch(() => {});
-        }
+        // แจ้งแอดมินให้ตรวจสอบเอง (ไม่ auto-confirm จากข้อความพิมพ์)
+        notifyAllAdmins([{
+          type: 'text',
+          text: `💬 ลูกค้าพิมพ์แจ้งยอดทาง LINE (ไม่มีสลิป) #${amtOrder.order_id}\nชื่อ: ${amtOrder.customer_name}\nยอดที่แจ้ง: ฿${amountTyped.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}${diff !== 0 ? `\nส่วนต่าง: ฿${Math.abs(diff).toFixed(2)}` : ''}\n⚠️ ยังไม่มีรูปสลิปยืนยัน — กรุณาตรวจสอบก่อนกด "ยืนยันชำระแล้ว" ใน Admin Panel`
+        }]).catch(() => {});
         continue;
       }
     }
@@ -4219,8 +4213,85 @@ app.post('/hero-banner', requirePerm('shop_settings'), async (req, res) => {
   res.json({ success: true, config: cfg });
 });
 
+// ── helper: ดึงรูปจาก URL (เช่น Cloudinary) มาเป็น base64 — ใช้ตรวจสลิปซ้ำที่ server ──
+async function fetchImageAsBase64(url) {
+  const r = await fetch(url, { timeout: 15000 });
+  if (!r.ok) throw new Error(`fetch image failed: ${r.status}`);
+  const buf = await r.buffer();
+  return buf.toString('base64');
+}
+
+// ── shared: รัน OCR สลิป (preprocess ด้วย sharp + tesseract) แล้วดึงยอดเงิน/วันที่-เวลา/
+// เลขอ้างอิง/hash ของรูป ออกมาให้ครบในครั้งเดียว ใช้ร่วมกันทั้ง /read-slip (prefill ให้ลูกค้า)
+// และ /submit-slip (ตรวจยืนยันอิสระที่ server — ไม่พึ่งยอดที่ client พิมพ์มาอย่างเดียวอีกต่อไป)
+async function runSlipOCR(base64) {
+  const crypto    = require('crypto');
+  const tesseract = require('node-tesseract-ocr');
+  const os   = require('os');
+  const path = require('path');
+  const fs   = require('fs');
+
+  const b64Raw    = base64.replace(/^data:image\/\w+;base64,/, '');
+  const imageHash = crypto.createHash('sha256').update(b64Raw, 'base64').digest('hex');
+  const rnd       = Math.random().toString(36).slice(2);
+  const tmpOrig   = path.join(os.tmpdir(), `slip_orig_${Date.now()}_${rnd}.jpg`);
+  const tmpProc   = path.join(os.tmpdir(), `slip_proc_${Date.now()}_${rnd}.png`);
+
+  try {
+    fs.writeFileSync(tmpOrig, Buffer.from(b64Raw, 'base64'));
+
+    let processedFile = tmpOrig;
+    try {
+      const sharp = require('sharp');
+      await sharp(tmpOrig)
+        .resize({ width: 1200, withoutEnlargement: false })
+        .grayscale()
+        .normalise()
+        .sharpen()
+        .threshold(128)
+        .png()
+        .toFile(tmpProc);
+      processedFile = tmpProc;
+    } catch (sharpErr) {
+      console.warn('sharp preprocess failed, using original:', sharpErr.message);
+    }
+
+    const config  = { lang: 'tha+eng', oem: 1, psm: 6 };
+    const rawText = await tesseract.recognize(processedFile, config);
+    fs.unlink(tmpOrig, () => {});
+    fs.unlink(tmpProc, () => {});
+
+    if (!rawText || !rawText.trim()) {
+      return { rawText: '', amount: null, datetime: null, dateRaw: null, ref: null, imageHash };
+    }
+
+    const amount   = extractAmountFromSlip(rawText);
+    const dateInfo = extractSlipDateTime(rawText);
+    const ref      = extractSlipRef(rawText);
+
+    return { rawText, amount, datetime: dateInfo.iso, dateRaw: dateInfo.raw, ref, imageHash };
+  } catch (e) {
+    try { fs.unlinkSync(tmpOrig); } catch (_) {}
+    try { fs.unlinkSync(tmpProc); } catch (_) {}
+    throw e;
+  }
+}
+
 // ── POST /submit-slip ────────────────────────────────────────
-// ลูกค้าส่งสลิป + ยอดที่โอน → เปรียบเทียบกับ order.total
+// ลูกค้าส่งสลิป + ยอดที่โอน → ระบบตรวจสอบ "อิสระจากฝั่ง client" ด้วยการรัน OCR ซ้ำที่
+// server จากรูปสลิปจริง (ไม่เชื่อยอดที่พิมพ์มาเฉยๆ อีกต่อไป — กันคนพิมพ์ยอดหลอกทั้งที่ไม่ได้โอนจริง)
+// เพิ่มการตรวจ 3 ชั้น:
+//   1) ยอดเงิน — อ่านจากรูปจริงที่ server เอง ไม่ใช่ตัวเลขที่ client ส่งมา
+//   2) วันที่/เวลาในสลิป — ต้องไม่เก่า/ไม่ล่วงหน้าเกินไป (กันเอาสลิปเก่ามาใช้ซ้ำ)
+//   3) สลิปซ้ำ — เทียบ hash ของรูป และเลขอ้างอิงรายการ กับออเดอร์อื่นทั้งหมด
+// หมายเหตุสำคัญ: นี่คือการตรวจด้วย OCR (ฟรี ไม่พึ่ง API เสียเงิน) ซึ่งช่วยกันการโกงแบบพิมพ์
+// ยอดมั่ว/เอาสลิปเก่า-สลิปคนอื่นมาใช้ซ้ำได้ดีขึ้นมาก แต่ "ไม่ใช่การยืนยันกับธนาคารจริง" —
+// สลิปที่ถูกตัดต่อรูปภาพอย่างประณีต (Photoshop) จนตัวเลขในรูปตรงกับยอดจริงเป๊ะ ระบบนี้ตรวจไม่ได้
+// 100% ถ้าต้องการความมั่นใจสูงสุดจริงๆ ต้องใช้บริการยืนยันสลิปกับธนาคารโดยตรง (เช่น สลิปOK, บริการ
+// ตรวจสลิปของธนาคาร) ซึ่งมีค่าใช้จ่ายต่อครั้ง
+const SLIP_MAX_AGE_HOURS   = 24; // สลิปที่วันที่/เวลาเก่ากว่านี้ → ไม่ auto-confirm ให้ ต้องแอดมินตรวจเอง
+const SLIP_MAX_FUTURE_MIN  = 15; // เวลาในสลิปล้ำหน้าเวลาปัจจุบันเกินนี้ → น่าสงสัย (นาฬิกาเพี้ยน/สลิปปลอม)
+
 app.post('/submit-slip', rateLimit(20), async (req, res) => {
   const { order_id, customer_id, slip_url, slip_amount } = req.body;
   if (!order_id || !customer_id)
@@ -4239,31 +4310,130 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
     return res.status(403).json({ error: 'ไม่ใช่ออเดอร์ของคุณ' });
 
   const expectedTotal = Number(order.total) || 0;
-  const paidAmount    = parseFloat(slip_amount) || 0;
-  const diff          = expectedTotal - paidAmount;
-  const isMatch       = Math.abs(diff) < 1;
+  const typedAmount   = parseFloat(slip_amount) || 0;
+
+  // ═══ 🔍 ตรวจสลิปอิสระที่ server จากรูปจริง (ไม่พึ่งตัวเลขที่ client พิมพ์มา) ═══
+  let ocr = null;
+  if (slip_url) {
+    try {
+      const base64 = await fetchImageAsBase64(slip_url);
+      ocr = await runSlipOCR(base64);
+    } catch (e) {
+      console.warn('submit-slip server OCR failed:', e.message);
+    }
+  }
+
+  // ═══ 🚫 กันสลิปซ้ำ — รูปเดิม/เลขอ้างอิงเดิมถูกใช้ยืนยันออเดอร์อื่นไปแล้วหรือไม่ ═══
+  let dupReason = null;
+  try {
+    if (ocr?.imageHash) {
+      const { data: dupByHash } = await supabase
+        .from('orders').select('order_id')
+        .eq('slip_image_hash', ocr.imageHash)
+        .neq('order_id', order_id)
+        .limit(1).maybeSingle();
+      if (dupByHash) dupReason = `รูปสลิปนี้เคยถูกใช้ยืนยันออเดอร์ #${dupByHash.order_id} ไปแล้ว`;
+    }
+    if (!dupReason && ocr?.ref) {
+      const { data: dupByRef } = await supabase
+        .from('orders').select('order_id')
+        .eq('slip_ref', ocr.ref)
+        .neq('order_id', order_id)
+        .limit(1).maybeSingle();
+      if (dupByRef) dupReason = `เลขอ้างอิงรายการนี้เคยถูกใช้ยืนยันออเดอร์ #${dupByRef.order_id} ไปแล้ว`;
+    }
+  } catch (e) {
+    // ถ้ายังไม่ได้รัน SQL migration เพิ่มคอลัมน์ slip_image_hash/slip_ref จะเข้ามาที่นี่ — ข้ามการเช็คไปก่อน ไม่ทำให้ทั้ง endpoint ล้ม
+    console.warn('dup-slip check skipped (ลองรัน SQL migration เพิ่มคอลัมน์ก่อนหรือยัง?):', e.message);
+  }
+
+  // ═══ 📅 ตรวจความสดใหม่ของวันที่/เวลาในสลิป ═══
+  let dateFlag = null; // 'stale' | 'future' | null
+  if (ocr?.datetime) {
+    const ageHr = (Date.now() - new Date(ocr.datetime).getTime()) / 3600000;
+    if (ageHr > SLIP_MAX_AGE_HOURS) dateFlag = 'stale';
+    else if (ageHr < -(SLIP_MAX_FUTURE_MIN / 60)) dateFlag = 'future';
+  }
+
+  // ═══ ✅ ตัดสินผล — verifiedAmount คือยอดที่ server อ่านได้เองจากรูปจริง (ใช้ตัวนี้ตัดสิน) ═══
+  const verifiedAmount = ocr?.amount ?? null;
+  const paidAmount = verifiedAmount != null ? verifiedAmount : typedAmount; // ใช้แสดงผล/แจ้งเตือนเท่านั้น
+  const diff = expectedTotal - paidAmount;
+
+  let isMatch = false;
+  let blockReason = null;
+
+  if (dupReason) {
+    blockReason = 'duplicate';
+  } else if (dateFlag === 'stale') {
+    blockReason = 'stale_date';
+  } else if (dateFlag === 'future') {
+    blockReason = 'future_date';
+  } else if (!slip_url) {
+    blockReason = 'no_image';
+  } else if (verifiedAmount == null) {
+    // มีรูป แต่ server อ่านยอดจากรูปเองไม่ได้ (ลายมือ/มุมกล้อง/OCR พลาด ฯลฯ) → ไม่เชื่อยอดที่ client พิมพ์เพียงอย่างเดียว
+    blockReason = 'ocr_failed';
+  } else {
+    isMatch = Math.abs(expectedTotal - verifiedAmount) < 1;
+  }
 
   const now = new Date().toISOString();
   const newPayStatus = isMatch ? 'paid' : 'slip_mismatch';
 
-  await supabase.from('orders').update({
-    slip_url   : slip_url   || null,
-    slip_amount: paidAmount || null,
-    payment_status: newPayStatus,
+  const updatePayload = {
+    slip_url        : slip_url || null,
+    slip_amount     : typedAmount || null,
+    slip_ocr_amount : verifiedAmount,
+    slip_image_hash : ocr?.imageHash || null,
+    slip_ref        : ocr?.ref || null,
+    slip_datetime   : ocr?.datetime || null,
+    payment_flag    : blockReason,   // null | 'duplicate' | 'stale_date' | 'future_date' | 'no_image' | 'ocr_failed' — ให้แอดมินพาเนลแยกเคสสงสัยฉ้อโกงจากยอดไม่ตรงธรรมดา
+    payment_status  : newPayStatus,
     ...(isMatch ? { status: 'confirmed' } : {})
-  }).eq('order_id', order_id);
+  };
+  const { error: updErr } = await supabase.from('orders').update(updatePayload).eq('order_id', order_id);
+  if (updErr) {
+    // เผื่อยังไม่ได้รัน SQL migration เพิ่มคอลัมน์ใหม่ — fallback อัปเดตเฉพาะฟิลด์เดิมกันออเดอร์ค้าง
+    console.warn('submit-slip update with new columns failed (รัน SQL migration แล้วหรือยัง?):', updErr.message);
+    await supabase.from('orders').update({
+      slip_url: slip_url || null,
+      slip_amount: typedAmount || null,
+      payment_status: newPayStatus,
+      ...(isMatch ? { status: 'confirmed' } : {})
+    }).eq('order_id', order_id);
+  }
 
+  // ═══ ข้อความแจ้งลูกค้า/แอดมิน ตามผลตรวจ ═══
   let chatMsg = '';
   let adminMsg = '';
+
   if (isMatch) {
-    chatMsg  = `✅ ยืนยันการโอนเงินสำเร็จ!\n\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n\n🎉 ทางร้านได้รับการชำระเรียบร้อยแล้ว ขอบคุณค่ะ`;
-    adminMsg = `💳 ลูกค้าโอนเงินแล้ว! #${order_id}\n\nชื่อ: ${order.customer_name}\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n✅ ยอดตรง — ยืนยันอัตโนมัติแล้ว`;
-  } else if (diff > 0) {
-    chatMsg  = `⚠️ ยอดที่โอนไม่ครบ\n\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\nขาดอีก: ฿${diff.toFixed(2)}\n\nกรุณาโอนเพิ่ม ฿${diff.toFixed(2)} แล้วส่งสลิปใหม่ หรือติดต่อร้านค้าเพื่อยืนยันค่ะ`;
-    adminMsg = `💳 สลิปยอดไม่ตรง #${order_id}\n\nชื่อ: ${order.customer_name}\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n⚠️ ขาดอีก ฿${diff.toFixed(2)}\n\n📲 กด "ยืนยันชำระแล้ว" ใน Admin เพื่อยืนยัน manual`;
+    chatMsg  = `✅ ยืนยันการโอนเงินสำเร็จ!\n\nยอดที่โอน: ฿${verifiedAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n\n🎉 ทางร้านได้รับการชำระเรียบร้อยแล้ว ขอบคุณค่ะ`;
+    adminMsg = `💳 ลูกค้าโอนเงินแล้ว! #${order_id}\n\nชื่อ: ${order.customer_name}\nยอดที่โอน (ระบบอ่านจากสลิปจริง): ฿${verifiedAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n✅ ยอดตรง — ยืนยันอัตโนมัติแล้ว (ตรวจสอบอิสระจาก server แล้ว)`;
+  } else if (blockReason === 'duplicate') {
+    chatMsg  = `⚠️ ระบบตรวจพบว่าสลิปนี้เคยถูกใช้ยืนยันการชำระไปแล้ว กรุณาแนบสลิปที่ถูกต้องของรายการนี้ หรือติดต่อร้านค้าค่ะ`;
+    adminMsg = `🚨 สลิปซ้ำ! #${order_id}\n\nชื่อ: ${order.customer_name}\n${dupReason}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n⚠️ อาจเป็นการฉ้อโกง — ห้ามกดยืนยันจนกว่าจะตรวจสอบให้แน่ใจก่อนนะครับ`;
+  } else if (blockReason === 'stale_date') {
+    chatMsg  = `⚠️ วันที่/เวลาในสลิปดูเก่าเกินไป (เกิน ${SLIP_MAX_AGE_HOURS} ชม.) ระบบจึงขอให้ร้านตรวจสอบก่อนค่ะ`;
+    adminMsg = `🚨 สลิปวันที่เก่าผิดปกติ #${order_id}\n\nชื่อ: ${order.customer_name}\nวันที่ในสลิป: ${ocr?.dateRaw || '-'}\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n⚠️ อาจเป็นสลิปเก่าที่ถูกนำมาใช้ซ้ำ — กรุณาตรวจสอบก่อนกด "ยืนยันชำระแล้ว"`;
+  } else if (blockReason === 'future_date') {
+    chatMsg  = `⚠️ วันที่/เวลาในสลิปยังไม่ถึง ระบบจึงขอให้ร้านตรวจสอบก่อนค่ะ`;
+    adminMsg = `🚨 สลิปวันที่ล่วงหน้าผิดปกติ #${order_id}\n\nชื่อ: ${order.customer_name}\nวันที่ในสลิป: ${ocr?.dateRaw || '-'}\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\n⚠️ อาจเป็นสลิปตกแต่ง — กรุณาตรวจสอบก่อนกด "ยืนยันชำระแล้ว"`;
+  } else if (blockReason === 'no_image' || blockReason === 'ocr_failed') {
+    chatMsg = diff > 0
+      ? `⚠️ ยอดที่แจ้งไม่ครบ\n\nยอดที่แจ้ง: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\nขาดอีก: ฿${diff.toFixed(2)}\n\nกรุณาโอนเพิ่มแล้วส่งสลิปใหม่ หรือติดต่อร้านค้าเพื่อยืนยันค่ะ`
+      : `✅ ได้รับแจ้งแล้ว!\n\nยอดที่แจ้ง: ฿${paidAmount.toLocaleString()}\n\nทางร้านจะตรวจสอบและยืนยันเร็วๆ นี้ค่ะ`;
+    adminMsg = `💳 สลิปรอตรวจสอบ (ระบบยืนยันอัตโนมัติไม่ได้) #${order_id}\n\nชื่อ: ${order.customer_name}\nยอดที่ลูกค้าพิมพ์: ฿${typedAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\nสาเหตุ: ${blockReason === 'no_image' ? 'ไม่มีรูปสลิปให้ตรวจสอบ' : 'ระบบอ่านยอดจากรูปสลิปเองไม่ได้'}\n📲 กรุณาตรวจรูปสลิปด้วยตาก่อนกด "ยืนยันชำระแล้ว" ใน Admin Panel`;
   } else {
-    chatMsg  = `✅ ได้รับสลิปแล้ว!\n\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n\nทางร้านจะตรวจสอบและยืนยันเร็วๆ นี้ค่ะ`;
-    adminMsg = `💳 สลิปโอนเกิน #${order_id}\n\nชื่อ: ${order.customer_name}\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n\n📲 กด "ยืนยันชำระแล้ว" ใน Admin Panel`;
+    // ยอดไม่ตรงแบบปกติ — มีรูป, server อ่านยอดได้, แต่ยอดไม่เท่ากับที่ต้องชำระ
+    if (diff > 0) {
+      chatMsg  = `⚠️ ยอดที่โอนไม่ครบ\n\nยอดที่โอน: ฿${verifiedAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\nขาดอีก: ฿${diff.toFixed(2)}\n\nกรุณาโอนเพิ่ม ฿${diff.toFixed(2)} แล้วส่งสลิปใหม่ หรือติดต่อร้านค้าเพื่อยืนยันค่ะ`;
+      adminMsg = `💳 สลิปยอดไม่ตรง #${order_id}\n\nชื่อ: ${order.customer_name}\nยอดที่โอน (ระบบอ่านจากสลิปจริง): ฿${verifiedAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n⚠️ ขาดอีก ฿${diff.toFixed(2)}\n\n📲 กด "ยืนยันชำระแล้ว" ใน Admin เพื่อยืนยัน manual`;
+    } else {
+      chatMsg  = `✅ ได้รับสลิปแล้ว!\n\nยอดที่โอน: ฿${verifiedAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n\nทางร้านจะตรวจสอบและยืนยันเร็วๆ นี้ค่ะ`;
+      adminMsg = `💳 สลิปโอนเกิน #${order_id}\n\nชื่อ: ${order.customer_name}\nยอดที่โอน (ระบบอ่านจากสลิปจริง): ฿${verifiedAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n\n📲 กด "ยืนยันชำระแล้ว" ใน Admin Panel`;
+    }
   }
 
   try {
@@ -4272,22 +4442,43 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
     }]);
   } catch(e) { console.warn('insert slip msg:', e.message); }
 
+  // 📝 Note ภายในสำหรับแอดมินเท่านั้น (sender: 'admin_note' — ไม่โผล่ในแชทของลูกค้าเด็ดขาด ดู /messages/:orderId)
+  // ให้เหตุผลละเอียดแบบเทคนิค (ยอดที่ server อ่านจากรูปจริง / เหตุผลบล็อก ฯลฯ) ไปอยู่ในหน้าแชทของแอดมินพาเนลด้วย
+  // ไม่ใช่แค่ผ่าน LINE push อย่างเดียว เผื่อแอดมินพลาดดู LINE ตอนนั้น
+  try {
+    await supabase.from('messages').insert([{
+      order_id, customer_id, sender: 'admin_note', text: adminMsg, created_at: now
+    }]);
+  } catch(e) { console.warn('insert admin note:', e.message); }
+
   if (process.env.LINE_TOKEN) {
     const payResult = isMatch ? 'match' : (diff > 0 ? 'under' : 'over');
-    const msgs = [buildPaymentFlex({
-      audience:'admin', result: payResult, order_id,
-      customer_name: order.customer_name,
-      paid: paidAmount, expected: expectedTotal, diff
-    })];
+    // 🐛 BUG FIX: เดิม adminMsg (ข้อความละเอียดที่บอกเหตุผลชัดเจน เช่น "🚨 สลิปซ้ำ!") ถูกสร้างไว้
+    // แต่ไม่เคยถูกส่งไปที่ไหนเลย แอดมินได้แค่การ์ด Flex ทั่วไปที่แยกเคสฉ้อโกงกับยอดไม่ตรงธรรมดาไม่ออก
+    // ตอนนี้ส่ง adminMsg เป็นข้อความ text ไปด้วยเสมอ ให้แอดมินเห็นเหตุผลตรงๆ ใน LINE OA ทันที
+    const msgs = [
+      { type: 'text', text: adminMsg },
+      buildPaymentFlex({
+        audience:'admin', result: payResult, order_id,
+        customer_name: order.customer_name,
+        paid: paidAmount, expected: expectedTotal, diff
+      })
+    ];
     if (slip_url) msgs.push({ type:'image', originalContentUrl: slip_url, previewImageUrl: slip_url });
     notifyAllAdmins(msgs).catch(e => console.warn('slip notify:', e.message));
   }
 
-  res.json({ success: true, status: newPayStatus, isMatch, diff });
+  res.json({
+    success: true, status: newPayStatus, isMatch, diff,
+    reason: blockReason,           // null | 'duplicate' | 'stale_date' | 'future_date' | 'no_image' | 'ocr_failed'
+    verifiedAmount,                // ยอดที่ server อ่านได้เองจากรูป (null ถ้าอ่านไม่ได้/ไม่มีรูป)
+    slipDate: ocr?.dateRaw || null
+  });
 });
 
 // ── POST /read-slip ──────────────────────────────────────────
-// อ่านยอดจากรูปสลิปด้วย Tesseract OCR (ฟรี ไม่ต้อง API key)
+// อ่านยอด+วันที่/เวลาจากรูปสลิปด้วย Tesseract OCR (ฟรี ไม่ต้อง API key) — ใช้ prefill ให้ลูกค้าเห็นไว ๆ
+// (การตัดสินใจ auto-confirm จริง ๆ เกิดที่ /submit-slip ซึ่ง server จะอ่านซ้ำเองอีกครั้งอย่างอิสระ)
 app.post('/read-slip', rateLimit(10), async (req, res) => {
   const { image_base64 } = req.body;
   if (!image_base64)
@@ -4298,59 +4489,19 @@ app.post('/read-slip', rateLimit(10), async (req, res) => {
   if (b64Raw.length > 10 * 1024 * 1024)
     return res.status(413).json({ success: false, amount: null, message: 'รูปใหญ่เกินไป กรุณากรอกยอดเอง' });
 
-  const tesseract = require('node-tesseract-ocr');
-  const os   = require('os');
-  const path = require('path');
-  const fs   = require('fs');
-
-  const b64     = b64Raw;
-  const tmpOrig = path.join(os.tmpdir(), `slip_orig_${Date.now()}.jpg`);
-  const tmpProc = path.join(os.tmpdir(), `slip_proc_${Date.now()}.png`);
-
   try {
-    fs.writeFileSync(tmpOrig, Buffer.from(b64, 'base64'));
-
-    // ── Preprocess ด้วย sharp ────────────────────────────────
-    let processedFile = tmpOrig;
-    try {
-      const sharp = require('sharp');
-      await sharp(tmpOrig)
-        .resize({ width: 1200, withoutEnlargement: false }) // ขยายให้ใหญ่ขึ้น OCR อ่านได้ดีขึ้น
-        .grayscale()                                         // แปลงเป็น grayscale ตัดสีลายน้ำ
-        .normalise()                                         // เพิ่ม contrast อัตโนมัติ
-        .sharpen()                                           // เพิ่มความคมชัด
-        .threshold(128)                                      // ขาว-ดำ ชัดขึ้น
-        .png()
-        .toFile(tmpProc);
-      processedFile = tmpProc;
-    } catch(sharpErr) {
-      console.warn('sharp preprocess failed, using original:', sharpErr.message);
-    }
-
-    const config = {
-      lang: 'tha+eng',
-      oem : 1,
-      psm : 6,
-    };
-
-    const rawText = await tesseract.recognize(processedFile, config);
-    fs.unlink(tmpOrig, () => {});
-    fs.unlink(tmpProc, () => {});
-
-    if (!rawText || !rawText.trim()) {
+    const result = await runSlipOCR(image_base64);
+    if (!result.rawText) {
       return res.json({ success: false, amount: null, message: 'อ่านตัวอักษรไม่ได้ — กรุณากรอกยอดที่โอนด้วยนะคะ' });
     }
-
-    const amount = extractAmountFromSlip(rawText);
-
-    if (!amount) {
-      return res.json({ success: false, amount: null, raw: rawText, message: 'หายอดไม่เจอ — กรุณากรอกยอดที่โอนด้วยนะคะ' });
+    if (!result.amount) {
+      return res.json({ success: false, amount: null, raw: result.rawText, message: 'หายอดไม่เจอ — กรุณากรอกยอดที่โอนด้วยนะคะ' });
     }
-
-    res.json({ success: true, amount, raw: rawText });
+    res.json({
+      success: true, amount: result.amount, raw: result.rawText,
+      slipDate: result.dateRaw, slipRef: result.ref
+    });
   } catch (e) {
-    try { fs.unlinkSync(tmpOrig); } catch(_) {}
-    try { fs.unlinkSync(tmpProc); } catch(_) {}
     const msg = e.message?.includes('tesseract') || e.message?.includes('spawn')
       ? 'Tesseract ยังไม่ได้ติดตั้งบน server'
       : e.message;
@@ -4426,6 +4577,94 @@ function parseThaiNumber(str) {
   return (val >= 1 && val <= 999999) ? val : null;
 }
 
+// ── ★ ใหม่: helper แยก "วันที่/เวลา" จากข้อความ OCR สลิป ──────────
+// รองรับปี พ.ศ. (2 หรือ 4 หลัก, แปลงเป็น ค.ศ. อัตโนมัติ), เดือนไทยแบบย่อ/เต็ม, เวลา HH:MM(:SS)
+// ใช้ตรวจว่าสลิปนี้ "สด" พอจะเชื่อได้ไหม (กันเอาสลิปเก่ามาใช้ยืนยันซ้ำ)
+const TH_MONTHS = {
+  'ม.ค.':1, 'มค':1, 'มกราคม':1,
+  'ก.พ.':2, 'กพ':2, 'กุมภาพันธ์':2,
+  'มี.ค.':3, 'มีค':3, 'มีนาคม':3,
+  'เม.ย.':4, 'เมย':4, 'เมษายน':4,
+  'พ.ค.':5, 'พค':5, 'พฤษภาคม':5,
+  'มิ.ย.':6, 'มิย':6, 'มิถุนายน':6,
+  'ก.ค.':7, 'กค':7, 'กรกฎาคม':7,
+  'ส.ค.':8, 'สค':8, 'สิงหาคม':8,
+  'ก.ย.':9, 'กย':9, 'กันยายน':9,
+  'ต.ค.':10, 'ตค':10, 'ตุลาคม':10,
+  'พ.ย.':11, 'พย':11, 'พฤศจิกายน':11,
+  'ธ.ค.':12, 'ธค':12, 'ธันวาคม':12
+};
+
+function extractSlipDateTime(text) {
+  const norm = String(text).replace(/[๐-๙]/g, d => d.charCodeAt(0) - 3664); // เลขไทย → เลขอารบิก
+
+  let day = null, month = null, year = null, hour = null, minute = null;
+
+  // รูปแบบตัวเลขล้วน: 12/01/2568, 12-01-25, 12.01.2025
+  const numDate = norm.match(/(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);
+  if (numDate) {
+    day = parseInt(numDate[1], 10);
+    month = parseInt(numDate[2], 10);
+    year = parseInt(numDate[3], 10);
+  } else {
+    // รูปแบบวันที่ไทย: "12 ม.ค. 68" หรือ "12 มกราคม 2568"
+    const monthNames = Object.keys(TH_MONTHS).sort((a, b) => b.length - a.length)
+      .map(k => k.replace(/\./g, '\\.'));
+    const thDateRe = new RegExp(`(\\d{1,2})\\s*(${monthNames.join('|')})\\s*(\\d{2,4})`, 'i');
+    const thDate = thDateRe.exec(norm);
+    if (thDate) {
+      day = parseInt(thDate[1], 10);
+      const mKey = Object.keys(TH_MONTHS).find(k => k.toLowerCase() === thDate[2].toLowerCase());
+      month = mKey ? TH_MONTHS[mKey] : null;
+      year = parseInt(thDate[3], 10);
+    }
+  }
+
+  // แปลงปี พ.ศ. → ค.ศ.
+  if (year != null) {
+    if (year < 100) year += 2500;   // เช่น "68" → 2568
+    if (year > 2400) year -= 543;   // พ.ศ. → ค.ศ. (สลิปไทยเกือบทั้งหมดเป็น พ.ศ.)
+  }
+
+  // เวลา HH:MM(:SS)
+  const timeMatch = norm.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (timeMatch) {
+    hour   = parseInt(timeMatch[1], 10);
+    minute = parseInt(timeMatch[2], 10);
+  }
+
+  if (day == null || month == null || year == null) return { iso: null, raw: null };
+  if (month < 1 || month > 12 || day < 1 || day > 31) return { iso: null, raw: null };
+  if (year < 2000 || year > 2100) return { iso: null, raw: null }; // กันเลขมั่วจาก OCR
+
+  // สลิปไทยเป็นเวลาไทย (UTC+7) — ถ้าไม่เจอเวลา ใช้เที่ยงวันเป็นค่ากลาง กัน freshness check พลาดเพราะ timezone
+  const h = hour ?? 12, m = minute ?? 0;
+  const d = new Date(Date.UTC(year, month - 1, day, h - 7, m, 0));
+  if (isNaN(d.getTime())) return { iso: null, raw: null };
+
+  const raw = `${String(day).padStart(2,'0')}/${String(month).padStart(2,'0')}/${year}` +
+    (hour != null ? ` ${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')} น.` : '');
+  return { iso: d.toISOString(), raw };
+}
+
+// ── ★ ใหม่: helper แยก "เลขที่รายการ/เลขอ้างอิง" จากสลิป ──────────
+// ใช้กันสลิปเดิมถูกเอามาใช้ซ้ำยืนยันหลายออเดอร์ (ธนาคารแต่ละเจ้าออกเลขนี้ไม่ซ้ำกันต่อ 1 รายการโอนจริง)
+function extractSlipRef(text) {
+  const lines = text.split(/\n/).map(l => l.trim()).filter(Boolean);
+  const refKeywords = /เลขที่รายการ|รหัสอ้างอิง|เลขอ้างอิง|หมายเลขอ้างอิง|เลขที่อ้างอิง|ref(?:erence)?\s*(?:no\.?|number|id)?\b|transaction\s*id/i;
+  for (let i = 0; i < lines.length; i++) {
+    if (!refKeywords.test(lines[i])) continue;
+    const sameLine = lines[i].replace(refKeywords, '').match(/[A-Za-z0-9]{8,25}/);
+    if (sameLine) return sameLine[0];
+    if (lines[i + 1]) {
+      const nextLine = lines[i + 1].match(/[A-Za-z0-9]{8,25}/);
+      if (nextLine) return nextLine[0];
+    }
+  }
+  return null;
+}
+
+
 // ── POST /confirm-payment ────────────────────────────────────
 // แอดมินยืนยัน manual ว่าชำระแล้ว
 app.post('/confirm-payment', requirePerm('payments'), async (req, res) => {
@@ -4437,9 +4676,15 @@ app.post('/confirm-payment', requirePerm('payments'), async (req, res) => {
     .eq('order_id', order_id).maybeSingle();
   if (!order) return res.status(404).json({ error: 'ไม่พบออเดอร์' });
 
-  await supabase.from('orders').update({
-    payment_status: 'confirmed', status: 'confirmed'
+  const { error: cpErr } = await supabase.from('orders').update({
+    payment_status: 'confirmed', status: 'confirmed', payment_flag: null
   }).eq('order_id', order_id);
+  if (cpErr) {
+    // เผื่อยังไม่ได้รัน SQL migration เพิ่มคอลัมน์ payment_flag
+    await supabase.from('orders').update({
+      payment_status: 'confirmed', status: 'confirmed'
+    }).eq('order_id', order_id);
+  }
 
   const confirmMsg = `✅ แอดมินยืนยันการชำระเงินแล้ว!\n\nออเดอร์ #${order_id}\nยอด: ฿${Number(order.total).toLocaleString()}\n\nขอบคุณที่อุดหนุนร้านค้านะคะ 🙏`;
   try {

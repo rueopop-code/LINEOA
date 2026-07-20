@@ -1494,34 +1494,94 @@ button,.pcard,.cat-chip,.atab,.hdr-btn{-webkit-tap-highlight-color:transparent}
       <div style="color:#666;">เพื่อนของคุณจะได้รับคูปองส่วนลดเป็นรางวัล ✨<br>ขอบคุณที่ช่วยสนับสนุนร้านของเรานะคะ 🙏</div>
     </div>
     <div id="successShopHoursNotice" style="display:none;"></div>
-    <!-- 💳 แนบสลิป (แสดงเฉพาะออเดอร์โอนเงิน) -->
-    <div id="successSlipSection" style="display:none;background:linear-gradient(160deg,#FFFDF8,#FBF3E4);border:1.5px solid #EBD9B8;border-radius:18px;padding:16px;margin:10px 0;text-align:left;box-shadow:0 4px 16px rgba(217,154,61,.14);">
-      <div style="font-weight:800;color:#7E1610;font-size:14px;margin-bottom:8px;font-family:'Prompt',sans-serif;letter-spacing:.3px;">📎 แนบสลิปโอนเงิน</div>
-      <div style="font-size:12px;color:#555;margin-bottom:10px;">แนบสลิปได้เลย ระบบจะตรวจยอดให้อัตโนมัติ หรือส่งสลิปใน LINE OA ก็ได้ค่ะ</div>
-      <div id="successSlipDrop" onclick="document.getElementById('successSlipFile').click()"
-        style="border:2px dashed #D99A3D;border-radius:14px;padding:16px;text-align:center;cursor:pointer;background:#FFFBF3;transition:.2s;"
-        ondragover="event.preventDefault();this.style.borderColor='#7E1610';" ondragleave="this.style.borderColor='#D99A3D';"
-        ondrop="event.preventDefault();this.style.borderColor='#D99A3D';_successSlipDrop(event);">
-        <div style="font-size:22px;">📷</div>
-        <div style="font-size:12px;color:#8A5A13;margin-top:4px;font-weight:600;">คลิกหรือลากวางรูปสลิป</div>
-        <input type="file" id="successSlipFile" accept="image/*" style="display:none;" onchange="_successSlipPick(this)">
-      </div>
-      <div id="successSlipPreviewWrap" style="display:none;margin-top:8px;text-align:center;">
-        <img id="successSlipPreviewImg" style="max-width:100%;max-height:180px;border-radius:12px;object-fit:contain;border:1.5px solid #EBD9B8;box-shadow:0 3px 10px rgba(92,14,10,.08);">
-      </div>
-      <div style="margin-top:10px;">
-        <label style="font-size:12px;color:#7E1610;font-weight:800;display:block;margin-bottom:4px;">ยอดที่โอน (บาท) *</label>
-        <input id="successSlipAmount" type="number" min="0" step="0.01" placeholder="กรอกยอดที่โอน หรือรอระบบอ่านอัตโนมัติ"
-          style="width:100%;padding:10px 13px;border:1.5px solid #EBD9B8;border-radius:11px;font-size:13px;font-family:'Sarabun',sans-serif;outline:none;background:#fff;">
-      </div>
-      <div id="successSlipStatus" style="font-size:12px;min-height:16px;margin:6px 0;color:#8A5A13;font-weight:600;"></div>
-      <button onclick="_successSlipSubmit()" id="successSlipBtn"
-        style="width:100%;padding:12px;background:linear-gradient(120deg,#7E1610,#B3231A);color:#fff;border:none;border-radius:999px;font-size:14px;font-weight:700;font-family:'Prompt',sans-serif;cursor:pointer;box-shadow:0 5px 16px rgba(126,22,16,.28);letter-spacing:.3px;">
-        📤 ส่งสลิป
-      </button>
-    </div>
     <button class="sclose" onclick="closeSuccess(); openMyOrders()" style="background:linear-gradient(120deg,var(--c2),var(--c1));color:#fff;margin-bottom:8px;">📋 ดูออเดอร์ของฉัน</button>
     <button class="sclose" onclick="closeSuccess()">ตกลง</button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     🆕 QR PAY PAGE — หน้าชำระเงินเต็มหน้า (สไตล์ LINE MAN)
+     เปิดหลังกด "ยืนยันสั่งซื้อ" เมื่อเลือกวิธีชำระ = โอน/สแกน QR แทนที่
+     modal เล็กแบบเดิม ที่เด้งตอนเลือกวิธีชำระ (บั๊ก: บางเครื่องไม่เด้งเพราะ
+     ยังไม่ได้โหลด QR config จาก backend — ดู bug fix ที่ loadQRConfig())
+     ══════════════════════════════════════════════════════════════ -->
+<div class="mo-bg" id="qrPayPageOv" style="z-index:9200;" onclick="if(event.target===this)closeQRPayPage()">
+  <div class="mo-box" style="max-width:420px;">
+    <div class="mo-hdr">
+      <h3>💳 ชำระเงิน</h3>
+      <button class="x" onclick="closeQRPayPage()">×</button>
+    </div>
+    <div class="mo-body" style="text-align:center;">
+      <div id="qppOrderIdLine" style="font-size:12px;color:var(--sub);margin-bottom:10px;"></div>
+
+      <!-- ยอดชำระ -->
+      <div style="margin-bottom:14px;">
+        <div style="font-size:13px;color:var(--sub);">ยอดชำระทั้งหมด</div>
+        <div id="qppTotal" style="font-size:32px;font-weight:800;color:var(--c1);font-family:'Prompt',sans-serif;">฿0</div>
+      </div>
+
+      <!-- นับถอยหลัง -->
+      <div id="qppTimerWrap" style="background:#FFF6E5;border:1.5px solid #FBD98A;border-radius:14px;padding:10px 14px;margin-bottom:16px;">
+        <div style="font-size:12px;color:#8A5A13;font-weight:700;">⏱️ กรุณาชำระเงินภายใน</div>
+        <div id="qppTimer" style="font-size:28px;font-weight:800;color:#C0392B;font-family:'Prompt',sans-serif;letter-spacing:1px;">15:00</div>
+      </div>
+
+      <!-- QR Code -->
+      <div id="qppQrWrap" style="margin-bottom:14px;text-align:center;">
+        <div style="font-size:13px;color:var(--sub);margin-bottom:8px;">สแกนเพื่อชำระเงิน</div>
+        <img id="qppQrImg" src="" alt="QR Code" style="width:100%;max-width:250px;border-radius:14px;border:1.5px solid var(--border);display:none;">
+      </div>
+
+      <!-- PromptPay Number -->
+      <div id="qppNumRow" style="display:none;align-items:center;gap:8px;background:#eaf4fd;border-radius:10px;padding:10px 12px;margin-bottom:8px;text-align:left;">
+        <span style="font-size:13px;color:#888;flex-shrink:0;">📱 พร้อมเพย์:</span>
+        <span id="qppPromptpay" style="font-size:15px;font-weight:700;color:#2980b9;flex:1;"></span>
+        <button onclick="copyQPPNumber()" style="background:#2980b9;color:#fff;border:none;border-radius:7px;padding:4px 10px;font-size:11px;font-family:'Sarabun',sans-serif;cursor:pointer;font-weight:700;">คัดลอก</button>
+      </div>
+      <!-- Account Name -->
+      <div id="qppNameRow" style="display:none;align-items:center;gap:8px;background:#f5f5f5;border-radius:10px;padding:10px 12px;margin-bottom:8px;text-align:left;">
+        <span style="font-size:13px;color:#888;flex-shrink:0;">👤 ชื่อบัญชี:</span>
+        <span id="qppAccountName" style="font-size:14px;font-weight:700;color:#333;flex:1;"></span>
+      </div>
+      <!-- Note -->
+      <div id="qppNoteRow" style="display:none;background:#fffde7;border-radius:10px;padding:10px 12px;margin-bottom:8px;text-align:left;">
+        <div style="font-size:12px;color:#888;margin-bottom:3px;">📝 หมายเหตุ</div>
+        <div id="qppNote" style="font-size:13px;color:#555;white-space:pre-line;line-height:1.6;"></div>
+      </div>
+      <div id="qppNoQrNotice" style="display:none;background:#fdecea;border:1px solid #f1948a;border-radius:12px;padding:12px;margin-bottom:8px;font-size:12px;color:#943126;text-align:left;">
+        ⚠️ ร้านยังไม่ได้ตั้งค่า QR/พร้อมเพย์ — กรุณาแนบสลิปแล้วรอร้านติดต่อกลับ หรือดูเลขบัญชีจาก LINE OA
+      </div>
+
+      <!-- 💳 แนบสลิป -->
+      <div id="successSlipSection" style="display:none;background:linear-gradient(160deg,#FFFDF8,#FBF3E4);border:1.5px solid #EBD9B8;border-radius:18px;padding:16px;margin:10px 0;text-align:left;box-shadow:0 4px 16px rgba(217,154,61,.14);">
+        <div style="font-weight:800;color:#7E1610;font-size:14px;margin-bottom:8px;font-family:'Prompt',sans-serif;letter-spacing:.3px;">📎 แนบสลิปโอนเงิน</div>
+        <div style="font-size:12px;color:#555;margin-bottom:10px;">แนบสลิปได้เลย ระบบจะตรวจยอดให้อัตโนมัติ หรือส่งสลิปใน LINE OA ก็ได้ค่ะ</div>
+        <div id="successSlipDrop" onclick="document.getElementById('successSlipFile').click()"
+          style="border:2px dashed #D99A3D;border-radius:14px;padding:16px;text-align:center;cursor:pointer;background:#FFFBF3;transition:.2s;"
+          ondragover="event.preventDefault();this.style.borderColor='#7E1610';" ondragleave="this.style.borderColor='#D99A3D';"
+          ondrop="event.preventDefault();this.style.borderColor='#D99A3D';_successSlipDrop(event);">
+          <div style="font-size:22px;">📷</div>
+          <div style="font-size:12px;color:#8A5A13;margin-top:4px;font-weight:600;">คลิกหรือลากวางรูปสลิป</div>
+          <input type="file" id="successSlipFile" accept="image/*" style="display:none;" onchange="_successSlipPick(this)">
+        </div>
+        <div id="successSlipPreviewWrap" style="display:none;margin-top:8px;text-align:center;">
+          <img id="successSlipPreviewImg" style="max-width:100%;max-height:180px;border-radius:12px;object-fit:contain;border:1.5px solid #EBD9B8;box-shadow:0 3px 10px rgba(92,14,10,.08);">
+        </div>
+        <div style="margin-top:10px;">
+          <label style="font-size:12px;color:#7E1610;font-weight:800;display:block;margin-bottom:4px;">ยอดที่โอน (บาท) *</label>
+          <input id="successSlipAmount" type="number" min="0" step="0.01" placeholder="กรอกยอดที่โอน หรือรอระบบอ่านอัตโนมัติ"
+            style="width:100%;padding:10px 13px;border:1.5px solid #EBD9B8;border-radius:11px;font-size:13px;font-family:'Sarabun',sans-serif;outline:none;background:#fff;">
+        </div>
+        <div id="successSlipStatus" style="font-size:12px;min-height:16px;margin:6px 0;color:#8A5A13;font-weight:600;"></div>
+        <button onclick="_successSlipSubmit()" id="successSlipBtn"
+          style="width:100%;padding:12px;background:linear-gradient(120deg,#7E1610,#B3231A);color:#fff;border:none;border-radius:999px;font-size:14px;font-weight:700;font-family:'Prompt',sans-serif;cursor:pointer;box-shadow:0 5px 16px rgba(126,22,16,.28);letter-spacing:.3px;">
+          📤 ส่งสลิป
+        </button>
+      </div>
+
+      <button class="sclose" onclick="closeQRPayPage(); openMyOrders();" style="background:linear-gradient(120deg,var(--c2),var(--c1));color:#fff;margin-bottom:8px;width:100%;">📋 ดูออเดอร์ของฉัน / ตรวจสอบสถานะ</button>
+      <button class="sclose" onclick="closeQRPayPage()" style="width:100%;">ปิดหน้านี้ (ชำระภายหลัง)</button>
+    </div>
   </div>
 </div>
 
@@ -2360,8 +2420,9 @@ function selectPayment(method) {
   if (err) err.style.display = 'none';
   // จำการเลือกไว้ครั้งหน้า
   if (method) localStorage.setItem('ms_payment_method', method);
-  // แสดง QR popup ถ้าเลือกโอนเงินและร้านตั้งค่าไว้
-  if (method === 'transfer') showQRPopup();
+  // 🆕 REDESIGN: ไม่เด้ง QR popup ทันทีตอนเลือกวิธีชำระอีกต่อไป
+  // (ของเดิมเด้งตรงนี้ทำให้ไม่สอดคล้อง/บางทีก็ไม่เด้งเพราะ cfg ยังไม่โหลด — ดู bug fix ที่ init())
+  // ตอนนี้ QR + เวลานับถอยหลังจะแสดงในหน้าใหม่ "ชำระเงิน" หลังกด "ยืนยันสั่งซื้อ" แทน (สไตล์ LINE MAN)
 }
 function copyQRNumber() {
   const el = document.getElementById('qrPopPromptpay');
@@ -2498,9 +2559,14 @@ window.onload = async () => {
       setTimeout(() => showAdOverlay(adCfg, false), delayMs);
     }
 
-    // 💳 โหลด QR config จาก localStorage ไว้พร้อม (ก่อน admin เปิด)
+    // 💳 โหลด QR config: localStorage ก่อนทันที (ไม่รอ network) แล้ว sync จาก backend เสมอ
+    // 🐛 BUG FIX: เดิมโหลดจาก localStorage อย่างเดียว → ลูกค้าใหม่/เครื่องใหม่ที่ไม่เคยมี
+    //    localStorage คีย์นี้ (เช่น เข้าครั้งแรก, ล้าง cache, คนละอุปกรณ์กับแอดมิน)
+    //    จะได้ _qrCfgCache = null และ showQRPopup() จะเงียบไม่เด้งอะไรเลย
+    //    ต้อง fetch จาก backend เสมอเพื่อให้ QR/พร้อมเพย์ที่ร้านตั้งค่าไว้ ไปถึงลูกค้าทุกคน
     const _qrLsInit = _qrLoadLS();
     if (_qrLsInit) _qrCfgCache = _qrLsInit;
+    loadQRConfig().catch(() => {});
   } catch(e) {
     console.error('Init error:', e);
   } finally {
@@ -4559,52 +4625,46 @@ async function sendOrder() {
 
     cart=[]; updCart(); closeCart();
     const isLinked = localStorage.getItem('ms_line_linked') === '1';
-    document.getElementById('successMsg').textContent = isLinked
-      ? (cartOT==='delivery'
-          ? `ออเดอร์ #${orderId} ได้ส่งคำสั่งซื้อแล้ว!\nกรุณารอการยืนยันคำสั่งซื้อจากทางร้านค้า\nสรุปออเดอร์จะส่งเข้า LINE ของคุณค่ะ ✨`
-          : `ออเดอร์ #${orderId} ได้ส่งคำสั่งซื้อแล้ว!\nกรุณารอการยืนยันคำสั่งซื้อจากทางร้านค้า\nสรุปออเดอร์จะส่งเข้า LINE ของคุณค่ะ ✨`)
-      : (cartOT==='delivery'
-          ? `ออเดอร์ #${orderId} ได้ส่งคำสั่งซื้อแล้ว!\nกรุณารอการยืนยันคำสั่งซื้อจากทางร้านค้า`
-          : `ออเดอร์ #${orderId} ได้ส่งคำสั่งซื้อแล้ว!\nกรุณารอการยืนยันคำสั่งซื้อจากทางร้านค้า`);
-    if (couponWarn) document.getElementById('successMsg').textContent += couponWarn;
-    // แสดง LINE banner ถ้ายังไม่ผูก
-    document.getElementById('successLineBanner').style.display = isLinked ? 'none' : 'block';
-    // แสดง referral banner ถ้ามาจากลิงก์ชวนเพื่อน
-    const activeRef = sessionStorage.getItem('activeRefCode');
-    document.getElementById('successReferralBanner').style.display = activeRef ? 'block' : 'none';
-    // 🕐 แสดงข้อความเวลาทำการใน success popup
-    var _shNoticeEl = document.getElementById('successShopHoursNotice');
-    if(_shNoticeEl){
-      var _shCfg = shGetCfg();
-      if(_shCfg && _shCfg.enabled){
-        var _shOpen = shIsOpen(_shCfg);
-        var _shMsg = _shOpen ? (_shCfg.msgOpen||'') : (_shCfg.msgClosed||'');
-        if(_shMsg){
-          var _shStatus = _shOpen ? '🟢 ร้านเปิดอยู่' : '🔴 ร้านปิดแล้ว';
-          _shNoticeEl.innerHTML = '<div style="background:'+(_shOpen?'#f0faf4':'#fdf2f0')+';border:1.5px solid '+(_shOpen?'#a9dfbf':'#f5cac3')+';border-radius:12px;padding:12px 14px;margin:10px 0;font-size:13px;line-height:1.7;text-align:left;"><div style="font-weight:700;color:'+(_shOpen?'#1e8449':'#c0392b')+';">'+_shStatus+'</div><div style="color:#555;margin-top:4px;white-space:pre-line;">'+_shMsg+'</div></div>';
-          _shNoticeEl.style.display = 'block';
+
+    // 🆕 REDESIGN: โอน/สแกน QR → เปิดหน้า "ชำระเงิน" เต็มหน้าใหม่ (สไตล์ LINE MAN) แทน
+    // การเด้ง successOv ทันที ส่วน COD ยังคงพฤติกรรมเดิม (แสดง successOv เลย)
+    if (paymentMethod === 'transfer' && orderId) {
+      openQRPayPage(orderId, CUSTOMER_ID, total, couponWarn);
+    } else {
+      // เผื่อครั้งก่อนหน้าเคยเป็น auto-paid success (ไอคอน/หัวข้อถูกสลับ) → รีเซ็ตกลับค่าเริ่มต้น
+      const _sbox = document.querySelector('#successOv .sbox');
+      const _siEl = _sbox?.querySelector('.si');
+      const _stEl = _sbox?.querySelector('.st');
+      if (_siEl) _siEl.textContent = '🎉';
+      if (_stEl) _stEl.textContent = 'ส่งออเดอร์แล้ว!';
+      document.getElementById('successMsg').textContent = isLinked
+        ? (cartOT==='delivery'
+            ? `ออเดอร์ #${orderId} ได้ส่งคำสั่งซื้อแล้ว!\nกรุณารอการยืนยันคำสั่งซื้อจากทางร้านค้า\nสรุปออเดอร์จะส่งเข้า LINE ของคุณค่ะ ✨`
+            : `ออเดอร์ #${orderId} ได้ส่งคำสั่งซื้อแล้ว!\nกรุณารอการยืนยันคำสั่งซื้อจากทางร้านค้า\nสรุปออเดอร์จะส่งเข้า LINE ของคุณค่ะ ✨`)
+        : (cartOT==='delivery'
+            ? `ออเดอร์ #${orderId} ได้ส่งคำสั่งซื้อแล้ว!\nกรุณารอการยืนยันคำสั่งซื้อจากทางร้านค้า`
+            : `ออเดอร์ #${orderId} ได้ส่งคำสั่งซื้อแล้ว!\nกรุณารอการยืนยันคำสั่งซื้อจากทางร้านค้า`);
+      if (couponWarn) document.getElementById('successMsg').textContent += couponWarn;
+      // แสดง LINE banner ถ้ายังไม่ผูก
+      document.getElementById('successLineBanner').style.display = isLinked ? 'none' : 'block';
+      // แสดง referral banner ถ้ามาจากลิงก์ชวนเพื่อน
+      const activeRef = sessionStorage.getItem('activeRefCode');
+      document.getElementById('successReferralBanner').style.display = activeRef ? 'block' : 'none';
+      // 🕐 แสดงข้อความเวลาทำการใน success popup
+      var _shNoticeEl = document.getElementById('successShopHoursNotice');
+      if(_shNoticeEl){
+        var _shCfg = shGetCfg();
+        if(_shCfg && _shCfg.enabled){
+          var _shOpen = shIsOpen(_shCfg);
+          var _shMsg = _shOpen ? (_shCfg.msgOpen||'') : (_shCfg.msgClosed||'');
+          if(_shMsg){
+            var _shStatus = _shOpen ? '🟢 ร้านเปิดอยู่' : '🔴 ร้านปิดแล้ว';
+            _shNoticeEl.innerHTML = '<div style="background:'+(_shOpen?'#f0faf4':'#fdf2f0')+';border:1.5px solid '+(_shOpen?'#a9dfbf':'#f5cac3')+';border-radius:12px;padding:12px 14px;margin:10px 0;font-size:13px;line-height:1.7;text-align:left;"><div style="font-weight:700;color:'+(_shOpen?'#1e8449':'#c0392b')+';">'+_shStatus+'</div><div style="color:#555;margin-top:4px;white-space:pre-line;">'+_shMsg+'</div></div>';
+            _shNoticeEl.style.display = 'block';
+          } else { _shNoticeEl.style.display='none'; }
         } else { _shNoticeEl.style.display='none'; }
-      } else { _shNoticeEl.style.display='none'; }
-    }
-    document.getElementById('successOv').classList.add('show');
-    // แสดง/ซ่อน slip section ตามวิธีชำระ
-    const slipSec = document.getElementById('successSlipSection');
-    if (slipSec) {
-      if (paymentMethod === 'transfer' && orderId) {
-        slipSec.style.display = 'block';
-        slipSec._orderId = orderId;
-        slipSec._customerId = CUSTOMER_ID;
-        // reset slip form
-        document.getElementById('successSlipFile').value = '';
-        document.getElementById('successSlipPreviewWrap').style.display = 'none';
-        document.getElementById('successSlipAmount').value = '';
-        document.getElementById('successSlipStatus').textContent = '';
-        document.getElementById('successSlipBtn').disabled = false;
-        document.getElementById('successSlipBtn').textContent = '📤 ส่งสลิป';
-        window._successSlipData = null;
-      } else {
-        slipSec.style.display = 'none';
       }
+      document.getElementById('successOv').classList.add('show');
     }
     // reset
     ['cAddrNo','cAddrMoo','cAddrSoi','cAddrRoad','cAddrProvince','cPickTime','cNote'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
@@ -4617,6 +4677,109 @@ async function sendOrder() {
   finally { btn.disabled=false; btn.textContent='📲 ยืนยันสั่งซื้อ'; }
 }
 function closeSuccess(){ document.getElementById('successOv').classList.remove('show'); }
+
+// ═══════════════════════════════════════════
+//  🆕 QR PAY PAGE — หน้าชำระเงินเต็มหน้า (สไตล์ LINE MAN)
+//  เปิดหลังกด "ยืนยันสั่งซื้อ" เมื่อวิธีชำระ = โอน/สแกน QR
+// ═══════════════════════════════════════════
+let _qppTimerInterval = null;
+const QPP_PAY_WINDOW_SEC = 15 * 60; // 15 นาที
+
+function openQRPayPage(orderId, customerId, total, couponWarn) {
+  // แสดงยอด + เลขออเดอร์
+  document.getElementById('qppTotal').textContent = '฿' + Number(total || 0).toLocaleString();
+  document.getElementById('qppOrderIdLine').textContent = `ออเดอร์ #${orderId}` + (couponWarn ? ' — คูปองใช้ไม่ได้ คิดราคาเต็ม' : '');
+
+  // เติมข้อมูล QR/พร้อมเพย์จาก config ที่ร้านตั้งค่าไว้ (โหลดตอน init แล้ว — ดู loadQRConfig())
+  const cfg = _qrCfgCache || _qrLoadLS() || {};
+  const imgEl  = document.getElementById('qppQrImg');
+  const numRow = document.getElementById('qppNumRow');
+  const nameRow= document.getElementById('qppNameRow');
+  const noteRow= document.getElementById('qppNoteRow');
+  const noQr   = document.getElementById('qppNoQrNotice');
+
+  if (cfg.qr_image_url) { imgEl.src = cfg.qr_image_url; imgEl.style.display = 'block'; }
+  else imgEl.style.display = 'none';
+  numRow.style.display  = cfg.promptpay_number ? 'flex' : 'none';
+  document.getElementById('qppPromptpay').textContent = cfg.promptpay_number || '';
+  nameRow.style.display = cfg.account_name ? 'flex' : 'none';
+  document.getElementById('qppAccountName').textContent = cfg.account_name || '';
+  noteRow.style.display = cfg.note ? 'block' : 'none';
+  document.getElementById('qppNote').textContent = cfg.note || '';
+  // ถ้าร้านยังไม่ได้ตั้งค่า QR/พร้อมเพย์เลย → เตือนลูกค้าแทนที่จะปล่อยว่างเงียบ ๆ (แก้บั๊กเดิม)
+  const hasAnyQrInfo = !!(cfg.enabled && (cfg.qr_image_url || cfg.promptpay_number));
+  noQr.style.display = hasAnyQrInfo ? 'none' : 'block';
+
+  // ผูกฟอร์มแนบสลิป (reuse element เดิม) เข้ากับออเดอร์นี้ + reset ฟอร์ม
+  const slipSec = document.getElementById('successSlipSection');
+  if (slipSec) {
+    slipSec.style.display = 'block';
+    slipSec._orderId = orderId;
+    slipSec._customerId = customerId;
+    document.getElementById('successSlipFile').value = '';
+    document.getElementById('successSlipPreviewWrap').style.display = 'none';
+    document.getElementById('successSlipAmount').value = '';
+    document.getElementById('successSlipStatus').textContent = '';
+    document.getElementById('successSlipBtn').disabled = false;
+    document.getElementById('successSlipBtn').textContent = '📤 ส่งสลิป';
+    window._successSlipData = null;
+  }
+
+  _startQPPTimer(QPP_PAY_WINDOW_SEC);
+  document.getElementById('qrPayPageOv').classList.add('show');
+}
+
+function closeQRPayPage() {
+  document.getElementById('qrPayPageOv').classList.remove('show');
+  if (_qppTimerInterval) { clearInterval(_qppTimerInterval); _qppTimerInterval = null; }
+}
+
+function _startQPPTimer(seconds) {
+  if (_qppTimerInterval) clearInterval(_qppTimerInterval);
+  let remain = seconds;
+  const el   = document.getElementById('qppTimer');
+  const wrap = document.getElementById('qppTimerWrap');
+  wrap.style.background = '#FFF6E5'; wrap.style.borderColor = '#FBD98A';
+  function render() {
+    if (remain <= 0) {
+      el.textContent = 'หมดเวลาที่กำหนด';
+      el.style.color = '#943126';
+      wrap.style.background = '#FDEDEB'; wrap.style.borderColor = '#F1948A';
+      clearInterval(_qppTimerInterval); _qppTimerInterval = null;
+      return;
+    }
+    const m = Math.floor(remain / 60), s = remain % 60;
+    el.textContent = String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+    el.style.color = remain <= 60 ? '#C0392B' : '#C0392B';
+    remain--;
+  }
+  render();
+  _qppTimerInterval = setInterval(render, 1000);
+}
+
+function copyQPPNumber() {
+  const el = document.getElementById('qppPromptpay');
+  if (!el) return;
+  const num = el.textContent.trim();
+  if (!num) return;
+  navigator.clipboard.writeText(num).then(() => toast('คัดลอกเลขพร้อมเพย์แล้ว ✓')).catch(() => toast('คัดลอกไม่ได้'));
+}
+
+// 🆕 หน้า "ชำระเงินสำเร็จ" อัตโนมัติ — ใช้ successOv เดิม แต่สลับข้อความให้ตรงบริบท
+// (ยอดตรงจากการอ่านสลิป → ปิดหน้า QR แล้วโชว์หน้านี้ทันที ไม่ต้องรอผู้ใช้กดอะไรเพิ่ม)
+function _showAutoPaidSuccess(orderId) {
+  document.getElementById('successLineBanner').style.display = 'none';
+  document.getElementById('successReferralBanner').style.display = 'none';
+  document.getElementById('successShopHoursNotice').style.display = 'none';
+  const box = document.querySelector('#successOv .sbox');
+  const iconEl  = box?.querySelector('.si');
+  const titleEl = box?.querySelector('.st');
+  if (iconEl)  iconEl.textContent  = '✅';
+  if (titleEl) titleEl.textContent = 'ชำระเงินสำเร็จ!';
+  document.getElementById('successMsg').textContent =
+    `ออเดอร์ #${orderId} ยืนยันยอดโอนเรียบร้อยแล้ว ✨\nร้านได้รับการแจ้งชำระเงินของคุณแล้ว กำลังเตรียมจัดส่งค่ะ`;
+  document.getElementById('successOv').classList.add('show');
+}
 
 // ═══════════════════════════════════════════
 //  MY ORDERS / CHAT
@@ -4931,7 +5094,14 @@ async function loadOrderChat(orderId) {
       list.innerHTML = '<div class="chat-empty-c">ยังไม่มีข้อความ — ทักร้านได้เลย</div>';
       return;
     }
-    list.innerHTML = messages.map(m => {
+    // 🚨 กันเผื่ออีกชั้น: ไม่แสดง note ภายในของแอดมิน (admin_note) ให้ลูกค้าเห็นเด็ดขาด
+    // (endpoint /messages/:orderId กรองให้แล้วชั้นหนึ่ง แต่กันไว้สองชั้นเผื่อ endpoint อื่นในอนาคต)
+    const visibleMessages = messages.filter(m => m.sender !== 'admin_note');
+    if (!visibleMessages.length) {
+      list.innerHTML = '<div class="chat-empty-c">ยังไม่มีข้อความ — ทักร้านได้เลย</div>';
+      return;
+    }
+    list.innerHTML = visibleMessages.map(m => {
       const time = new Date(m.created_at).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short' });
       const cls = m.sender === 'admin' ? 'from-admin'
                 : m.sender === 'system' ? 'from-system' : 'from-customer';
@@ -5304,6 +5474,15 @@ async function _successSlipSubmit() {
       if (statusEl) { statusEl.textContent = '✅ ยืนยันสำเร็จ! ยอดตรงกัน — ร้านได้รับแล้ว'; statusEl.style.color = '#27ae60'; }
       toast('✅ ยืนยันการโอนสำเร็จ! ยอดตรงกัน');
       btn.textContent = '✅ ส่งแล้ว';
+      // 🆕 AUTO-CONFIRM (ฝั่งหน้าเว็บ): ยอดตรง → ปิดหน้าชำระเงินอัตโนมัติแล้วขึ้นหน้า
+      // "ชำระเงินสำเร็จ" ทันที ไม่ต้องรอผู้ใช้กดอะไรเพิ่ม
+      // หมายเหตุ: การเปลี่ยนสถานะออเดอร์ในฐานข้อมูลจริง (pending → paid/confirmed)
+      // เป็นหน้าที่ของ backend ตอนตอบ isMatch=true — ฝั่งนี้แค่สะท้อนผลให้ผู้ใช้เห็นไว
+      const orderIdForSuccess = slipSec?._orderId;
+      setTimeout(() => {
+        closeQRPayPage();
+        _showAutoPaidSuccess(orderIdForSuccess);
+      }, 1200);
     } else if (d.diff > 0) {
       if (statusEl) { statusEl.textContent = `⚠️ ยอดขาดอีก ฿${d.diff.toFixed(2)} — ส่งสลิปใหม่หลังโอนเพิ่ม`; statusEl.style.color = '#e67e22'; }
       toast(`⚠️ ยอดขาด ฿${d.diff.toFixed(2)}`);
@@ -6926,65 +7105,10 @@ async function saveQRConfig() {
 }
 
 // แสดง QR popup เมื่อลูกค้าเลือกโอนเงิน
-function showQRPopup() {
-  const cfg = _qrCfgCache || _qrLoadLS();
-  if (!cfg || !cfg.enabled) return;
-  const pop = document.getElementById('qrPayPopup');
-  if (!pop) return;
-  // เติมข้อมูล
-  const numEl  = document.getElementById('qrPopPromptpay');
-  const nameEl = document.getElementById('qrPopAccountName');
-  const imgEl  = document.getElementById('qrPopImg');
-  const noteEl = document.getElementById('qrPopNote');
-  if (numEl)  numEl.textContent  = cfg.promptpay_number || '';
-  if (nameEl) nameEl.textContent = cfg.account_name     || '';
-  if (imgEl) {
-    if (cfg.qr_image_url) { imgEl.src = cfg.qr_image_url; imgEl.style.display = 'block'; }
-    else imgEl.style.display = 'none';
-  }
-  if (noteEl) noteEl.textContent = cfg.note || '';
-  document.getElementById('qrPopNumRow').style.display  = cfg.promptpay_number ? 'flex' : 'none';
-  document.getElementById('qrPopNameRow').style.display = cfg.account_name     ? 'flex' : 'none';
-  document.getElementById('qrPopNoteRow').style.display = cfg.note             ? 'block': 'none';
-  pop.style.display = 'flex';
-}
-function closeQRPopup() {
-  const pop = document.getElementById('qrPayPopup');
-  if (pop) pop.style.display = 'none';
-}
+// 🆕 REDESIGN: showQRPopup()/closeQRPopup() (เด้ง modal เล็กทันทีตอนเลือกวิธีชำระ) ถูกถอดออก
+// แทนที่ด้วยหน้า "ชำระเงิน" เต็มหน้าใหม่ (openQRPayPage / closeQRPayPage ด้านล่าง)
+// ที่เปิดหลังกด "ยืนยันสั่งซื้อ" — ดูส่วน QR PAY PAGE
 </script>
-
-<!-- ── QR PAY POPUP ── -->
-<div id="qrPayPopup" onclick="if(event.target===this)closeQRPopup()"
-  style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:8800;align-items:center;justify-content:center;padding:16px;">
-  <div style="background:#fff;border-radius:20px;width:100%;max-width:360px;padding:22px 20px;box-shadow:0 8px 32px rgba(0,0,0,0.22);position:relative;">
-    <button onclick="closeQRPopup()" style="position:absolute;top:14px;right:16px;background:none;border:none;font-size:22px;color:#aaa;cursor:pointer;line-height:1;">×</button>
-    <div style="text-align:center;margin-bottom:14px;">
-      <div style="font-size:18px;font-weight:700;color:#2980b9;">📲 โอน / สแกน QR จ่าย</div>
-    </div>
-    <!-- QR Image -->
-    <div style="text-align:center;margin-bottom:14px;">
-      <img id="qrPopImg" src="" alt="QR Code" style="width:100%;border-radius:12px;border:1.5px solid #e0e0e0;display:none;">
-    </div>
-    <!-- PromptPay Number -->
-    <div id="qrPopNumRow" style="display:none;align-items:center;gap:8px;background:#eaf4fd;border-radius:10px;padding:10px 12px;margin-bottom:8px;">
-      <span style="font-size:13px;color:#888;flex-shrink:0;">📱 พร้อมเพย์:</span>
-      <span id="qrPopPromptpay" style="font-size:15px;font-weight:700;color:#2980b9;flex:1;"></span>
-      <button onclick="copyQRNumber()" style="background:#2980b9;color:#fff;border:none;border-radius:7px;padding:4px 10px;font-size:11px;font-family:'Sarabun',sans-serif;cursor:pointer;font-weight:700;">คัดลอก</button>
-    </div>
-    <!-- Account Name -->
-    <div id="qrPopNameRow" style="display:none;align-items:center;gap:8px;background:#f5f5f5;border-radius:10px;padding:10px 12px;margin-bottom:8px;">
-      <span style="font-size:13px;color:#888;flex-shrink:0;">👤 ชื่อบัญชี:</span>
-      <span id="qrPopAccountName" style="font-size:14px;font-weight:700;color:#333;flex:1;"></span>
-    </div>
-    <!-- Note -->
-    <div id="qrPopNoteRow" style="display:none;background:#fffde7;border-radius:10px;padding:10px 12px;margin-bottom:6px;">
-      <div style="font-size:12px;color:#888;margin-bottom:3px;">📝 หมายเหตุ</div>
-      <div id="qrPopNote" style="font-size:13px;color:#555;white-space:pre-line;line-height:1.6;"></div>
-    </div>
-    <button onclick="closeQRPopup()" style="width:100%;margin-top:10px;padding:12px;background:#2980b9;color:#fff;border:none;border-radius:12px;font-size:14px;font-weight:700;font-family:'Sarabun',sans-serif;cursor:pointer;">✅ ปิด</button>
-  </div>
-</div>
 
 <!-- ── REFERRAL SHEET ── -->
 <div id="referralOv" onclick="if(event.target===this)closeReferralSheet()"
