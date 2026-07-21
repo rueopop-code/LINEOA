@@ -4293,9 +4293,16 @@ const SLIP_MAX_AGE_HOURS   = 24; // สลิปที่วันที่/เ�
 const SLIP_MAX_FUTURE_MIN  = 15; // เวลาในสลิปล้ำหน้าเวลาปัจจุบันเกินนี้ → น่าสงสัย (นาฬิกาเพี้ยน/สลิปปลอม)
 
 app.post('/submit-slip', rateLimit(20), async (req, res) => {
-  const { order_id, customer_id, slip_url, slip_amount } = req.body;
+  const { order_id, customer_id, slip_url, slip_amount, slip_ref_manual } = req.body;
   if (!order_id || !customer_id)
     return res.status(400).json({ error: 'order_id/customer_id required' });
+  // 🐛 BUG FIX: หน้าเว็บไม่เคยมีช่องให้ลูกค้ากรอก "รหัสอ้างอิง/เลขที่รายการ" เองเลย (มีแต่ช่องยอดเงิน)
+  // ทั้งที่ server อ่านค่านี้จากรูปได้อยู่แล้ว (extractSlipRef) และใช้กันสลิปซ้ำ — ถ้า OCR อ่านรหัส
+  // จากรูปไม่ออก (เช่น ลายมือ/มุมกล้อง/ฟอนต์ธนาคารที่ไม่คุ้น) การกันสลิปซ้ำฝั่งนี้ก็ใช้ไม่ได้เลย
+  // เพิ่มให้ลูกค้ากรอกเองเป็น fallback ได้ (ใช้ประกอบการกันสลิปซ้ำเท่านั้น ไม่ใช้ตัดสินยอดเงิน —
+  // ยอดเงินยังคงต้องอ่านจากรูปจริงที่ server เท่านั้นเหมือนเดิม กันคนพิมพ์มั่ว)
+  const manualRef = (typeof slip_ref_manual === 'string' && slip_ref_manual.trim())
+    ? slip_ref_manual.trim().slice(0, 25) : null;
 
   const { data: order, error: oErr } = await supabase
     .from('orders').select('*').eq('order_id', order_id).maybeSingle();
@@ -4334,10 +4341,11 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
         .limit(1).maybeSingle();
       if (dupByHash) dupReason = `รูปสลิปนี้เคยถูกใช้ยืนยันออเดอร์ #${dupByHash.order_id} ไปแล้ว`;
     }
-    if (!dupReason && ocr?.ref) {
+    const refForDupCheck = ocr?.ref || manualRef; // ใช้ค่าที่ลูกค้ากรอกเองเป็น fallback ถ้า OCR อ่านไม่ออก
+    if (!dupReason && refForDupCheck) {
       const { data: dupByRef } = await supabase
         .from('orders').select('order_id')
-        .eq('slip_ref', ocr.ref)
+        .eq('slip_ref', refForDupCheck)
         .neq('order_id', order_id)
         .limit(1).maybeSingle();
       if (dupByRef) dupReason = `เลขอ้างอิงรายการนี้เคยถูกใช้ยืนยันออเดอร์ #${dupByRef.order_id} ไปแล้ว`;
@@ -4386,7 +4394,7 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
     slip_amount     : typedAmount || null,
     slip_ocr_amount : verifiedAmount,
     slip_image_hash : ocr?.imageHash || null,
-    slip_ref        : ocr?.ref || null,
+    slip_ref        : ocr?.ref || manualRef || null,
     slip_datetime   : ocr?.datetime || null,
     payment_flag    : blockReason,   // null | 'duplicate' | 'stale_date' | 'future_date' | 'no_image' | 'ocr_failed' — ให้แอดมินพาเนลแยกเคสสงสัยฉ้อโกงจากยอดไม่ตรงธรรมดา
     payment_status  : newPayStatus,

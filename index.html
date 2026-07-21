@@ -1572,6 +1572,11 @@ button,.pcard,.cat-chip,.atab,.hdr-btn{-webkit-tap-highlight-color:transparent}
           <input id="successSlipAmount" type="number" min="0" step="0.01" placeholder="กรอกยอดที่โอน หรือรอระบบอ่านอัตโนมัติ"
             style="width:100%;padding:10px 13px;border:1.5px solid #EBD9B8;border-radius:11px;font-size:13px;font-family:'Sarabun',sans-serif;outline:none;background:#fff;">
         </div>
+        <div style="margin-top:8px;">
+          <label style="font-size:12px;color:#7E1610;font-weight:800;display:block;margin-bottom:4px;">รหัสอ้างอิง/เลขที่รายการ <span style="font-weight:400;color:#999;">(ถ้ามี)</span></label>
+          <input id="successSlipRef" type="text" maxlength="25" placeholder="ระบบจะอ่านให้อัตโนมัติ หรือกรอกเองจากสลิป"
+            style="width:100%;padding:10px 13px;border:1.5px solid #EBD9B8;border-radius:11px;font-size:13px;font-family:'Sarabun',sans-serif;outline:none;background:#fff;">
+        </div>
         <div id="successSlipStatus" style="font-size:12px;min-height:16px;margin:6px 0;color:#8A5A13;font-weight:600;"></div>
         <button onclick="_successSlipSubmit()" id="successSlipBtn"
           style="width:100%;padding:12px;background:linear-gradient(120deg,#7E1610,#B3231A);color:#fff;border:none;border-radius:999px;font-size:14px;font-weight:700;font-family:'Prompt',sans-serif;cursor:pointer;box-shadow:0 5px 16px rgba(126,22,16,.28);letter-spacing:.3px;">
@@ -5019,6 +5024,12 @@ async function openOrderDetail(orderId) {
             placeholder="฿${Number(o.total||0).toFixed(2)}"
             style="width:100%;padding:9px 12px;border:1.5px solid #f5c6c6;border-radius:9px;font-size:14px;font-family:'Sarabun',sans-serif;outline:none;box-sizing:border-box;">
         </div>
+        <div style="margin-bottom:8px;">
+          <label style="font-size:12px;color:#888;display:block;margin-bottom:4px;">รหัสอ้างอิง/เลขที่รายการ <span style="color:#bbb;">(ถ้ามี)</span></label>
+          <input id="slipRefInput" type="text" maxlength="25"
+            placeholder="ระบบจะอ่านให้อัตโนมัติ หรือกรอกเองจากสลิป"
+            style="width:100%;padding:9px 12px;border:1.5px solid #f5c6c6;border-radius:9px;font-size:14px;font-family:'Sarabun',sans-serif;outline:none;box-sizing:border-box;">
+        </div>
         <div id="slipStatusMsg" style="font-size:12px;min-height:16px;margin-bottom:6px;"></div>
         <button onclick="submitSlip('${o.order_id}')"
           style="width:100%;padding:11px;background:#c0392b;color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;font-family:'Sarabun',sans-serif;cursor:pointer;">
@@ -5045,6 +5056,12 @@ async function openOrderDetail(orderId) {
             placeholder="${Number(o.total||0).toFixed(2)}"
             style="width:100%;padding:9px 12px;border:1.5px solid #b3d4f0;border-radius:9px;font-size:14px;font-family:'Sarabun',sans-serif;outline:none;box-sizing:border-box;">
           <div style="font-size:11px;color:#aaa;margin-top:3px;">ยอดออเดอร์: ฿${Number(o.total||0).toLocaleString()}</div>
+        </div>
+        <div style="margin-bottom:10px;">
+          <label style="font-size:12px;color:#888;display:block;margin-bottom:4px;">รหัสอ้างอิง/เลขที่รายการ <span style="color:#bbb;">(ถ้ามี)</span></label>
+          <input id="slipRefInput" type="text" maxlength="25"
+            placeholder="ระบบจะอ่านให้อัตโนมัติ หรือกรอกเองจากสลิป"
+            style="width:100%;padding:9px 12px;border:1.5px solid #b3d4f0;border-radius:9px;font-size:14px;font-family:'Sarabun',sans-serif;outline:none;box-sizing:border-box;">
         </div>
         <div id="slipStatusMsg" style="font-size:12px;min-height:16px;margin-bottom:6px;"></div>
         <button onclick="submitSlip('${o.order_id}')"
@@ -5254,13 +5271,19 @@ function onSlipFileChange(input) {
         return;
       }
 
+      // 🐛 BUG FIX: server อ่าน "รหัสอ้างอิง/เลขที่รายการ" (d.slipRef) ได้อยู่แล้วตั้งแต่แรก
+      // (ใช้กันสลิปซ้ำฝั่ง backend) แต่หน้านี้ไม่เคยเอามาโชว์/ให้แก้เลย — ถ้า OCR อ่านรหัสไม่เจอ
+      // ลูกค้าก็ไม่มีช่องให้กรอกเองเหมือนช่องยอดเงิน เพิ่มให้ตรงกันแล้ว
+      const refEl = document.getElementById('slipRefInput');
       if (d.success && d.amount > 0) {
         amountEl.value = d.amount.toFixed(2);
         amountEl.style.borderColor = '#27ae60';
+        if (refEl && d.slipRef) { refEl.value = d.slipRef; refEl.style.borderColor = '#27ae60'; }
         if (statusEl) { statusEl.textContent = `✅ อ่านได้ ฿${d.amount.toLocaleString()} — ตรวจสอบก่อนกดส่ง`; statusEl.style.color = '#27ae60'; }
       } else {
         amountEl.style.borderColor = '#e67e22';
-        if (statusEl) { statusEl.textContent = '⚠️ อ่านยอดจากรูปไม่เจอ — กรุณากรอกยอดเอง'; statusEl.style.color = '#e67e22'; }
+        if (refEl && d.slipRef) refEl.value = d.slipRef; // อ่านยอดไม่เจอ แต่บางทีอ่านรหัสอ้างอิงได้ ก็เติมให้
+        if (statusEl) { statusEl.textContent = '⚠️ อ่านยอดจากรูปไม่เจอ — กรุณากรอกยอดเอง (และรหัสอ้างอิงถ้ามี)'; statusEl.style.color = '#e67e22'; }
       }
     } catch(e) {
       const msg = (e.name === 'TimeoutError' || e.name === 'AbortError')
@@ -5294,8 +5317,10 @@ function _compressImgBase64(base64, maxPx, quality) {
 
 async function submitSlip(orderId) {
   const amountEl  = document.getElementById('slipAmountInput');
+  const refEl     = document.getElementById('slipRefInput');
   const statusEl  = document.getElementById('slipStatusMsg');
   const amount    = parseFloat(amountEl?.value);
+  const manualRef = (refEl?.value || '').trim() || null;
 
   if (!_slipFileData) { toast('⚠️ กรุณาเลือกรูปสลิปก่อน'); return; }
   if (!amount || amount <= 0) { toast('⚠️ กรุณากรอกยอดที่โอน'); return; }
@@ -5337,17 +5362,21 @@ async function submitSlip(orderId) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        order_id   : orderId,
-        customer_id: CUSTOMER_ID,
-        slip_url   : slipUrl,
-        slip_amount: amount
+        order_id       : orderId,
+        customer_id    : CUSTOMER_ID,
+        slip_url       : slipUrl,
+        slip_amount    : amount,
+        slip_ref_manual: manualRef
       })
     });
     const d = await res.json();
     if (!res.ok) throw new Error(d.error || 'ส่งไม่ได้');
 
     // แสดงผลลัพธ์
-    if (d.isMatch) {
+    if (d.reason === 'duplicate') {
+      toast('⚠️ สลิปนี้เคยถูกใช้ยืนยันออเดอร์อื่นไปแล้ว');
+      if (statusEl) { statusEl.textContent = '⚠️ สลิปนี้เคยถูกใช้ยืนยันออเดอร์อื่นไปแล้ว — ติดต่อร้านค้า'; statusEl.style.color = '#e74c3c'; }
+    } else if (d.isMatch) {
       toast('✅ ยืนยันการโอนสำเร็จ! ยอดตรงกัน');
       if (statusEl) { statusEl.textContent = '✅ ยืนยันสำเร็จ! ยอดตรงกัน'; statusEl.style.color = '#27ae60'; }
     } else if (d.diff > 0) {
@@ -5415,14 +5444,19 @@ async function _successSlipReadOCR(base64) {
       return;
     }
     const amountEl = document.getElementById('successSlipAmount');
+    // 🐛 BUG FIX: เหมือนหน้ารายละเอียดออเดอร์ — server อ่านรหัสอ้างอิง (d.slipRef) ได้อยู่แล้ว
+    // แต่ป็อปอัพนี้ไม่เคยแสดง/ให้แก้เลย เพิ่มช่องกรอกให้ตรงกัน
+    const refEl = document.getElementById('successSlipRef');
     if (d.success && d.amount > 0) {
       amountEl.value = d.amount.toFixed(2);
       amountEl.style.borderColor = '#27ae60';
+      if (refEl && d.slipRef) { refEl.value = d.slipRef; refEl.style.borderColor = '#27ae60'; }
       if (statusEl) { statusEl.textContent = `✅ อ่านได้ ฿${d.amount.toLocaleString()} — ตรวจสอบก่อนกดส่ง`; statusEl.style.color = '#27ae60'; }
     } else {
       amountEl.style.borderColor = '#e67e22';
+      if (refEl && d.slipRef) refEl.value = d.slipRef;
       // เคสนี้คือ server อ่านสลิปได้จริง แต่หาตัวเลขยอดในรูปไม่เจอ (เช่น รูปเบลอ/มุมกล้อง) — ข้อความเดิมถูกต้องแล้ว
-      if (statusEl) { statusEl.textContent = '⚠️ อ่านยอดจากรูปไม่เจอ — กรุณากรอกยอดเอง'; statusEl.style.color = '#e67e22'; }
+      if (statusEl) { statusEl.textContent = '⚠️ อ่านยอดจากรูปไม่เจอ — กรุณากรอกยอดเอง (และรหัสอ้างอิงถ้ามี)'; statusEl.style.color = '#e67e22'; }
     }
   } catch(e) {
     const statusEl2 = document.getElementById('successSlipStatus');
@@ -5454,9 +5488,11 @@ async function _successSlipSubmit() {
   const statusEl = document.getElementById('successSlipStatus');
   const btn      = document.getElementById('successSlipBtn');
   const amountEl = document.getElementById('successSlipAmount');
+  const refEl    = document.getElementById('successSlipRef');
   const orderId  = slipSec?._orderId;
   const customerId = slipSec?._customerId;
   const amount   = parseFloat(amountEl?.value);
+  const manualRef = (refEl?.value || '').trim() || null;
 
   if (!window._successSlipData) { toast('⚠️ กรุณาเลือกรูปสลิปก่อน'); return; }
   if (!amount || amount <= 0)    { toast('⚠️ กรุณากรอกยอดที่โอน');      return; }
@@ -5488,7 +5524,7 @@ async function _successSlipSubmit() {
   try {
     const res = await fetch(`${BACKEND_URL}/submit-slip`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ order_id: orderId, customer_id: customerId, slip_url: slipUrl, slip_amount: amount })
+      body: JSON.stringify({ order_id: orderId, customer_id: customerId, slip_url: slipUrl, slip_amount: amount, slip_ref_manual: manualRef })
     });
     // ป้องกัน Render ตื่นนอนช้า → ตอบ HTML แทน JSON
     const text = await res.text();
@@ -5501,7 +5537,7 @@ async function _successSlipSubmit() {
       if (statusEl) statusEl.textContent = '🔄 กำลังลองใหม่...';
       const res2 = await fetch(`${BACKEND_URL}/submit-slip`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ order_id: orderId, customer_id: customerId, slip_url: slipUrl, slip_amount: amount })
+        body: JSON.stringify({ order_id: orderId, customer_id: customerId, slip_url: slipUrl, slip_amount: amount, slip_ref_manual: manualRef })
       });
       const text2 = await res2.text();
       try { d = JSON.parse(text2); }
@@ -5513,7 +5549,11 @@ async function _successSlipSubmit() {
     }
     if (!res.ok && !d?.success) throw new Error(d?.error || 'ส่งไม่ได้');
 
-    if (d.isMatch) {
+    if (d.reason === 'duplicate') {
+      if (statusEl) { statusEl.textContent = '⚠️ สลิปนี้เคยถูกใช้ยืนยันออเดอร์อื่นไปแล้ว — ติดต่อร้านค้า'; statusEl.style.color = '#e74c3c'; }
+      toast('⚠️ สลิปนี้เคยถูกใช้ยืนยันออเดอร์อื่นไปแล้ว');
+      btn.disabled = false; btn.textContent = '📤 ส่งสลิป';
+    } else if (d.isMatch) {
       if (statusEl) { statusEl.textContent = '✅ ยืนยันสำเร็จ! ยอดตรงกัน — ร้านได้รับแล้ว'; statusEl.style.color = '#27ae60'; }
       toast('✅ ยืนยันการโอนสำเร็จ! ยอดตรงกัน');
       btn.textContent = '✅ ส่งแล้ว';
