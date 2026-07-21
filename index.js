@@ -2606,11 +2606,53 @@ app.post('/admin/error-notify-config', requirePerm('system'), async (req, res) =
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── 🔒 กันเดารหัส: ผิดครบ 10 ครั้งติดกัน → ล็อค IP นั้นชั่วคราวแล้ว "รีเซ็ท" ตัวนับ ──
+// (แยกจาก rateLimit ทั่วไปด้านบน ซึ่งจำกัดจำนวน "ครั้งที่เรียก" — อันนี้จำเฉพาะ "ครั้งที่ผิด"
+//  ผิดถูกก็นับ ถ้าถูกจะรีเซ็ทตัวนับทันที ถ้าผิดครบ 10 จะล็อคยาวขึ้นแล้วเริ่มนับใหม่)
+const _adminFailBuckets = new Map(); // ip → { fails, lockUntil }
+const ADMIN_MAX_FAILS  = 10;
+const ADMIN_LOCK_MS    = 5 * 60 * 1000; // ล็อค 5 นาทีเมื่อผิดครบ 10 ครั้ง
+function adminBruteForceGuard(req, res, next) {
+  const ip  = req.ip;
+  const now = Date.now();
+  const b = _adminFailBuckets.get(ip);
+  if (b && b.lockUntil && now < b.lockUntil) {
+    const waitSec = Math.ceil((b.lockUntil - now) / 1000);
+    return res.status(429).json({ error: `กรอกรหัสผิดครบ ${ADMIN_MAX_FAILS} ครั้ง — กรุณารออีก ${waitSec} วินาทีแล้วลองใหม่` });
+  }
+  if (_adminFailBuckets.size > 5000) { // กัน map บวม
+    for (const [k, v] of _adminFailBuckets) { if (v.lockUntil && now > v.lockUntil) _adminFailBuckets.delete(k); }
+  }
+  next();
+}
+
 // ── 🔓 GET /admin/verify — เช็คว่า Admin API Key ถูกต้องไหม ─────────
 // ใช้เป็นด่านเข้าโหมดตั้งค่าหน้าร้าน (แทน PIN ที่เคยฝังในโค้ดหน้าเว็บ)
-// มี rate limit 10 ครั้ง/นาที/IP กันนั่งเดารหัส
-app.get('/admin/verify', rateLimit(10), requireAdminKey, (req, res) => {
-  res.json({ ok: true });
+// หน้าเว็บจะถามรหัสนี้ "ทุกครั้ง" ที่เข้าโหมดตั้งค่า (ไม่จำรหัสไว้ข้ามการเข้าครั้งใหม่)
+// มี rate limit 10 ครั้ง/นาที/IP (กันยิงถล่ม) + ผิดครบ 10 ครั้งติดกัน → ล็อค 5 นาที (กันเดารหัส)
+app.get('/admin/verify', rateLimit(10), adminBruteForceGuard, (req, res) => {
+  const key = process.env.ADMIN_API_KEY || '';
+  const ip  = req.ip;
+  // ถ้ายังไม่ได้ตั้ง ADMIN_API_KEY บน server → เปิดผ่านเหมือนเดิม (backward compatible)
+  if (!key) return res.json({ ok: true });
+
+  const got = req.headers['x-admin-key'] || req.query.admin_key || '';
+  if (got === key) {
+    _adminFailBuckets.delete(ip); // ✅ ถูก → รีเซ็ทตัวนับที่ผิดไว้ก่อนหน้าทิ้งทันที
+    return res.json({ ok: true });
+  }
+
+  // ❌ ผิด → นับเพิ่ม ถ้าครบ 10 ครั้งติดกัน → ล็อคชั่วคราวแล้วรีเซ็ทตัวนับกลับเป็น 0
+  const now = Date.now();
+  let b = _adminFailBuckets.get(ip) || { fails: 0, lockUntil: 0 };
+  b.fails++;
+  if (b.fails >= ADMIN_MAX_FAILS) {
+    b = { fails: 0, lockUntil: now + ADMIN_LOCK_MS };
+    console.warn(`🚫 admin/verify ผิดครบ ${ADMIN_MAX_FAILS} ครั้ง — ล็อค IP ${ip} ${ADMIN_LOCK_MS / 60000} นาที`);
+  }
+  _adminFailBuckets.set(ip, b);
+  console.warn(`🚫 admin endpoint ถูกปฏิเสธ: GET /admin/verify จาก ${ip} (ผิด ${b.fails}/${ADMIN_MAX_FAILS})`);
+  return res.status(401).json({ error: 'unauthorized — ต้องใส่ Admin API Key' });
 });
 
 // ── 📥 GET /admin/export-orders — สำรองข้อมูลออเดอร์เป็น CSV ─────────

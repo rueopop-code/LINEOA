@@ -5596,36 +5596,42 @@ function updPinDots() {}
 //  · ลูกค้าไม่เห็นปุ่มใด ๆ / เดารหัสถูกจำกัด 10 ครั้ง/นาที โดย server
 //  · วิธีเข้า: แตะชื่อร้านรัว ๆ 7 ครั้ง หรือเปิดลิงก์ ?admin=1
 // ═══════════════════════════════════════════
+// คืนค่า { ok, message } — message มีไว้โชว์เหตุผลตอนผิด/โดนล็อค (เช่น เวลาที่ต้องรอ)
 async function _verifyAdminKey(key) {
   try {
     const r = await fetch(`${BACKEND_URL}/admin/verify`, {
       headers: { 'x-admin-key': key || '' }
     });
-    return r.ok;
-  } catch (_) { return false; }
+    if (r.ok) return { ok: true };
+    const d = await r.json().catch(() => ({}));
+    return { ok: false, message: d.error || '' };
+  } catch (_) { return { ok: false, message: '' }; }
 }
 
 let _adminGateBusy = false;
 let _adminAuthed = false; // 🔒 SECURITY FIX: openAdmin() เดิมไม่มีการเช็คสิทธิ์ในตัวเอง — เรียกตรงๆ จาก
 // browser console (เช่นพิมพ์ openAdmin()) จะข้ามรหัสผ่านไปได้เลย ตอนนี้บังคับให้ต้องผ่าน askAdminKey()
 // (ซึ่งตรวจกับ server จริง) ก่อนเสมอ ถึงจะตั้ง flag นี้เป็น true และเข้า openAdmin() ได้
+// 🔒 SECURITY FIX: เดิมถ้ามี key ที่เคยบันทึกไว้ใน localStorage จะตรวจเงียบ ๆ แล้วเข้าเลย
+// โดยไม่ถามซ้ำ — ทำให้แตะ 7 ครั้ง/เปิด ?admin=1 ครั้งต่อ ๆ ไปเข้าโหมดตั้งค่าได้ทันทีโดยไม่ต้อง
+// ใส่รหัสอีก (ใครก็ตามที่ใช้เครื่อง/เบราว์เซอร์เดียวกันจะเข้าได้โดยไม่ต้องรู้รหัส) → ไม่ปลอดภัย
+// ตอนนี้บังคับให้ "ถามรหัสทุกครั้ง" ที่เรียก askAdminKey() ไม่ว่าจะเคยมี key บันทึกไว้หรือไม่
 async function askAdminKey() {
   if (_adminGateBusy) return;
   _adminGateBusy = true;
   try {
-    // มี key เดิมในเครื่อง → ตรวจเงียบ ๆ ผ่านก็เข้าเลย
-    const saved = localStorage.getItem('ms_admin_key') || '';
-    if (saved && await _verifyAdminKey(saved)) { _adminAuthed = true; openAdmin(); return; }
-
     const k = prompt('🔐 โหมดตั้งค่าร้าน\nใส่ Admin API Key (ค่าเดียวกับ env ADMIN_API_KEY บน Render):');
     if (!k || !k.trim()) return;
-    if (await _verifyAdminKey(k.trim())) {
+    const v = await _verifyAdminKey(k.trim());
+    if (v.ok) {
+      // เก็บ key ไว้ใช้แนบกับ request อื่น ๆ ระหว่างอยู่ในโหมดตั้งค่ารอบนี้เท่านั้น
+      // (ไม่ได้ใช้เพื่อข้ามการถามรหัสรอบหน้า — askAdminKey() จะถามใหม่เสมอ)
       localStorage.setItem('ms_admin_key', k.trim());
       toast('✅ ยืนยันตัวตนสำเร็จ');
       _adminAuthed = true;
       openAdmin();
     } else {
-      toast('❌ รหัสไม่ถูกต้อง หรือลองถี่เกินไป');
+      toast(v.message ? `❌ ${v.message}` : '❌ รหัสไม่ถูกต้อง หรือลองถี่เกินไป');
     }
   } finally { _adminGateBusy = false; }
 }
