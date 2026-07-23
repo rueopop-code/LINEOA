@@ -2588,9 +2588,39 @@ window.onload = async () => {
 function toRow(p) {
   return { id: p.id, name: p.name, cat: p.cat, description: p.desc||'', emoji: p.emoji||'📦', img: p.img||'', sizes: p.sizes, is_new: p.isNew||false, ts: p.ts||Date.now() };
 }
+// ═══════════════════════════════════════════
+//  SIZE SORT — เรียงขนาดสินค้าประเภทไซส์/เบอร์ (เช่น 2.5x5, 3x5, 20x30) ตามตัวเลขจากน้อยไปมาก
+// ═══════════════════════════════════════════
+function sizeSortNums(label) {
+  return (String(label == null ? '' : label).match(/\d+(?:\.\d+)?/g) || []).map(Number);
+}
+function compareSizeLabels(a, b) {
+  const na = sizeSortNums(a), nb = sizeSortNums(b);
+  if (na.length && nb.length) {
+    const len = Math.max(na.length, nb.length);
+    for (let i = 0; i < len; i++) {
+      const va = na[i], vb = nb[i];
+      if (va === undefined) return -1;
+      if (vb === undefined) return 1;
+      if (va !== vb) return va - vb;
+    }
+    return 0; // ตัวเลขเท่ากันหมด → คงลำดับเดิม (stable sort)
+  }
+  if (na.length && !nb.length) return -1;   // มีตัวเลข มาก่อนไม่มีตัวเลข
+  if (!na.length && nb.length) return 1;
+  return 0; // ไม่มีตัวเลขทั้งคู่ (เช่น S/M/L) → คงลำดับเดิม
+}
+function sortProductSizes(sizes) {
+  if (!Array.isArray(sizes)) return sizes;
+  return sizes.slice().sort((a, b) => compareSizeLabels(
+    (a && (a.n ?? a.label ?? a.name)) ?? a,
+    (b && (b.n ?? b.label ?? b.name)) ?? b
+  ));
+}
+
 // แปลง DB row → product object
 function fromRow(r) {
-  return { id: r.id, name: r.name, cat: r.cat, desc: r.description||'', emoji: r.emoji||'📦', img: r.img||'', sizes: r.sizes||[], isNew: r.is_new||false, ts: r.ts||0 };
+  return { id: r.id, name: r.name, cat: r.cat, desc: r.description||'', emoji: r.emoji||'📦', img: r.img||'', sizes: sortProductSizes(r.sizes||[]), isNew: r.is_new||false, ts: r.ts||0 };
 }
 
 async function loadStore() {
@@ -3014,7 +3044,7 @@ function getSzRows(id) {
       if (n && !isNaN(p)) rows.push({ n, p });
     });
   }
-  return rows;
+  return sortProductSizes(rows);
 }
 
 // ═══════════════════════════════════════════
@@ -3274,6 +3304,7 @@ function renderGrid(list) {
 // ═══════════════════════════════════════════
 function openPD(id) {
   curProd = products.find(p=>p.id===id); if(!curProd) return;
+  if (Array.isArray(curProd.sizes)) curProd.sizes = sortProductSizes(curProd.sizes);
   mQty=1; document.getElementById('qnum').textContent=1;
   const img=document.getElementById('pdImgTag'), em=document.getElementById('pdEm');
   if(curProd.img){img.src=curProd.img;img.style.display='block';em.style.display='none';}
@@ -6181,7 +6212,7 @@ function openEdit(id) {
   for(let i=0;i<eCat.options.length;i++) if(eCat.options[i].value===p.cat){eCat.selectedIndex=i;break;}
   const sb=document.getElementById('eSzBuilder');
   sb.innerHTML='';
-  p.sizes.forEach(s => addSzRow('eSzBuilder', s));
+  sortProductSizes(p.sizes).forEach(s => addSzRow('eSzBuilder', s));
   const prev=document.getElementById('editImgPrev');
   if(p.img){prev.src=p.img;prev.style.display='block';}else{prev.style.display='none';}
   document.getElementById('editOv').classList.add('show');
@@ -6491,6 +6522,11 @@ async function handleExcelImport(input) {
 
       p.sizes.push(sz);
     });
+
+    // เรียงขนาดของสินค้าที่ import แต่ละตัว (กันกรณีแถวใน Excel ไม่ได้เรียงตามขนาด)
+    for (const p of productMap.values()) {
+      p.sizes = sortProductSizes(p.sizes);
+    }
 
     // คำนวณ diff (ใหม่/แก้ไข/ไม่เปลี่ยน)
     const incoming = [...productMap.values()];
