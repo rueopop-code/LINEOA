@@ -530,6 +530,27 @@ textarea.fi{resize:none;height:70px}
 .qe-save-all{width:100%;margin-top:14px;padding:13px;background:var(--c1);color:#fff;border:none;border-radius:999px;font-size:14px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;transition:.2s;box-shadow:0 3px 12px rgba(179,35,26,.3)}
 .qe-save-all:hover{background:var(--c2);transform:translateY(-1px);box-shadow:0 6px 18px rgba(179,35,26,.4)}
 
+/* ── PROMOTIONS TAB (หน้าตั้งค่า > โปร) ── */
+.promo-intro{background:#FFFBF3;border:1.5px solid #F3D9A6;border-radius:12px;padding:10px 14px;font-size:12px;color:#8A5A13;line-height:1.6;margin-bottom:12px}
+.promo-prod-card{background:#fff;border:1.5px solid var(--border);border-radius:14px;padding:12px 14px;margin-bottom:10px;box-shadow:var(--sh)}
+.promo-prod-hdr{font-size:13.5px;font-weight:800;color:var(--ink);font-family:'Prompt',sans-serif;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.promo-prod-cat{font-size:11px;font-weight:600;color:var(--sub);background:var(--bg);padding:2px 9px;border-radius:999px}
+.promo-size-row{padding:8px 0;border-top:1px dashed var(--bg)}
+.promo-size-row:first-of-type{border-top:none}
+.promo-size-info{display:flex;align-items:baseline;gap:8px;margin-bottom:6px;font-size:12.5px;color:#5B4F47}
+.promo-size-retail{font-size:11px;color:var(--sub)}
+.promo-size-fields{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.promo-lbl{font-size:11px;color:#8A5A13;font-weight:700;white-space:nowrap}
+.promo-q{width:60px;padding:6px 8px;border:1.5px solid #EBD9B8;border-radius:8px;font-size:13px;font-family:'Sarabun',sans-serif;text-align:center;outline:none}
+.promo-p{width:80px;padding:6px 8px;border:1.5px solid #EBD9B8;border-radius:8px;font-size:13px;font-family:'Sarabun',sans-serif;text-align:center;outline:none}
+.promo-q:focus,.promo-p:focus{border-color:#D98324}
+.promo-clear{background:none;border:none;color:#E74C3C;cursor:pointer;font-size:14px;padding:2px 6px;margin-left:2px}
+.promo-warn{font-size:11px;color:#E74C3C;margin-top:5px;line-height:1.5;display:none}
+.promo-row-invalid .promo-q,.promo-row-invalid .promo-p{border-color:#E74C3C;background:#FFF5F4}
+.promo-save-all{width:100%;margin-top:6px;padding:13px;background:#D98324;color:#fff;border:none;border-radius:999px;font-size:14px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;transition:.2s;box-shadow:0 3px 12px rgba(217,131,36,.3);position:sticky;bottom:0}
+.promo-save-all:hover{background:#C2410C;transform:translateY(-1px);box-shadow:0 6px 18px rgba(194,65,12,.4)}
+.promo-empty{text-align:center;padding:30px;color:#aaa;font-size:13px}
+
 /* ── AD PRODUCT TAG ── */
 .ad-tag-wrap{margin-bottom:7px}
 .ad-tag-lbl{font-size:12px;font-weight:700;color:var(--c1);margin-bottom:5px;display:flex;align-items:center;gap:5px}
@@ -878,7 +899,7 @@ header{position:static;box-shadow:none}
 
 /* ── ADMIN v2: dashboard tabs ── */
 .admin-sheet{background:#F1E9DE}
-.admin-tabs{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;background:none;border:none;box-shadow:none;padding:0;border-radius:0;overflow:visible}
+.admin-tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;background:none;border:none;box-shadow:none;padding:0;border-radius:0;overflow:visible}
 .atab{display:flex;flex-direction:column;align-items:center;gap:4px;padding:11px 4px;background:#fff;border-radius:14px;box-shadow:0 2px 8px rgba(92,14,10,.06);border:1.5px solid transparent;transition:.18s}
 .atab-ic{font-size:20px;line-height:1}
 .atab-tx{font-size:11px;letter-spacing:.2px}
@@ -1659,6 +1680,7 @@ button,.pcard,.cat-chip,.atab,.hdr-btn{-webkit-tap-highlight-color:transparent}
       <div class="atab" onclick="showTab('tab-add',this)"><span class="atab-ic">➕</span><span class="atab-tx">เพิ่ม</span></div>
       <div class="atab" onclick="showTab('tab-products',this)"><span class="atab-ic">📦</span><span class="atab-tx">สินค้า</span></div>
       <div class="atab" onclick="showTab('tab-coupons',this);loadShopCoupons()"><span class="atab-ic">🎟️</span><span class="atab-tx">คูปอง</span></div>
+      <div class="atab" onclick="showTab('tab-promotions',this);renderPromoTab()"><span class="atab-ic">🎁</span><span class="atab-tx">โปร</span></div>
     </div>
 
     <!-- SETTINGS -->
@@ -2032,6 +2054,20 @@ button,.pcard,.cat-chip,.atab,.hdr-btn{-webkit-tap-highlight-color:transparent}
         <button onclick="deleteAllProducts()" style="padding:9px 12px;background:#fff;border:1.5px solid #E74C3C;color:#E74C3C;border-radius:9px;font-size:12px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;white-space:nowrap">🗑️ ลบทั้งหมด</button>
       </div>
       <div class="pm-list" id="pmList"></div>
+    </div>
+
+    <!-- ══ TAB PROMOTIONS (โปรชุด) — หน้าแยกสำหรับตั้งค่าโปรโมชั่นสินค้าโดยเฉพาะ ══ -->
+    <div class="tab-pane" id="tab-promotions">
+      <div class="promo-intro">
+        🎁 <b>โปรชุด (ซื้อครบลด)</b> — ตั้งค่าที่นี่ได้ทีเดียวครบทุกสินค้า ไม่ต้องเปิดแก้ทีละตัว<br>
+        เช่น ปกติ ฿69 ใส่ "ซื้อครบ 2 → เหลือชิ้นละ ฿67" → ซื้อ 3 ชิ้น = 67+67+69 (ชิ้นเกินชุดคิดราคาปกติ)<br>
+        เว้นว่างทั้งสองช่อง = ไม่มีโปร · ราคาโปรต้องถูกกว่าราคาปกติ ไม่งั้นระบบจะไม่ใช้โปรนั้น
+      </div>
+      <div style="margin-bottom:10px;">
+        <input class="f-inp" id="promoSearch" placeholder="🔍 ค้นหาสินค้า..." oninput="renderPromoTab()">
+      </div>
+      <div id="promoList"></div>
+      <button class="promo-save-all" onclick="savePromoTab()">💾 บันทึกโปรโมชั่นทั้งหมด</button>
     </div>
 
     <!-- ══ TAB COUPONS ══════════════════════════════════════ -->
@@ -5732,6 +5768,7 @@ function showTab(id, el) {
   el.classList.add('active');
   if (id==='tab-products') renderPMList();
   if (id==='tab-cats') renderCatTags();
+  if (id==='tab-promotions') renderPromoTab();
 }
 
 // ═══════════════════════════════════════════
@@ -7517,6 +7554,157 @@ var _qeModalEl = document.getElementById('qeModal');
 if(_qeModalEl) _qeModalEl.addEventListener('click', function(e){
   if (e.target === this) closeQE();
 });
+
+// ══════════════════════════════════════════════════════════
+//  🎁 หน้าตั้งค่า > โปรโมชั่นสินค้า (หน้าแยก — ไม่แตะหน้าร้านขาย)
+//  จัดการ "โปรชุด" (bundle) ของทุกขนาด/สินค้าในที่เดียว
+// ══════════════════════════════════════════════════════════
+function renderPromoTab() {
+  const kwEl = document.getElementById('promoSearch');
+  const kw = (kwEl?.value || '').trim().toLowerCase();
+  const sorted = [...products].sort((a,b) => a.name.localeCompare(b.name,'th'));
+  let html = '';
+
+  sorted.forEach(p => {
+    if (kw && !p.name.toLowerCase().includes(kw) && !(p.cat||'').toLowerCase().includes(kw)) return;
+    const sizes = p.sizes || [];
+    if (!sizes.length) return;
+
+    const sizeRows = sizes.map((s, si) => {
+      const retail = Number(s.p) || 0;
+      const b = s.bundle || {};
+      const sizeName = s.n || s.name || s.label || `ขนาด ${si+1}`;
+      return `
+        <div class="promo-size-row" data-pid="${p.id}" data-si="${si}" data-retail="${retail}">
+          <div class="promo-size-info"><b>${sizeName}</b><span class="promo-size-retail">ราคาปกติ ฿${retail.toLocaleString()}</span></div>
+          <div class="promo-size-fields">
+            <span class="promo-lbl">ซื้อครบ</span>
+            <input class="promo-q" type="number" min="2" placeholder="2" value="${b.q ?? ''}" oninput="checkPromoRow(this)">
+            <span class="promo-lbl">ชิ้น → เหลือชิ้นละ ฿</span>
+            <input class="promo-p" type="number" min="0" step="0.01" placeholder="67" value="${b.price ?? ''}" oninput="checkPromoRow(this)">
+            <button type="button" class="promo-clear" title="ล้างโปรชุดของขนาดนี้" onclick="clearPromoRow(this)">✕</button>
+          </div>
+          <div class="promo-warn"></div>
+        </div>`;
+    }).join('');
+
+    html += `<div class="promo-prod-card">
+      <div class="promo-prod-hdr">${p.name}<span class="promo-prod-cat">${p.cat||''}</span></div>
+      ${sizeRows}
+    </div>`;
+  });
+
+  const listEl = document.getElementById('promoList');
+  listEl.innerHTML = html || '<div class="promo-empty">ไม่พบสินค้าที่ตรงกับคำค้นหา</div>';
+  // ตรวจสอบทุกแถวที่มีค่าอยู่แล้ว เผื่อมีข้อมูลเก่าที่ไม่ถูกต้อง (เช่น ราคาโปร >= ราคาปกติ)
+  listEl.querySelectorAll('.promo-q').forEach(inp => checkPromoRow(inp));
+}
+
+// ตรวจสอบความถูกต้องของแถวโปรชุดแบบเรียลไทม์ (ไม่บันทึก แค่แจ้งเตือน)
+function checkPromoRow(el) {
+  const row = el.closest('.promo-size-row');
+  if (!row) return;
+  const qInp = row.querySelector('.promo-q');
+  const pInp = row.querySelector('.promo-p');
+  const qRaw = qInp.value.trim();
+  const pRaw = pInp.value.trim();
+  const retail = parseFloat(row.dataset.retail) || 0;
+  const warnEl = row.querySelector('.promo-warn');
+  let msg = '';
+
+  if (qRaw !== '' || pRaw !== '') {
+    const q = parseInt(qRaw);
+    const pr = parseFloat(pRaw);
+    if (qRaw === '' || pRaw === '') {
+      msg = '⚠️ กรอกให้ครบทั้งจำนวนและราคา หรือเว้นว่างทั้งคู่เพื่อไม่ตั้งโปร';
+    } else if (isNaN(q) || q < 2) {
+      msg = '⚠️ ต้องซื้อครบอย่างน้อย 2 ชิ้น';
+    } else if (isNaN(pr) || pr <= 0) {
+      msg = '⚠️ กรอกราคาโปรให้ถูกต้อง';
+    } else if (pr >= retail) {
+      msg = `⚠️ ราคาโปรต้องถูกกว่าราคาปกติ (฿${retail.toLocaleString()}) ไม่งั้นระบบจะไม่ใช้โปรนี้`;
+    }
+  }
+
+  warnEl.textContent = msg;
+  warnEl.style.display = msg ? 'block' : 'none';
+  row.classList.toggle('promo-row-invalid', !!msg);
+}
+
+function clearPromoRow(btn) {
+  const row = btn.closest('.promo-size-row');
+  if (!row) return;
+  row.querySelector('.promo-q').value = '';
+  row.querySelector('.promo-p').value = '';
+  checkPromoRow(row.querySelector('.promo-q'));
+}
+
+async function savePromoTab() {
+  const rows = document.querySelectorAll('#promoList .promo-size-row');
+  if (!rows.length) { toast('ไม่มีสินค้าให้บันทึก'); return; }
+
+  let changed = new Set();
+  let invalidCount = 0;
+
+  rows.forEach(row => {
+    const pid = +row.dataset.pid;
+    const si  = +row.dataset.si;
+    const p   = products.find(x => x.id === pid);
+    if (!p || !p.sizes || !p.sizes[si]) return;
+    const size = p.sizes[si];
+    const retail = parseFloat(row.dataset.retail) || 0;
+
+    const qRaw = row.querySelector('.promo-q').value.trim();
+    const pRaw = row.querySelector('.promo-p').value.trim();
+    const beforeStr = JSON.stringify(size.bundle || null);
+
+    if (qRaw === '' && pRaw === '') {
+      // เว้นว่างทั้งคู่ = ไม่มีโปร → ล้างโปรชุดเดิม (ถ้ามี)
+      if (size.bundle) { delete size.bundle; changed.add(pid); }
+      return;
+    }
+
+    const q  = parseInt(qRaw);
+    const pr = parseFloat(pRaw);
+    if (qRaw === '' || pRaw === '' || isNaN(q) || q < 2 || isNaN(pr) || pr <= 0 || pr >= retail) {
+      invalidCount++;
+      return; // ข้ามแถวที่ยังกรอกไม่ถูกต้อง — ไม่บันทึกข้อมูลเสีย
+    }
+
+    const afterStr = JSON.stringify({ q, price: pr });
+    if (afterStr !== beforeStr) {
+      size.bundle = { q, price: pr };
+      changed.add(pid);
+    }
+  });
+
+  if (invalidCount) {
+    toast(`⚠️ มี ${invalidCount} รายการยังกรอกไม่ถูกต้อง ระบบข้ามไว้ก่อน (ดูคำเตือนสีแดง)`);
+  }
+  if (!changed.size) {
+    if (!invalidCount) toast('ไม่มีการเปลี่ยนแปลง');
+    return;
+  }
+
+  const btn = document.querySelector('.promo-save-all');
+  const oldTxt = btn.textContent;
+  btn.textContent = '⏳ กำลังบันทึก...';
+  btn.disabled = true;
+
+  try {
+    await Promise.all([...changed].map(pid => {
+      const p = products.find(x => x.id === pid);
+      return p ? saveOne(p) : Promise.resolve();
+    }));
+    renderGrid(); renderPMList(); renderPromoTab();
+    toast(`✅ บันทึกโปรโมชั่น ${changed.size} สินค้าแล้ว`);
+  } catch (e) {
+    toast('❌ บันทึกล้มเหลว: ' + e.message);
+  } finally {
+    btn.textContent = oldTxt;
+    btn.disabled = false;
+  }
+}
 
 // ══════════════════════════════════════════════════════════
 //  AD PRODUCT TAG — ฟังก์ชันใหม่ ไม่แก้โค้ดเดิม
