@@ -648,11 +648,21 @@ async function resolveRefInfo(refCode) {
   };
 }
 
+// 🚚⚡📦 ป้ายประเภทออเดอร์ — ใช้ร่วมกันทั้งข้อความแจ้งเตือนแอดมิน (buildAdminMsg) และ
+// Flex Message ยืนยันออเดอร์ (buildOrderConfirmFlex) กันจุดใดจุดหนึ่งลืมอัปเดตตอนเพิ่ม
+// ประเภทออเดอร์ใหม่ในอนาคต — เดิมสองจุดนี้เทียบแค่ 'delivery' ตรงๆ ถ้าไม่ตรงจะเหมาเป็น
+// "จอง/รับเอง" ทันที ทำให้ order_type อื่นๆ (เช่น 'express') ขึ้นป้ายผิดประเภท
+function orderTypeLabel(order_type) {
+  if (order_type === 'delivery') return '🚚 จัดส่ง';
+  if (order_type === 'express')  return '⚡ ส่งด่วน';
+  return '📦 จอง/รับเอง';
+}
+
 async function buildAdminMsg(order) {
   const { customer_name, items, total, order_id, created_at, phone, address, note,
           coupon_code, discount_amount, ref_code, order_type, payment_method, payment_label } = order;
   const date = new Date(created_at).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short', timeZone:'Asia/Bangkok' });
-  const typeLabel = order_type === 'delivery' ? '🚚 จัดส่ง' : '📦 จอง/รับเอง';
+  const typeLabel = orderTypeLabel(order_type);
   const payLabel  = payment_label || (payment_method === 'cod' ? '🏍️ เก็บปลายทาง' : payment_method === 'transfer' ? '📲 โอน/สแกน QR' : null);
   let msg = `🛒 ออเดอร์ใหม่! #${order_id}\n`;
   msg += `${'─'.repeat(24)}\n`;
@@ -815,7 +825,7 @@ async function buildOrderSummaryFlex(order) {
   const customerName = String(safe(order.customer_name, '-')).trim() || '-';
   // 🤝 ผู้แนะนำ (เซล/เพื่อน) — แสดงใต้ชื่อลูกค้าบนหัวการ์ด
   const refInfo = await resolveRefInfo(order.ref_code);
-  const orderTypeLabel = order.order_type === 'delivery' ? '🚚 จัดส่ง' : '📦 จอง/รับเอง';
+  const orderTypeLbl = orderTypeLabel(order.order_type);
   const payLabel = order.payment_label || (order.payment_method === 'cod' ? '🏍️ เก็บปลายทาง' : order.payment_method === 'transfer' ? '📲 โอน/สแกน QR' : null);
   const payColor = order.payment_method === 'cod' ? BRAND_RED : '#2980b9';
 
@@ -824,7 +834,7 @@ async function buildOrderSummaryFlex(order) {
     { type:'box', layout:'horizontal', margin:'sm',
       contents:[
         { type:'text', text:'ประเภท', size:'sm', color:'#8a8378', flex:1 },
-        { type:'text', text: orderTypeLabel, size:'sm', color:'#3d3428', weight:'bold', align:'end' }
+        { type:'text', text: orderTypeLbl, size:'sm', color:'#3d3428', weight:'bold', align:'end' }
       ]
     },
     ...(payLabel ? [{
