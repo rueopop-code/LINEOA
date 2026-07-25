@@ -5007,6 +5007,60 @@ function switchMoTab(tab) {
   }
 }
 
+// 🐛 BUG FIX: เดิม HTML ของฟอร์มแนบสลิป (id="slipDropArea"/"slipPreviewWrap"/"slipPreviewImg"/
+// "slipFileInput"/"slipAmountInput"/"slipRefInput"/"slipStatusMsg") ถูกก็อปวางซ้ำ 2 ที่ในไฟล์นี้
+// (branch "slip_mismatch — ส่งสลิปใหม่" กับ branch "pending_slip — ยังไม่ได้ส่งสลิป") ทำให้มี id
+// ซ้ำกันในเอกสารเดียวกัน — ตอนนี้ยังไม่พังเพราะ 2 branch นี้ต่างกันเป็น mutually exclusive
+// (render ครั้งละ branch เดียวเท่านั้นจากค่า payment_status) แต่เป็นอันตรายถ้าใครแก้โค้ดต่อในอนาคต
+// แล้วบังเอิญทำให้ 2 branch แสดงพร้อมกัน (document.getElementById จะหยิบตัวแรกเสมอ ทำให้ฟอร์ม
+// ตัวที่สองใช้งานไม่ได้เงียบๆ) — รวมเป็นฟังก์ชันเดียวใช้ร่วมกัน ลดการก็อปโค้ด และให้ id มีแค่ชุดเดียว
+// เสมอในเอกสารจริง ไม่ว่าจะ render branch ไหน
+function buildSlipUploadForm(o, variant) {
+  const isRetry   = variant === 'retry';
+  const themeColor = isRetry ? '#c0392b' : '#2980b9';
+  const borderColor = isRetry ? '#f5c6c6' : '#b3d4f0';
+  const introText  = isRetry
+    ? '📎 ส่งสลิปใหม่หลังโอนเพิ่มได้เลย'
+    : '📎 แนบรูปสลิปและกรอกยอดที่โอน ระบบจะตรวจสอบให้อัตโนมัติ';
+  const dropLabel  = isRetry ? '📎 คลิกเลือกสลิปใหม่' : '📎 คลิกเพื่อเลือกรูปสลิป';
+  const btnLabel   = isRetry ? '📤 ส่งสลิปใหม่' : '📤 ส่งสลิป';
+  const amountPlaceholder = isRetry ? `฿${Number(o.total||0).toFixed(2)}` : `${Number(o.total||0).toFixed(2)}`;
+  const amountHint = isRetry ? '' : `<div style="font-size:11px;color:#aaa;margin-top:3px;">ยอดออเดอร์: ฿${Number(o.total||0).toLocaleString()}</div>`;
+
+  return `
+        <div style="font-size:12px;color:#555;margin-bottom:10px;">${introText}</div>
+        <div style="margin-bottom:8px;">
+          ${!isRetry ? `<label style="font-size:12px;color:#888;display:block;margin-bottom:4px;">รูปสลิป *</label>` : ''}
+          <div id="slipDropArea" onclick="document.getElementById('slipFileInput').click()"
+            style="border:2px dashed ${borderColor};border-radius:10px;padding:${isRetry ? '14px' : '16px'};text-align:center;cursor:pointer;font-size:13px;color:${themeColor};background:#fff;">
+            ${dropLabel}
+            <div id="slipPreviewWrap" style="display:none;margin-top:8px;">
+              <img id="slipPreviewImg" style="max-width:100%;max-height:${isRetry ? '180px' : '200px'};border-radius:8px;object-fit:contain;" />
+            </div>
+          </div>
+          <input type="file" id="slipFileInput" accept="image/*" style="display:none;" onchange="onSlipFileChange(this)">
+        </div>
+        <div style="margin-bottom:${isRetry ? '8px' : '10px'};">
+          <label style="font-size:12px;color:#888;display:block;margin-bottom:4px;">ยอดที่โอน (บาท) *</label>
+          <input id="slipAmountInput" type="number" min="0" step="0.01"
+            placeholder="${amountPlaceholder}"
+            style="width:100%;padding:9px 12px;border:1.5px solid ${borderColor};border-radius:9px;font-size:14px;font-family:'Sarabun',sans-serif;outline:none;box-sizing:border-box;">
+          ${amountHint}
+        </div>
+        <div style="margin-bottom:${isRetry ? '8px' : '10px'};">
+          <label style="font-size:12px;color:#888;display:block;margin-bottom:4px;">รหัสอ้างอิง/เลขที่รายการ <span style="color:#bbb;">(ถ้ามี)</span></label>
+          <input id="slipRefInput" type="text" maxlength="25"
+            placeholder="ระบบจะอ่านให้อัตโนมัติ หรือกรอกเองจากสลิป"
+            style="width:100%;padding:9px 12px;border:1.5px solid ${borderColor};border-radius:9px;font-size:14px;font-family:'Sarabun',sans-serif;outline:none;box-sizing:border-box;">
+        </div>
+        <div id="slipStatusMsg" style="font-size:12px;min-height:16px;margin-bottom:6px;"></div>
+        <button onclick="submitSlip('${o.order_id}')"
+          style="width:100%;padding:11px;background:${themeColor};color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;font-family:'Sarabun',sans-serif;cursor:pointer;">
+          ${btnLabel}
+        </button>
+  `;
+}
+
 async function openOrderDetail(orderId) {
   const o = _myOrders.find(x => x.order_id === orderId);
   if (!o) return;
@@ -5079,67 +5133,11 @@ async function openOrderDetail(orderId) {
                </div>`
           }
         </div>
-        <div style="font-size:12px;color:#555;margin-bottom:10px;">📎 ส่งสลิปใหม่หลังโอนเพิ่มได้เลย</div>
-        <div style="margin-bottom:8px;">
-          <div id="slipDropArea" onclick="document.getElementById('slipFileInput').click()"
-            style="border:2px dashed #f5c6c6;border-radius:10px;padding:14px;text-align:center;cursor:pointer;font-size:13px;color:#c0392b;background:#fff;">
-            📎 คลิกเลือกสลิปใหม่
-            <div id="slipPreviewWrap" style="display:none;margin-top:8px;">
-              <img id="slipPreviewImg" style="max-width:100%;max-height:180px;border-radius:8px;object-fit:contain;" />
-            </div>
-          </div>
-          <input type="file" id="slipFileInput" accept="image/*" style="display:none;" onchange="onSlipFileChange(this)">
-        </div>
-        <div style="margin-bottom:8px;">
-          <label style="font-size:12px;color:#888;display:block;margin-bottom:4px;">ยอดที่โอน (บาท) *</label>
-          <input id="slipAmountInput" type="number" min="0" step="0.01"
-            placeholder="฿${Number(o.total||0).toFixed(2)}"
-            style="width:100%;padding:9px 12px;border:1.5px solid #f5c6c6;border-radius:9px;font-size:14px;font-family:'Sarabun',sans-serif;outline:none;box-sizing:border-box;">
-        </div>
-        <div style="margin-bottom:8px;">
-          <label style="font-size:12px;color:#888;display:block;margin-bottom:4px;">รหัสอ้างอิง/เลขที่รายการ <span style="color:#bbb;">(ถ้ามี)</span></label>
-          <input id="slipRefInput" type="text" maxlength="25"
-            placeholder="ระบบจะอ่านให้อัตโนมัติ หรือกรอกเองจากสลิป"
-            style="width:100%;padding:9px 12px;border:1.5px solid #f5c6c6;border-radius:9px;font-size:14px;font-family:'Sarabun',sans-serif;outline:none;box-sizing:border-box;">
-        </div>
-        <div id="slipStatusMsg" style="font-size:12px;min-height:16px;margin-bottom:6px;"></div>
-        <button onclick="submitSlip('${o.order_id}')"
-          style="width:100%;padding:11px;background:#c0392b;color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;font-family:'Sarabun',sans-serif;cursor:pointer;">
-          📤 ส่งสลิปใหม่
-        </button>
+        ${buildSlipUploadForm(o, 'retry')}
 
       ` : `
         <!-- ⏳ ยังไม่ได้ส่งสลิป (pending_slip หรือ null) -->
-        <div style="font-size:12px;color:#555;margin-bottom:10px;">📎 แนบรูปสลิปและกรอกยอดที่โอน ระบบจะตรวจสอบให้อัตโนมัติ</div>
-        <div style="margin-bottom:8px;">
-          <label style="font-size:12px;color:#888;display:block;margin-bottom:4px;">รูปสลิป *</label>
-          <div id="slipDropArea" onclick="document.getElementById('slipFileInput').click()"
-            style="border:2px dashed #b3d4f0;border-radius:10px;padding:16px;text-align:center;cursor:pointer;font-size:13px;color:#2980b9;background:#fff;">
-            📎 คลิกเพื่อเลือกรูปสลิป
-            <div id="slipPreviewWrap" style="display:none;margin-top:8px;">
-              <img id="slipPreviewImg" style="max-width:100%;max-height:200px;border-radius:8px;object-fit:contain;" />
-            </div>
-          </div>
-          <input type="file" id="slipFileInput" accept="image/*" style="display:none;" onchange="onSlipFileChange(this)">
-        </div>
-        <div style="margin-bottom:10px;">
-          <label style="font-size:12px;color:#888;display:block;margin-bottom:4px;">ยอดที่โอน (บาท) *</label>
-          <input id="slipAmountInput" type="number" min="0" step="0.01"
-            placeholder="${Number(o.total||0).toFixed(2)}"
-            style="width:100%;padding:9px 12px;border:1.5px solid #b3d4f0;border-radius:9px;font-size:14px;font-family:'Sarabun',sans-serif;outline:none;box-sizing:border-box;">
-          <div style="font-size:11px;color:#aaa;margin-top:3px;">ยอดออเดอร์: ฿${Number(o.total||0).toLocaleString()}</div>
-        </div>
-        <div style="margin-bottom:10px;">
-          <label style="font-size:12px;color:#888;display:block;margin-bottom:4px;">รหัสอ้างอิง/เลขที่รายการ <span style="color:#bbb;">(ถ้ามี)</span></label>
-          <input id="slipRefInput" type="text" maxlength="25"
-            placeholder="ระบบจะอ่านให้อัตโนมัติ หรือกรอกเองจากสลิป"
-            style="width:100%;padding:9px 12px;border:1.5px solid #b3d4f0;border-radius:9px;font-size:14px;font-family:'Sarabun',sans-serif;outline:none;box-sizing:border-box;">
-        </div>
-        <div id="slipStatusMsg" style="font-size:12px;min-height:16px;margin-bottom:6px;"></div>
-        <button onclick="submitSlip('${o.order_id}')"
-          style="width:100%;padding:11px;background:#2980b9;color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;font-family:'Sarabun',sans-serif;cursor:pointer;">
-          📤 ส่งสลิป
-        </button>
+        ${buildSlipUploadForm(o, 'first')}
       `}
     </div>
     ` : ''}

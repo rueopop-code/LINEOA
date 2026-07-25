@@ -1538,7 +1538,8 @@ app.get('/line-login/callback', async (req, res) => {
     // สร้าง link token แล้ว redirect ไปหน้าเพิ่มเพื่อน LINE OA ก่อน แล้วค่อยไปร้าน
     const token    = createLinkToken(lineUserId);
     const shopUrl  = SHOP_URL.replace(/\/$/, '');
-    const backendUrl2 = (process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT || 3000}`).replace(/\/$/, '');
+    // 🧹 CLEANUP: เดิมมี backendUrl2 คำนวณค่าเดียวกับ backendUrl ด้านบนซ้ำเป๊ะๆ (dead code
+    // ไม่เคยถูกใช้เลย — ESLint เตือน no-unused-vars) ลบทิ้งเพราะ backendUrl ตัวเดิมพอแล้ว
     const lineOaBasicId = process.env.LINE_OA_ID || process.env.LINE_OA_BASIC_ID || '@monshin';
     const shopTarget = `${shopUrl}?lid=${token}`;
 
@@ -2011,12 +2012,18 @@ app.get('/liff-entry', (req, res) => {
       try {
         await liff.init({ liffId: '${process.env.LIFF_ID || ''}' });
 
-        // ดึง LINE UID ผ่าน LIFF SDK
-        const profile  = await liff.getProfile();
-        const lineUid  = profile.userId;
+        // 🔒 SECURITY FIX: เดิมดึง userId ผ่าน liff.getProfile() แล้วส่ง uid ดิบๆ ไปให้
+        // backend เชื่อตรงๆ (ดูคำอธิบายเต็มที่ /liff-token ด้านล่าง) — เปลี่ยนมาส่ง
+        // LIFF access token แทน ให้ server เป็นคนตรวจสอบ/ยืนยัน userId กับ LINE เองเท่านั้น
+        const accessToken = liff.getAccessToken();
+        if (!accessToken) throw new Error('ไม่ได้รับ LIFF access token');
 
-        // ส่ง UID ไปที่ backend เพื่อสร้าง token
-        const res = await fetch('/liff-token?uid=' + encodeURIComponent(lineUid));
+        // ส่ง access token ไปที่ backend เพื่อยืนยันตัวตนกับ LINE แล้วสร้าง token
+        const res = await fetch('/liff-token', {
+          method : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body   : JSON.stringify({ access_token: accessToken })
+        });
         const data = await res.json();
 
         if (data.url) {
@@ -2036,11 +2043,35 @@ app.get('/liff-entry', (req, res) => {
 </html>`);
 });
 
-// ── GET /liff-token ───────────────────────────────────────
-// เรียกจาก /liff-entry — รับ LINE UID แล้วคืน shopLink พร้อม ?lid=TOKEN
-app.get('/liff-token', async (req, res) => {
-  const lineUserId = req.query.uid;
-  if (!lineUserId) return res.status(400).json({ error: 'missing uid' });
+// ── POST /liff-token ───────────────────────────────────────
+// เรียกจาก /liff-entry — รับ LIFF access token แล้วคืน shopLink พร้อม ?lid=TOKEN
+// 🔴 SECURITY FIX (สำคัญมาก): เดิม endpoint นี้เป็น GET /liff-token?uid=xxx และเชื่อค่า uid
+// ที่ client ส่งมาตรงๆ โดยไม่มีการตรวจสอบใดๆ เลยว่าเป็นของจริงหรือไม่ — ใครก็ยิง request
+// ตรงๆ (ไม่ต้องเปิดผ่าน LIFF/แอป LINE เลยด้วยซ้ำ) พร้อม uid ปลอม หรือ uid จริงของคนอื่น
+// (ถ้ารู้/เดารูปแบบได้) ก็จะได้ link_token ที่ใช้ยืนยันตัวตนเป็นเจ้าของ LINE UID นั้นกลับไปทันที
+// แล้วเอา token นี้ไปเรียก POST /link-line ผูกกับ customer_id ใดก็ได้ — เท่ากับปลอมตัวเป็น
+// เจ้าของบัญชี LINE คนอื่นได้โดยไม่ต้องพิสูจน์ตัวตนอะไรเลย (เสี่ยงขโมยการแจ้งเตือนออเดอร์/
+// เข้าไปแทรกแซงแชทของ customer_id คนอื่นได้ ถ้าเดา/รู้ customer_id ของเหยื่อ)
+// แก้โดยเปลี่ยนมารับ LIFF access token แทน uid ดิบๆ แล้ว server ยืนยัน token นี้กับ LINE
+// โดยตรงผ่าน https://api.line.me/v2/profile (เหมือนแพทเทิร์นเดียวกับที่ /line-login/callback
+// ใช้ยืนยัน LINE Login OAuth อยู่แล้ว) เอา userId ที่ LINE ยืนยันกลับมาเท่านั้น ไม่เชื่อ client อีกต่อไป
+app.post('/liff-token', rateLimit(20), async (req, res) => {
+  const accessToken = req.body?.access_token;
+  if (!accessToken) return res.status(400).json({ error: 'missing access_token' });
+
+  let lineUserId;
+  try {
+    const profRes = await fetch('https://api.line.me/v2/profile', {
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+    if (!profRes.ok) throw new Error(`LINE profile verify failed: ${profRes.status}`);
+    const profile = await profRes.json();
+    lineUserId = profile.userId;
+    if (!lineUserId) throw new Error('ไม่ได้รับ userId จาก LINE');
+  } catch (e) {
+    console.warn('liff-token verify failed:', e.message);
+    return res.status(401).json({ error: 'ยืนยันตัวตนกับ LINE ไม่สำเร็จ กรุณาลองใหม่' });
+  }
 
   const token    = createLinkToken(lineUserId);
   const shopUrl  = SHOP_URL.replace(/\/$/, '');
@@ -2131,21 +2162,25 @@ app.post('/send-order', async (req, res) => {
           // discountAmount ที่ client ส่งมาตรงๆ (จำกัดแค่ไม่ให้เกิน total ที่ client ก็ส่งมาเอง
           // เหมือนกัน — ไม่ป้องกันอะไรเลยจริงๆ) ตอนนี้คำนวณส่วนลดใหม่จากกฎคูปองจริง +
           // verifiedTotal เท่านั้น ไม่สนใจ discountAmount จาก client อีกต่อไป
-          finalDiscount     = Math.min(calcDiscount(coup, verifiedTotal), verifiedTotal);
-          appliedCouponId   = coup.id;
-          appliedCouponCode = coup.code;
-          await supabase.from('coupons')
-            .update({ used_count: (coup.used_count || 0) + 1 })
-            .eq('id', coup.id);
-          // 🔒 บันทึกการใช้คูปอง — ป้องกันใช้ซ้ำแม้เปลี่ยน customer_id
-          await supabase.from('coupon_usages').insert([{
-            coupon_id    : coup.id,
-            line_user_id : lineUidForCoupon || null,
-            phone        : normPhone || null,
-            customer_id  : customerId
-          }]).then(({ error: e }) => {
-            if (e) console.warn('coupon_usages insert failed:', e.message);
-          });
+          // 🔒 BUG FIX: เพิ่ม used_count แบบ atomic (กัน race condition ตอนคูปองเหลือโควตา
+          // สุดท้ายพอดีแล้วมี 2 ออเดอร์ยิงพร้อมกัน) — ดู incrementCouponUsageAtomic ด้านบน
+          const incremented = await incrementCouponUsageAtomic(coup.id, coup.usage_limit, coup.used_count);
+          if (!incremented) {
+            console.warn(`🚫 coupon ${coup.code} เต็มโควตาพอดีตอนกำลังยืนยัน (แพ้ race ให้ออเดอร์อื่น) — ข้ามการใช้คูปองสำหรับออเดอร์นี้`);
+          } else {
+            finalDiscount     = Math.min(calcDiscount(coup, verifiedTotal), verifiedTotal);
+            appliedCouponId   = coup.id;
+            appliedCouponCode = coup.code;
+            // 🔒 บันทึกการใช้คูปอง — ป้องกันใช้ซ้ำแม้เปลี่ยน customer_id
+            await supabase.from('coupon_usages').insert([{
+              coupon_id    : coup.id,
+              line_user_id : lineUidForCoupon || null,
+              phone        : normPhone || null,
+              customer_id  : customerId
+            }]).then(({ error: e }) => {
+              if (e) console.warn('coupon_usages insert failed:', e.message);
+            });
+          }
         } else {
           console.warn(`🚫 coupon ${coup.code} already used by LINE=${lineUidForCoupon?.slice(0,12)} phone=${normPhone}`);
         }
@@ -4035,6 +4070,32 @@ function getStatusEmoji(s) {
 // ══════════════════════════════════════════════════════════
 
 // ── helper: คำนวณส่วนลดจาก coupon ──────────────────────────
+// 🔒 SECURITY/BUG FIX: เดิมตอนเพิ่ม used_count ของคูปอง ใช้วิธี "อ่านค่ามาเก็บไว้ในตัวแปร coup
+// แล้วค่อยเขียนทับด้วย coup.used_count+1" (read-then-write) ซึ่งไม่ atomic — ถ้ามี 2 คำสั่งซื้อ
+// ยิงมาพร้อมกันตอนคูปองเหลือโควตาสุดท้ายพอดี ทั้งคู่จะอ่านเห็น used_count เดิมเหมือนกัน ผ่าน
+// เงื่อนไข usage_limit เหมือนกัน แล้วเขียนทับกันเอง (race condition / TOCTOU) → คูปองถูกใช้เกิน
+// โควตาที่ตั้งไว้จริงได้ — ฟังก์ชันนี้เพิ่มค่าแบบ atomic ผ่าน RPC ในฐานข้อมูลเอง (แพทเทิร์นเดียว
+// กับ deduct_stock ที่ใช้ลดสต็อกสินค้าอยู่แล้ว) ต้องสร้าง RPC ตาม SQL ในไฟล์
+// sql/increment_coupon_usage.sql ก่อน ถ้ายังไม่ได้สร้าง (RPC ไม่พบ) จะ fallback ไปใช้วิธีเดิม
+// ชั่วคราวกันของเสีย พร้อม log เตือนให้รีบรัน SQL migration
+async function incrementCouponUsageAtomic(couponId, usageLimit, currentUsedCount) {
+  try {
+    const { data, error } = await supabase.rpc('increment_coupon_usage', {
+      p_coupon_id  : couponId,
+      p_usage_limit: (usageLimit === null || usageLimit === undefined) ? null : usageLimit
+    });
+    if (error) throw error;
+    // RPC คืน true = เพิ่มสำเร็จ (ยังไม่เกินโควตา), false = เต็มโควตาพอดี (แพ้ race ให้อีกออเดอร์)
+    return data !== false;
+  } catch (e) {
+    console.warn(`⚠️ increment_coupon_usage RPC ยังไม่พร้อมใช้งาน (${e.message}) — fallback เป็น read-then-write ชั่วคราว (ไม่ atomic — กรุณารัน sql/increment_coupon_usage.sql บน Supabase ด่วน)`);
+    await supabase.from('coupons')
+      .update({ used_count: (currentUsedCount || 0) + 1 })
+      .eq('id', couponId);
+    return true;
+  }
+}
+
 function calcDiscount(coupon, orderTotal) {
   if (!coupon || !coupon.is_active) return 0;
   if (coupon.min_order && orderTotal < coupon.min_order) return 0;
@@ -5197,6 +5258,39 @@ app.post('/reveal-coupon', rateLimit(20), async (req, res) => {
   if (coupon.min_order > 0 && total < coupon.min_order)
     return res.status(400).json({ error: `ต้องสั่งขั้นต่ำ ฿${coupon.min_order.toLocaleString()} ถึงจะใช้คูปองนี้ได้` });
 
+  // 🐛 BUG FIX: เดิม endpoint นี้รับ customerId มาแต่ไม่เคยใช้เลย (unused var) — ต่างจาก
+  // /validate-coupon ที่เช็ค coupon_usages จาก LINE UID ก่อนให้ใช้คูปองซ้ำ ทำให้ลูกค้าคนเดิม
+  // "เปิดเผยโค้ดลับ" คูปองที่เคยใช้ไปแล้วซ้ำได้เรื่อยๆ ผ่าน endpoint นี้ (แม้ตอน checkout จริงที่
+  // /send-order จะยังกันซ้ำอยู่ แต่พฤติกรรม 2 endpoint ไม่ตรงกัน และลูกค้าจะเห็นส่วนลดโชว์ผิดๆ
+  // ทั้งที่ใช้ไม่ได้จริง) — เพิ่มเช็คให้เหมือน /validate-coupon
+  if (customerId) {
+    try {
+      let lineUidForReveal = null;
+      const linkRowId = `LINK-${String(customerId).slice(0, 20)}`;
+      const { data: linkRow } = await supabase.from('orders')
+        .select('line_user_id').eq('order_id', linkRowId)
+        .not('line_user_id', 'is', null).maybeSingle();
+      if (linkRow?.line_user_id) lineUidForReveal = linkRow.line_user_id;
+
+      if (!lineUidForReveal) {
+        const { data: luRow } = await supabase.from('line_users')
+          .select('user_id').eq('customer_id', customerId)
+          .order('last_seen', { ascending: false }).limit(1).maybeSingle();
+        if (luRow?.user_id) lineUidForReveal = luRow.user_id;
+      }
+
+      if (lineUidForReveal) {
+        const { data: usageByUid } = await supabase.from('coupon_usages')
+          .select('id').eq('coupon_id', coupon.id).eq('line_user_id', lineUidForReveal)
+          .limit(1).maybeSingle();
+        if (usageByUid)
+          return res.status(400).json({ error: 'คูปองนี้ถูกใช้ไปแล้วในบัญชีของคุณ' });
+      }
+    } catch (e) {
+      console.warn('reveal-coupon usage check skipped:', e.message);
+    }
+  }
+
   const discountAmount = calcDiscount(coupon, total);
   res.json({ success: true, coupon, discountAmount });
 });
@@ -5213,7 +5307,9 @@ app.post('/reveal-coupon', rateLimit(20), async (req, res) => {
 app.get('/sales/:salesId', (req, res) => {
   const salesId  = req.params.salesId;
   const baseUrl  = (process.env.SHOP_URL || `https://${req.headers.host}`).replace(/\/$/, '');
-  const shopUrl  = `${baseUrl}/?ref=${salesId}`;
+  // 🧹 HARDENING: เดิมแปะ salesId ดิบๆ ต่อท้าย query string โดยไม่ encode — ถ้ารหัสเซลมีอักขระ
+  // พิเศษ (เช่น &, #, space) จะทำให้ URL ผิดรูปหรือพารามิเตอร์อื่นถูกตัดหายไปโดยไม่ได้ตั้งใจ
+  const shopUrl  = `${baseUrl}/?ref=${encodeURIComponent(salesId)}`;
   const lineOaId = process.env.LINE_OA_ID || '';
   const lineAddUrl = lineOaId ? `https://line.me/R/ti/p/${encodeURIComponent(lineOaId)}` : null;
   const shopName = process.env.SHOP_NAME || 'ร้านของเรา';
@@ -5304,7 +5400,9 @@ app.get('/sales/:salesId', (req, res) => {
 app.get('/invite/:refCode', (req, res) => {
   const refCode  = req.params.refCode;
   const baseUrl  = (process.env.SHOP_URL || `https://${req.headers.host}`).replace(/\/$/, '');
-  const shopUrl  = `${baseUrl}/?ref=${refCode}`;
+  // 🧹 HARDENING: เดิมแปะ refCode ดิบๆ ต่อท้าย query string โดยไม่ encode — เหตุผลเดียวกับ
+  // /sales/:salesId ด้านบน (กัน URL ผิดรูปถ้ารหัสมีอักขระพิเศษ)
+  const shopUrl  = `${baseUrl}/?ref=${encodeURIComponent(refCode)}`;
   const lineOaId = process.env.LINE_OA_ID || '';                 // เช่น @menshop หรือ @Uxxxxxxxx
   const lineAddUrl = lineOaId
     ? `https://line.me/R/ti/p/${encodeURIComponent(lineOaId)}`
