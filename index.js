@@ -3,9 +3,31 @@ const express = require('express');
 const cors    = require('cors');
 const fetch   = require('node-fetch');
 const path    = require('path');
+const crypto  = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 
+// 🔒 SECURITY HARDENING: เดิมจุดเทียบ ADMIN_API_KEY หลายจุด (requireAdminKey, requirePerm,
+// /admin/verify, /messages/:orderId, POST /messages) ใช้ "===" เทียบ string ตรงๆ ซึ่งไม่ใช่
+// timing-safe ต่างจากจุดอื่นในระบบเดียวกัน (login password ใช้ timingSafeEqual, webhook
+// signature ก็แก้ไปแล้วก่อนหน้า) — ความเสี่ยงจริงต่ำ เพราะมี rate limit + brute-force lockout
+// (10 ครั้งก่อนล็อก) กันการยิงหลายพันครั้งเพื่อวัด timing อยู่แล้ว แต่แก้ให้สม่ำเสมอกันทั้งระบบ
+function safeEqual(a, b) {
+  const bufA = Buffer.from(String(a || ''));
+  const bufB = Buffer.from(String(b || ''));
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
 const app = express();
+// 🔒 SECURITY FIX: เดิมไม่เคยตั้ง 'trust proxy' เลย — เวลา deploy จริงบน Railway/Render/Nixpacks
+// (ตามที่ nixpacks.toml บ่งบอก) แอปจะรันหลัง reverse proxy เสมอ ถ้าไม่ตั้งค่านี้ req.ip ของ
+// Express จะอ่านได้แค่ IP ของตัว proxy เอง (ตัวเดียวกันสำหรับทุกคนที่เข้าเว็บ) ไม่ใช่ IP ลูกค้าจริง
+// ผลคือระบบกันสแปม/บรูทฟอร์ซที่ผูกกับ req.ip ทั้งหมด (rateLimit(), adminBruteForceGuard,
+// rate limit ของ /validate-coupon /reveal-coupon ที่เพิ่งแก้ไป) จะพังทันที — แย่ที่สุดคือถ้ามีคน
+// พยายามเดารหัสแอดมินผิดจนโดนล็อก จะไปล็อกทุกคนที่ใช้เว็บพร้อมกันด้วย (เพราะ IP เดียวกันหมด)
+// ตั้งเป็น 1 = เชื่อ X-Forwarded-For จาก reverse proxy ชั้นแรกสุดเท่านั้น (มาตรฐานสำหรับ
+// deploy หลัง proxy ชั้นเดียวแบบ Railway/Render/Heroku)
+app.set('trust proxy', 1);
 // CORS — รองรับ preflight (OPTIONS) จาก GitHub Pages และทุก domain
 app.use(cors({
   origin: '*',
@@ -33,7 +55,7 @@ function requireAdminKey(req, res, next) {
   const key = process.env.ADMIN_API_KEY || '';
   if (!key) return next();
   const got = req.headers['x-admin-key'] || req.query.admin_key || '';
-  if (got === key) return next();
+  if (safeEqual(got, key)) return next();
   console.warn(`🚫 admin endpoint ถูกปฏิเสธ: ${req.method} ${req.path} จาก ${req.ip}`);
   return res.status(401).json({ error: 'unauthorized — ต้องใส่ Admin API Key' });
 }
@@ -119,7 +141,15 @@ process.on('uncaughtException',  (e) => logError('uncaughtException', e));
 const _crypto = require('crypto');
 const ALL_PERMS = ['orders','customers','reports','sales','coupons','payments','products','shop_settings','backup','users','settings','system'];
 
-function _authSecret() { return process.env.AUTH_SECRET || process.env.ADMIN_API_KEY || 'monshin-no-secret'; }
+// 🔴 SECURITY FIX: เดิม fallback เป็น string คงที่ 'monshin-no-secret' ที่มองเห็นได้ในซอร์สโค้ด
+// นี้เอง (ที่อาจอยู่ใน repo สาธารณะ) — ถ้าร้านไม่ได้ตั้งทั้ง AUTH_SECRET และ ADMIN_API_KEY เลย
+// ใครก็ตามที่เคยเห็นโค้ดนี้จะรู้ secret ที่ใช้เซ็น token และปลอม token แอดมิน (เช่น role:'owner')
+// ขึ้นมาเองได้ทันที โดยไม่ต้องรู้รหัสผ่านจริงเลย — เปลี่ยนเป็นสุ่ม secret ใหม่ทุกครั้งที่เซิร์ฟเวอร์
+// เริ่มทำงาน (ถ้าไม่ได้ตั้ง env ไว้) แทน ผลข้างเคียงที่ยอมรับได้: ถ้าไม่ตั้ง AUTH_SECRET เอง
+// token จะหมดอายุทันทีที่เซิร์ฟเวอร์ restart (บังคับให้ต้อง login ใหม่) ปลอดภัยกว่ามากเมื่อเทียบกับ
+// การใช้ secret ที่รู้กันทั่วไปแบบเดิม — แนะนำให้ตั้ง AUTH_SECRET เองเพื่อไม่ให้ token หลุดตอน restart
+const _fallbackAuthSecret = _crypto.randomBytes(32).toString('hex');
+function _authSecret() { return process.env.AUTH_SECRET || process.env.ADMIN_API_KEY || _fallbackAuthSecret; }
 function _hashPw(pw, salt) { return _crypto.scryptSync(String(pw), salt, 32).toString('hex'); }
 function _b64u(s) { return Buffer.from(s).toString('base64url'); }
 
@@ -145,11 +175,33 @@ function verifyAuthToken(token) {
 }
 
 // middleware: ผ่านได้ถ้า (1) Master Key ถูกต้อง หรือ (2) token ผู้ใช้ที่มีสิทธิ์ perm นั้น
+// 🔴 SECURITY FIX (สำคัญมาก): เดิม "ยังไม่ได้ตั้ง ADMIN_API_KEY → ปล่อยผ่านหมด" ใช้เงื่อนไข
+// แค่ "ADMIN_API_KEY ว่างไหม" เท่านั้น — ทำให้ถ้าร้านตั้งระบบ username/password ผ่าน /auth/setup
+// ไปแล้ว (คิดว่าตัวเองล็อกระบบแล้ว) แต่ลืมตั้ง ADMIN_API_KEY แยกต่างหาก (ซึ่งดูเหมือนไม่จำเป็น
+// เพราะมี login แล้ว) จะกลายเป็นว่า**ใครก็เข้าทุก endpoint ที่ควรมีแต่แอดมินได้โดยไม่ต้อง
+// login เลย** เพราะโค้ดเช็คแค่ "มี ADMIN_API_KEY ไหม" ไม่ได้เช็คว่า "มีบัญชีแอดมินจริงในระบบ
+// หรือยัง" — แก้โดยเพิ่มเช็คว่ามีบัญชี owner ในฐานข้อมูลแล้วหรือยัง ถ้ามีแล้ว (แปลว่าร้าน
+// ตั้งใจใช้ระบบ login จริง) ต้องผ่าน token/master key เท่านั้น จะปล่อยผ่านแบบไม่ล็อกได้
+// เฉพาะตอนที่ยังไม่มีบัญชีแอดมินเลยจริงๆ (fresh install ก่อนกด setup ครั้งแรก) เท่านั้น
+let _ownerExistsCache = null; // cache สั้นๆ กันยิง DB ถี่เกินไปตอนไม่มี token (TTL 30 วิ)
+let _ownerExistsCacheAt = 0;
+async function _ownerAccountExists() {
+  const now = Date.now();
+  if (_ownerExistsCache !== null && (now - _ownerExistsCacheAt) < 30000) return _ownerExistsCache;
+  try {
+    const { count } = await supabase.from('admin_users').select('id', { count: 'exact', head: true }).eq('role', 'owner');
+    _ownerExistsCache = (count || 0) > 0;
+  } catch (_) {
+    _ownerExistsCache = false; // ต่อ DB ไม่ได้ → ปฏิบัติเหมือนยังไม่มีบัญชี (fail-open เท่าพฤติกรรมเดิม เพื่อไม่ให้ระบบใช้งานไม่ได้ตอน DB ล่ม)
+  }
+  _ownerExistsCacheAt = now;
+  return _ownerExistsCache;
+}
 function requirePerm(perm) {
-  return (req, res, next) => {
+  return async (req, res, next) => {
     const masterKey = process.env.ADMIN_API_KEY || '';
     const gotKey = req.headers['x-admin-key'] || req.query.admin_key || '';
-    if (masterKey && gotKey === masterKey) {
+    if (masterKey && safeEqual(gotKey, masterKey)) {
       req.adminUser = { role: 'owner', username: '__master__', master: true };
       return next();
     }
@@ -161,7 +213,16 @@ function requirePerm(perm) {
       if (!perm || (Array.isArray(u.perms) && u.perms.includes(perm))) return next();
       return res.status(403).json({ error: 'ไม่มีสิทธิ์ใช้งานส่วนนี้ (' + perm + ')' });
     }
-    if (!masterKey) return next(); // ยังไม่ได้ตั้งระบบล็อกเลย → ทำงานแบบเดิม
+    // 🐛 BUG FIX: เดิมถ้ายังไม่ได้ตั้ง ADMIN_API_KEY (masterKey ว่าง) จุดนี้จะ next() โดยไม่ตั้ง
+    // req.adminUser เลย ทำให้ route ที่อ้างถึง req.adminUser.role/.username (เช่น /auth/users
+    // POST/PATCH/DELETE) พังด้วย TypeError แบบไม่สม่ำเสมอ — บาง endpoint (GET /auth/users)
+    // เปิดโล่งไม่ต้องล็อกอินเลยด้วย ในขณะที่บาง endpoint ดันพังเพราะ me.role เป็น undefined
+    // (ตั้งใจให้ "ทำงานแบบเดิม" เมื่อยังไม่ได้ตั้งระบบล็อก — คงพฤติกรรมเดิมไว้ แต่ตั้ง
+    // req.adminUser ให้เป็นค่า placeholder ที่ปลอดภัยเสมอ กันโค้ดส่วนอื่น crash โดยไม่ตั้งใจ)
+    if (!masterKey && !(await _ownerAccountExists())) {
+      req.adminUser = { role: 'owner', username: '__unauthenticated__', perms: ALL_PERMS };
+      return next();
+    }
     return res.status(401).json({ error: 'unauthorized — กรุณาเข้าสู่ระบบ' });
   };
 }
@@ -409,9 +470,97 @@ async function shGetHoursMsg() {
   } catch(e) { return ''; }
 }
 
+// 🔒 SECURITY FIX (สำคัญที่สุดในระบบ): เดิม /send-order เชื่อค่า items[].price และ total
+// ที่ส่งมาจาก client (เบราว์เซอร์) ตรงๆ ทั้งหมด — ราคาต่อชิ้น/ราคารวมคำนวณฝั่งหน้าเว็บล้วนๆ
+// (ดู cartSubtotal/getCartLinePrice/calcBundleLine ใน index.html) ฝั่ง backend ไม่เคยตรวจสอบ
+// กับราคาจริงในตาราง products เลย — ใครก็เรียก POST /send-order ตรงๆ (ข้ามเบราว์เซอร์ เช่นด้วย
+// curl/Postman) ส่ง items ของจริงแต่ price/total ต่ำกว่าความเป็นจริงมากๆ ก็สั่งซื้อได้เกือบฟรี
+// ฟังก์ชันนี้คำนวณราคาที่ "ถูกต้องตามจริง" ของแต่ละ item ใหม่ฝั่ง server โดยจำลอง logic เดียวกับ
+// getCartLinePrice/calcBundleLine ในหน้าเว็บทุกกระเบียดนิ้ว (รวม tier แบบรวม qty ข้ามไซซ์ที่ราคา
+// เท่ากันในสินค้าเดียวกัน + โปรชุด) แล้วคืนราคาที่ยืนยันแล้วให้ /send-order ใช้แทนค่าที่ client ส่งมา
+async function computeVerifiedItemPricing(items) {
+  const productIds = [...new Set(items.map(it => it.productId).filter(id => id !== undefined && id !== null))];
+  if (!productIds.length) return { ok: false, reason: 'ไม่มี productId ในรายการสินค้า' };
+
+  const { data: products, error } = await supabase.from('products').select('*').in('id', productIds);
+  if (error) return { ok: false, reason: 'ตรวจสอบราคาสินค้าไม่ได้: ' + error.message };
+  const productMap = new Map((products || []).map(p => [String(p.id), p]));
+
+  // รวม qty ต่อ (productId + ราคาฐานของไซซ์) เหมือนที่ getEffectiveQty/getCartLinePrice ทำ
+  // ข้าม item ที่เป็นส่วนโปรชุด (isBundle) เพราะโปรชุดไม่ใช้ tier
+  const qtyByGroup = new Map();
+  const resolved = [];
+
+  for (const it of items) {
+    const qty = Number(it.qty);
+    if (!it.productId || !it.sizeName || !Number.isFinite(qty) || qty <= 0) {
+      return { ok: false, reason: `รายการสินค้าไม่ถูกต้อง (productId/sizeName/qty) — ${it.name || ''}` };
+    }
+    const product = productMap.get(String(it.productId));
+    if (!product) return { ok: false, reason: `ไม่พบสินค้า id=${it.productId} ในระบบ (อาจถูกลบไปแล้ว)` };
+    const size = (product.sizes || []).find(s => s.n === it.sizeName);
+    if (!size) return { ok: false, reason: `ไม่พบไซซ์ "${it.sizeName}" ของสินค้า "${product.name || it.productId}"` };
+
+    resolved.push({ it, qty, size });
+    const bundle = (size.bundle && size.bundle.q >= 2 && size.bundle.price > 0 && size.bundle.price < size.p) ? size.bundle : null;
+    if (!bundle && !it.isBundle) {
+      const key = `${it.productId}::${size.p}`;
+      qtyByGroup.set(key, (qtyByGroup.get(key) || 0) + qty);
+    }
+  }
+
+  let verifiedTotal = 0;
+  const verifiedItems = [];
+  for (const { it, qty, size } of resolved) {
+    const bundle = (size.bundle && size.bundle.q >= 2 && size.bundle.price > 0 && size.bundle.price < size.p) ? size.bundle : null;
+    let unitPrice;
+
+    if (bundle && it.isBundle) {
+      // ส่วนที่ได้ราคาโปรชุด — ราคาต่อชิ้นต้องเท่ากับ bundle.price เป๊ะ
+      unitPrice = bundle.price;
+    } else if (bundle && !it.isBundle) {
+      // ส่วนเกินโปรชุด (คิดราคาปกติเสมอ ไม่ใช้ tier — ตรงตาม calcBundleLine ฝั่งหน้าเว็บ)
+      unitPrice = size.p;
+    } else {
+      // ไม่มีโปรชุด → ใช้ tier ตาม qty รวมของกลุ่ม (product+ราคาฐานเดียวกัน)
+      const tiers = Array.isArray(size.tiers) ? size.tiers : [];
+      if (tiers.length) {
+        const key = `${it.productId}::${size.p}`;
+        const groupQty = qtyByGroup.get(key) || qty;
+        const sorted = [...tiers].sort((a, b) => b.minQty - a.minQty);
+        const matched = sorted.find(t => groupQty >= t.minQty);
+        unitPrice = matched ? matched.price : size.p;
+      } else {
+        unitPrice = size.p;
+      }
+    }
+
+    verifiedItems.push({ ...it, price: unitPrice });
+    verifiedTotal += unitPrice * qty;
+  }
+
+  return { ok: true, items: verifiedItems, verifiedTotal };
+}
+
 // normalize เบอร์โทร — เอาเฉพาะตัวเลข
 function normalizePhone(p) {
   return String(p || '').replace(/\D/g, '');
+}
+
+// 🔒 SECURITY FIX: เดิม /sales/:salesId และ /invite/:refCode เอาค่าจาก URL (req.params) ที่ใครก็
+// พิมพ์อะไรก็ได้ไปแปะในหน้า HTML ตรงๆ โดยไม่ escape เลย (เช่น <div>...${salesId}</div>) — ทำให้
+// ใครก็สร้างลิงก์แชร์ เช่น /sales/<script>alert(document.cookie)</script> แล้วส่งให้เหยื่อกดได้
+// (Reflected XSS) — ฟังก์ชันนี้ escape อักขระพิเศษของ HTML ก่อนแปะลง body เสมอ
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, m => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[m]));
+}
+// 🔒 ใช้คู่กับ JSON.stringify() ตอนแปะค่าลงใน <script> — JSON.stringify เองไม่ escape "</script>"
+// ถ้าค่าที่ได้จาก user มีคำว่า </script> ปนอยู่ เบราว์เซอร์จะปิด <script> ก่อนกำหนดแล้วรันโค้ด
+// ที่แปะต่อท้ายมาแทน ฟังก์ชันนี้เปลี่ยน "<" เป็น \u003c กันไม่ให้ปิด tag ก่อนกำหนดได้
+function safeJsonForScript(v) {
+  return JSON.stringify(v).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
 }
 
 // ─── Helpers ──────────────────────────────────────────────
@@ -1907,6 +2056,19 @@ app.post('/send-order', async (req, res) => {
   if (!customerId || !customerName || !items?.length || total == null)
     return res.status(400).json({ error: 'ข้อมูลไม่ครบ (customerId/customerName/items/total)' });
 
+  // 🔒 SECURITY FIX: ตรวจ/คำนวณราคาสินค้าใหม่ฝั่ง server จากตาราง products จริง ไม่เชื่อ
+  // items[].price / total ที่ client ส่งมาอีกต่อไป (ดูคำอธิบายเต็มที่ computeVerifiedItemPricing)
+  const pricing = await computeVerifiedItemPricing(items);
+  if (!pricing.ok) {
+    logError('send-order-price-verify', new Error(pricing.reason), { customerId });
+    return res.status(400).json({ error: pricing.reason });
+  }
+  const verifiedItems = pricing.items;
+  const verifiedTotal = pricing.verifiedTotal;
+  if (Math.abs(verifiedTotal - Number(total)) > 1) {
+    console.warn(`⚠️ ยอดที่ client ส่งมา (${total}) ไม่ตรงกับยอดที่คำนวณจริง (${verifiedTotal}) customer=${customerId} — ใช้ยอดที่คำนวณจริงแทน`);
+  }
+
   // ── ตรวจสอบและ apply coupon ────────────────────────────
   let appliedCouponId   = null;
   let appliedCouponCode = null;
@@ -1955,7 +2117,11 @@ app.post('/send-order', async (req, res) => {
         }
 
         if (!alreadyUsedCoupon) {
-          finalDiscount     = Math.min(Number(discountAmount), total);
+          // 🔒 SECURITY FIX: เดิม finalDiscount = Math.min(discountAmount, total) เชื่อ
+          // discountAmount ที่ client ส่งมาตรงๆ (จำกัดแค่ไม่ให้เกิน total ที่ client ก็ส่งมาเอง
+          // เหมือนกัน — ไม่ป้องกันอะไรเลยจริงๆ) ตอนนี้คำนวณส่วนลดใหม่จากกฎคูปองจริง +
+          // verifiedTotal เท่านั้น ไม่สนใจ discountAmount จาก client อีกต่อไป
+          finalDiscount     = Math.min(calcDiscount(coup, verifiedTotal), verifiedTotal);
           appliedCouponId   = coup.id;
           appliedCouponCode = coup.code;
           await supabase.from('coupons')
@@ -1977,7 +2143,7 @@ app.post('/send-order', async (req, res) => {
     }
   }
 
-  const finalTotal = Math.max(0, total - finalDiscount);
+  const finalTotal = Math.max(0, verifiedTotal - finalDiscount);
 
   // ── parse + validate พิกัด GPS ──
   // 1) ลองรับจาก mapLat/mapLng ก่อน (ทางที่ดีที่สุด — ส่งแยกฟิลด์)
@@ -2017,7 +2183,7 @@ app.post('/send-order', async (req, res) => {
     customer_name: customerName,
     line_name: lineName || customerName,
     phone: phone || null, address: address || null, note: note || extra || null,
-    items, total: finalTotal, status: 'pending', created_at,
+    items: verifiedItems, total: finalTotal, status: 'pending', created_at,
     order_type: orderType || 'pickup',
     map_lat: hasValidPin ? lat : null,
     map_lng: hasValidPin ? lng : null,
@@ -2047,7 +2213,7 @@ app.post('/send-order', async (req, res) => {
   }
 
   // ✂️ ลด stock ของแต่ละ item (ถ้า products มี stock tracking)
-  for (const it of items) {
+  for (const it of verifiedItems) {
     if (!it.productId || !it.sizeName) continue; // skip ถ้า items เก่าไม่มี productId
     try {
       // ใช้ RPC function ที่สร้างไว้
@@ -2067,7 +2233,7 @@ app.post('/send-order', async (req, res) => {
   const summaryMsg =
     `🎉 ขอบคุณสำหรับการสั่งซื้อ คุณ ${customerName}\n\n` +
     `📦 ออเดอร์ #${order_id}\n` +
-    items.map(i => `• ${i.emoji||''} ${i.name} ×${i.qty} = ฿${(i.qty*i.price).toLocaleString()}`).join('\n') +
+    verifiedItems.map(i => `• ${i.emoji||''} ${i.name} ×${i.qty} = ฿${(i.qty*i.price).toLocaleString()}`).join('\n') +
     (finalDiscount > 0 ? `\n🎟️ ส่วนลด: -฿${finalDiscount.toLocaleString()}` : '') +
     `\n\n💰 ยอดรวม: ฿${finalTotal.toLocaleString()}\n` +
     `\nร้านจะยืนยันและแจ้งสถานะให้ทราบเร็วๆ นี้ค่ะ 🙏` +
@@ -2637,8 +2803,7 @@ app.get('/admin/verify', rateLimit(10), adminBruteForceGuard, (req, res) => {
   if (!key) return res.json({ ok: true });
 
   const got = req.headers['x-admin-key'] || req.query.admin_key || '';
-  if (got === key) {
-    _adminFailBuckets.delete(ip); // ✅ ถูก → รีเซ็ทตัวนับที่ผิดไว้ก่อนหน้าทิ้งทันที
+  if (safeEqual(got, key)) {
     return res.json({ ok: true });
   }
 
@@ -2673,6 +2838,12 @@ app.get('/admin/export-orders', requirePerm('backup'), async (req, res) => {
     const esc = v => {
       if (v === null || v === undefined) return '';
       let s = typeof v === 'object' ? JSON.stringify(v) : String(v);
+      // 🔒 SECURITY FIX: กัน CSV/Formula Injection — ฟิลด์ที่มาจากลูกค้า (customer_name, note,
+      // address, line_name ฯลฯ) เป็นข้อมูลที่ควบคุมไม่ได้ ถ้าลูกค้าพิมพ์ขึ้นต้นด้วย = + - @
+      // หรือ tab/CR แล้วแอดมินเปิดไฟล์ CSV นี้ด้วย Excel/Google Sheets โปรแกรมจะตีความเป็นสูตร
+      // ทันที (เช่น =HYPERLINK(...) หรือ =cmd|...) เสี่ยงรันคำสั่ง/ขโมยข้อมูลบนเครื่องแอดมิน —
+      // ป้องกันโดยเติม ' นำหน้าตามมาตรฐาน OWASP ก่อน escape เครื่องหมายคำพูดตามปกติ
+      if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
       if (/[",\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
       return s;
     };
@@ -2728,6 +2899,28 @@ app.get('/ref-info/:code', async (req, res) => {
 // ── GET /messages/:orderId ────────────────────────────────
 app.get('/messages/:orderId', async (req, res) => {
   const { orderId } = req.params;
+  const { customer_id } = req.query;
+
+  // 🔒 SECURITY FIX (IDOR): เดิม endpoint นี้ไม่เช็คว่าคนเรียกเป็นเจ้าของออเดอร์หรือไม่เลย —
+  // order_id สร้างจาก timestamp + เลขสุ่ม 2 หลัก (ดู genOrderId) ซึ่งเดา/ไล่เดาได้ง่ายกว่า
+  // customer_id (random UUID) มาก ทำให้ใครก็ตามที่รู้หรือเดา order_id ได้ อ่านแชท (ที่อยู่/
+  // หมายเหตุ/รายละเอียดการจ่ายเงิน) ของออเดอร์คนอื่นได้หมดโดยไม่ต้องพิสูจน์ตัวตนใดๆ
+  // ตอนนี้: ถ้ามาจากแอดมิน (admin key ถูกต้อง) ดูได้ทุกออเดอร์เหมือนเดิม — ถ้าไม่ใช่ ต้องส่ง
+  // customer_id ของออเดอร์นั้นมาด้วยเสมอ (รองรับ prefix สั้นกว่าเล็กน้อยเหมือนจุด /submit-slip
+  // กรณี session ต่างกันนิดหน่อย)
+  const masterKey = process.env.ADMIN_API_KEY || '';
+  const gotKey = req.headers['x-admin-key'] || req.query.admin_key || '';
+  const isAdmin = !!(masterKey && safeEqual(gotKey, masterKey));
+
+  if (!isAdmin) {
+    if (!customer_id) return res.status(400).json({ error: 'customer_id required' });
+    const { data: ord } = await supabase.from('orders').select('customer_id').eq('order_id', orderId).maybeSingle();
+    if (!ord) return res.status(404).json({ error: 'ไม่พบออเดอร์นี้' });
+    const ownerId = ord.customer_id || '';
+    const sameOwner = ownerId === customer_id || ownerId.startsWith(String(customer_id).slice(0, 8));
+    if (!sameOwner) return res.status(403).json({ error: 'ไม่ใช่ออเดอร์ของคุณ' });
+  }
+
   const { data, error } = await supabase
     .from('messages')
     .select('*')
@@ -2989,6 +3182,31 @@ app.post('/messages', async (req, res) => {
   if (!order_id || !sender || !text)
     return res.status(400).json({ error: 'missing fields' });
 
+  // 🔴 SECURITY FIX (สำคัญมาก): เดิม endpoint นี้รับค่า sender จาก client ตรงๆ โดยไม่ตรวจสอบ
+  // อะไรเลย — ใครก็ส่ง { order_id, sender:'admin', text:'...' } เข้ามาได้ แล้วโค้ดด้านล่าง
+  // (sender === 'admin') จะยิง LINE Push ข้อความนั้นออกไปหาลูกค้าจริงทันที เหมือนเป็นแอดมิน
+  // ร้านตอบเอง — เปิดช่องให้ปลอมข้อความแอดมิน (เช่น เลขบัญชีโอนเงินปลอม) ส่งหาลูกค้าได้เลย
+  // แก้: อนุญาต sender ที่ไม่ใช่ 'customer' (เช่น 'admin') เฉพาะเมื่อมี admin key/token ถูกต้อง
+  const masterKey = process.env.ADMIN_API_KEY || '';
+  const gotKey = req.headers['x-admin-key'] || req.query.admin_key || '';
+  const bearer = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '');
+  const isAdminCaller = !!((masterKey && safeEqual(gotKey, masterKey)) || verifyAuthToken(bearer));
+  if (sender !== 'customer' && !isAdminCaller) {
+    return res.status(403).json({ error: 'ไม่มีสิทธิ์ส่งข้อความในนามนี้' });
+  }
+  // ลูกค้าส่งเอง → เช็คว่าเป็นเจ้าของออเดอร์จริง กันสแปม/แกล้งแชทออเดอร์คนอื่น
+  // (รองรับ prefix สั้นกว่าเล็กน้อยเหมือนจุดอื่นในระบบ กรณี session ต่างกันนิดหน่อย)
+  if (sender === 'customer' && !isAdminCaller) {
+    if (!customer_id) return res.status(400).json({ error: 'customer_id required' });
+    const { data: ordCheck } = await supabase.from('orders').select('customer_id').eq('order_id', order_id).maybeSingle();
+    if (ordCheck) {
+      const ownerId = ordCheck.customer_id || '';
+      const sameOwner = ownerId === customer_id || ownerId.startsWith(String(customer_id).slice(0, 8));
+      if (!sameOwner) return res.status(403).json({ error: 'ไม่ใช่ออเดอร์ของคุณ' });
+    }
+    // ไม่พบออเดอร์ (เช่น ทักก่อนมีออเดอร์จริง / ghost LINE- row) → ปล่อยผ่านตามพฤติกรรมเดิม
+  }
+
   const { data, error } = await supabase.from('messages').insert([{
     order_id, customer_id, sender, text,
     created_at: new Date().toISOString()
@@ -3108,7 +3326,13 @@ app.post('/webhook', async (req, res) => {
       const expected = crypto.createHmac('sha256', _lineSecret)
         .update(req.rawBody || Buffer.from(JSON.stringify(req.body || {})))
         .digest('base64');
-      if (sig !== expected) {
+      // 🔒 SECURITY FIX: เดิมเทียบด้วย sig !== expected (string compare ธรรมดา) ซึ่งไม่ใช่
+      // timing-safe เหมือนจุดอื่นในระบบ (เทียบกับ verifyAuthToken ที่ใช้ timingSafeEqual) —
+      // เปลี่ยนมาใช้ crypto.timingSafeEqual ให้สม่ำเสมอกัน กันโดนเดาลายเซ็นทีละไบต์ผ่าน timing
+      const sigBuf = Buffer.from(sig, 'base64');
+      const expBuf = Buffer.from(expected, 'base64');
+      const sigValid = sigBuf.length === expBuf.length && crypto.timingSafeEqual(sigBuf, expBuf);
+      if (!sigValid) {
         console.warn('🚫 webhook: signature ไม่ถูกต้อง — ปฏิเสธ');
         return res.sendStatus(403);
       }
@@ -3874,20 +4098,25 @@ app.get('/applicable-discounts', async (req, res) => {
 
 // ── GET /validate-coupon ──────────────────────────────────
 // ตรวจสอบ manual coupon code ที่ลูกค้ากรอก
-app.get('/validate-coupon', async (req, res) => {
+app.get('/validate-coupon', rateLimit(20), async (req, res) => {
   const { code, customerId, orderTotal, phone } = req.query;
   if (!code) return res.status(400).json({ error: 'กรุณากรอกรหัสคูปอง' });
 
   const total = parseFloat(orderTotal) || 0;
   const now   = new Date().toISOString();
 
+  // 🔒 SECURITY FIX: เดิมใช้ .ilike('code', code.trim()) — ilike ตีความ % และ _ เป็น wildcard
+  // เสมอโดยไม่ escape ค่าที่ลูกค้าพิมพ์มาก่อน ทำให้ส่ง code=% เข้ามาแล้วได้คูปอง manual
+  // ตัวใดตัวหนึ่งกลับไปโดยไม่ต้องรู้รหัสจริงเลย — เปลี่ยนเป็น .eq() แบบตรงตัว (โค้ดฝั่งหน้าเว็บ
+  // แปลงเป็นตัวพิมพ์ใหญ่ก่อนส่งอยู่แล้วเสมอ จึงไม่กระทบการใช้งานปกติ) + ใส่ rate limit กันยิงถล่ม
+  const codeNorm = code.trim().toUpperCase();
   // หา coupon ที่ตรงกับ code
   const { data: coupon, error } = await supabase
     .from('coupons')
     .select('*')
     .eq('is_active', true)
     .eq('apply_type', 'manual')
-    .ilike('code', code.trim())
+    .eq('code', codeNorm)
     .or(`start_date.is.null,start_date.lte.${now}`)
     .or(`end_date.is.null,end_date.gte.${now}`)
     .maybeSingle();
@@ -3952,7 +4181,10 @@ app.get('/validate-coupon', async (req, res) => {
 });
 
 // ── GET /coupons (admin) ──────────────────────────────────
-app.get('/coupons', async (req, res) => {
+// 🔴 SECURITY FIX (สำคัญมาก): เดิม route นี้ไม่มี requirePerm เลย ทั้งที่ POST/PATCH/DELETE
+// ของ /coupons ตัวเดียวกันมีครบ — ใครก็ยิง GET เข้ามาได้เลยแล้วได้โค้ดคูปองลับ (secret_code)
+// ของคูปองทุกใบออกไปตรงๆ โดยไม่ต้องเดา/ผ่านการตรวจสอบใดๆ เลย
+app.get('/coupons', requirePerm('coupons'), async (req, res) => {
   const { data, error } = await supabase
     .from('coupons')
     .select('*')
@@ -4017,7 +4249,11 @@ app.delete('/coupons/:id', requirePerm('coupons'), async (req, res) => {
 });
 
 // ── GET /orders (admin) ──────────────────────────────────
-app.get('/orders', async (req, res) => {
+// 🔴 SECURITY FIX (สำคัญมาก): เดิม route นี้ไม่มี requirePerm เลย ทั้งที่ endpoint จัดการ
+// ออเดอร์ตัวอื่นๆ (เช่น /orders/:orderId/notify-status, /orders/:orderId/status) มี
+// requirePerm('orders') ครบ — ใครก็ยิง GET /orders?limit=5000 เข้ามาได้เลยแล้วได้ฐานข้อมูล
+// ลูกค้าทั้งหมด (ชื่อ/เบอร์/ที่อยู่/สถานะจ่ายเงิน) ออกไปตรงๆ โดยไม่ต้องผ่านการตรวจสอบใดๆ เลย
+app.get('/orders', requirePerm('orders'), async (req, res) => {
   const limit  = parseInt(req.query.limit)  || 100;
   const offset = parseInt(req.query.offset) || 0;
   const { data, error, count } = await supabase
@@ -4256,7 +4492,22 @@ app.post('/hero-banner', requirePerm('shop_settings'), async (req, res) => {
 });
 
 // ── helper: ดึงรูปจาก URL (เช่น Cloudinary) มาเป็น base64 — ใช้ตรวจสลิปซ้ำที่ server ──
+// 🔴 SECURITY FIX (SSRF): เดิมฟังก์ชันนี้ fetch() URL อะไรก็ได้ที่ client ส่งมาใน slip_url
+// ตรงๆ โดยไม่ตรวจสอบเลย — flow ที่ถูกต้องจริงคือรูปอัปโหลดจากเบราว์เซอร์ไป Cloudinary ก่อน
+// แล้วได้ URL บนโดเมน res.cloudinary.com กลับมาเท่านั้น (ดู index.html ตอนอัปโหลดสลิป) แต่
+// ถ้าใครเรียก POST /submit-slip ตรงๆ (ข้ามเบราว์เซอร์) ใส่ slip_url เป็น URL ภายในองค์กร/
+// cloud metadata endpoint (เช่น http://169.254.169.254/...) หรือ URL ใดๆ ก็ได้ เซิร์ฟเวอร์จะ
+// ยิง request ออกไปให้ทันที (Server-Side Request Forgery) — ใช้สอดแนม/โจมตีเครือข่ายภายใน
+// ของเซิร์ฟเวอร์เองได้ — แก้โดยอนุญาตเฉพาะ URL ที่เป็น https บนโดเมน res.cloudinary.com เท่านั้น
+const ALLOWED_IMAGE_HOSTS = ['res.cloudinary.com'];
+function isAllowedImageUrl(url) {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' && ALLOWED_IMAGE_HOSTS.includes(u.hostname);
+  } catch (_) { return false; }
+}
 async function fetchImageAsBase64(url) {
+  if (!isAllowedImageUrl(url)) throw new Error('slip_url ไม่ได้มาจากแหล่งที่เชื่อถือได้');
   const r = await fetch(url, { timeout: 15000 });
   if (!r.ok) throw new Error(`fetch image failed: ${r.status}`);
   const buf = await r.buffer();
@@ -4903,19 +5154,26 @@ app.get('/available-coupons', async (req, res) => {
 
 // ── POST /reveal-coupon ──────────────────────────────────────
 // เปิดเผยคูปองลับด้วย secretCode
-app.post('/reveal-coupon', async (req, res) => {
+app.post('/reveal-coupon', rateLimit(20), async (req, res) => {
   const { secretCode, customerId, orderTotal } = req.body;
   if (!secretCode) return res.status(400).json({ error: 'กรุณากรอกโค้ดลับ' });
 
   const total = parseFloat(orderTotal) || 0;
   const now   = new Date().toISOString();
 
+  // 🔒 SECURITY FIX: เดิมใช้ .ilike('secret_code', secretCode.trim()) — ilike ตีความ % และ _
+  // เป็น wildcard เสมอ ทำให้ส่ง secretCode=% เข้ามาแล้วได้คูปองลับ (is_secret=true) ตัวใดตัวหนึ่ง
+  // กลับไปทันที โดยไม่ต้องรู้โค้ดลับจริงเลย — ทำลายจุดประสงค์ของ "โค้ดลับ" ทั้งระบบ
+  // เปลี่ยนเป็น .eq() แบบตรงตัว (ฝั่งหน้าเว็บแปลงเป็นตัวพิมพ์ใหญ่ก่อนส่งอยู่แล้วเสมอ
+  // จึงไม่กระทบการใช้งานปกติ) + ใส่ rate limit กันเดาโค้ดแบบยิงถล่ม
+  const secretCodeNorm = secretCode.trim().toUpperCase();
+
   const { data: coupon, error } = await supabase
     .from('coupons')
     .select('*')
     .eq('is_active', true)
     .eq('is_secret', true)
-    .ilike('secret_code', secretCode.trim())
+    .eq('secret_code', secretCodeNorm)
     .or(`start_date.is.null,start_date.lte.${now}`)
     .or(`end_date.is.null,end_date.gte.${now}`)
     .maybeSingle();
@@ -4996,7 +5254,7 @@ app.get('/sales/:salesId', (req, res) => {
     <div class="logo">🛍️</div>
     <div class="shop">${shopName}</div>
     <div class="tagline">พนักงานขายแนะนำสินค้าให้คุณ</div>
-    <div class="sales-badge">💼 รหัสเซล: ${salesId}</div>
+    <div class="sales-badge">💼 รหัสเซล: ${escapeHtml(salesId)}</div>
 
     <div class="step">
       <div class="step-num">1</div>
@@ -5015,8 +5273,8 @@ app.get('/sales/:salesId', (req, res) => {
   </div>
 
   <script>
-    const SHOP_WITH_REF = ${JSON.stringify(shopUrl)};
-    const LINE_ADD      = ${JSON.stringify(lineAddUrl)};
+    const SHOP_WITH_REF = ${safeJsonForScript(shopUrl)};
+    const LINE_ADD      = ${safeJsonForScript(lineAddUrl)};
 
     function goAddAndShop() {
       window.open(LINE_ADD, '_blank');
@@ -5114,9 +5372,9 @@ app.get('/invite/:refCode', (req, res) => {
   </div>
 
   <script>
-    const SHOP_URL   = ${JSON.stringify(shopUrl)};
-    const LINE_ADD   = ${JSON.stringify(lineAddUrl)};
-    const REF_CODE   = ${JSON.stringify(refCode)};
+    const SHOP_URL   = ${safeJsonForScript(shopUrl)};
+    const LINE_ADD   = ${safeJsonForScript(lineAddUrl)};
+    const REF_CODE   = ${safeJsonForScript(refCode)};
     const SHOP_WITH_REF = SHOP_URL + (SHOP_URL.includes('?') ? '&' : '?') + 'ref=' + encodeURIComponent(REF_CODE);
 
     function goAddAndShop() {

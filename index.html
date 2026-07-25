@@ -5053,7 +5053,7 @@ async function openOrderDetail(orderId) {
           📋 ส่งสลิปแล้ว — รอร้านยืนยัน<br>
           <span style="font-size:11px;font-weight:400;color:#5d6d7e;margin-top:3px;display:block;">ยอดที่โอน ฿${Number(o.slip_amount||0).toLocaleString()} • ยอดออเดอร์ ฿${Number(o.total||0).toLocaleString()}</span>
         </div>
-        ${o.slip_url ? `<img src="${o.slip_url}" style="width:100%;max-height:200px;object-fit:contain;border-radius:10px;border:1px solid #b3d4f0;" alt="สลิป">` : ''}
+        ${o.slip_url ? `<img src="${escapeShop(o.slip_url)}" style="width:100%;max-height:200px;object-fit:contain;border-radius:10px;border:1px solid #b3d4f0;" alt="สลิป">` : ''}
 
       ` : o.payment_status === 'slip_mismatch' ? `
         <!-- ⚠️ ยอดไม่ตรง — ส่งสลิปใหม่ได้ -->
@@ -5153,10 +5153,14 @@ async function openOrderDetail(orderId) {
   setupShopChatRealtime(orderId);
 
   // 🤝 อัปเกรดป้าย "แนะนำโดย" จากรหัส → ชื่อ (เซล/เพื่อน) ผ่าน backend
+  // 🐛 BUG FIX: เดิมถ้าลูกค้าเปิดออเดอร์นี้แล้วรีบสลับไปเปิดออเดอร์อื่นก่อน fetch ตอบกลับ
+  // ชื่อผู้แนะนำของออเดอร์นี้จะไปเขียนทับ #detRefName ของออเดอร์ใหม่ที่กำลังเปิดอยู่แทน
+  // (เพราะ id เดียวกันถูกใช้ซ้ำทุกออเดอร์) — เก็บ orderId ไว้เช็คก่อนเขียน DOM ทุกครั้ง
   if (o.ref_code) {
     fetch(`${BACKEND_URL}/ref-info/${encodeURIComponent(o.ref_code)}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => {
+        if (_curViewOrder?.order_id !== orderId) return; // ผู้ใช้สลับไปดูออเดอร์อื่นแล้ว — ไม่เขียนทับ
         const el = document.getElementById('detRefName');
         if (el && d) {
           const icon = d.type === 'sales' ? '💼' : '🎁';
@@ -5171,7 +5175,7 @@ async function loadOrderChat(orderId) {
   const list = document.getElementById('shopChatList');
   if (!list) return;
   try {
-    const res = await fetch(`${BACKEND_URL}/messages/${encodeURIComponent(orderId)}`);
+    const res = await fetch(`${BACKEND_URL}/messages/${encodeURIComponent(orderId)}?customer_id=${encodeURIComponent(CUSTOMER_ID)}`);
     if (!res.ok) throw new Error('โหลดไม่ได้');
     const { messages } = await res.json();
     if (!messages || !messages.length) {
