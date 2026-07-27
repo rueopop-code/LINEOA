@@ -2779,6 +2779,13 @@ async function _adminApi(path, body) {
 // (คูปอง/เวลาทำการ/QR/แบนเนอร์/referral) — พร้อมถามคีย์ใหม่ถ้าโดน 401
 (function installAdminKeyInjector() {
   const ADMIN_RE = [/\/coupons(\/|$)/, /\/shop-hours$/, /\/qr-config$/, /\/hero-banner$/, /\/referral-config$/, /\/admin\//];
+  // 🐛 BUG FIX: เดิม GET request ทุกตัวถูกยกเว้นไม่แนบ x-admin-key เลย (ตอนเขียนครั้งแรก
+  // GET /coupons ยังเป็น public ไม่ต้อง auth) — ตอนหลังมีการแก้ security ให้ GET /coupons
+  // ต้องมี auth ด้วย (กันคนอื่นดึงโค้ดคูปองลับออกไปได้) แต่ลืมอัปเดตจุดนี้ให้ตรงกัน ทำให้
+  // loadShopCoupons()/หน้า "จัดการร้าน" โดน 401 ทุกครั้งที่โหลดรายการคูปอง — เพิ่มข้อยกเว้น
+  // เฉพาะ GET /coupons ให้แนบ key ด้วย (GET อื่นๆ เช่น shop-hours/qr-config ยังคง public
+  // ตามเดิม ไม่ต้องมี key เพราะ backend ไม่ได้บังคับ auth กับ GET พวกนั้น)
+  const GET_NEEDS_AUTH_RE = /\/coupons(\/|$|\?)/;
   const _origFetch = window.fetch.bind(window);
   window.fetch = async function(url, opts) {
     opts = opts || {};
@@ -2786,7 +2793,8 @@ async function _adminApi(path, body) {
     try {
       const u = typeof url === 'string' ? url : (url && url.url) || '';
       const m = (opts.method || 'GET').toUpperCase();
-      if (u.indexOf(BACKEND_URL) === 0 && m !== 'GET' && ADMIN_RE.some(re => re.test(u))) {
+      const needsAuth = (m !== 'GET' && ADMIN_RE.some(re => re.test(u))) || (m === 'GET' && GET_NEEDS_AUTH_RE.test(u));
+      if (u.indexOf(BACKEND_URL) === 0 && needsAuth) {
         opts.headers = Object.assign({}, opts.headers, { 'x-admin-key': localStorage.getItem('ms_admin_key') || '' });
         injected = true;
       }
