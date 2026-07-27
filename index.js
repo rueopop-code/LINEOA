@@ -695,7 +695,9 @@ async function buildAdminMsg(order) {
 }
 
 // ─── LINE Flex Message Builders ───────────────────────────
-const SHOP_URL = process.env.SHOP_URL || 'https://lineoa-u0v2.onrender.com/';
+// 🐛 BUG FIX: fallback URL เดิมชี้ไป lineoa-u0v2 (service เก่าที่ถูกลบไปแล้ว) — ถ้าลืมตั้ง
+// SHOP_URL ใน env vars จะพังทันทีเพราะ fallback ก็เป็น URL ตายด้วย เปลี่ยนเป็น service ใหม่
+const SHOP_URL = process.env.SHOP_URL || 'https://lineoa-docker.onrender.com/';
 
 // ─── LINE OA Auto-Reply Keywords ───
 // ถ้าลูกค้าพิมพ์ตรงกับ keyword เหล่านี้ → ระบบไม่แจ้งแอดมิน LINE

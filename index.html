@@ -2253,7 +2253,10 @@ const BACKEND_URL = (() => {
     origin.startsWith('file://') ||
     href.startsWith('file://')
   ) {
-    return 'https://lineoa-u0v2.onrender.com';
+    // 🐛 BUG FIX: fallback เดิมชี้ไป lineoa-u0v2 (service เก่าที่ถูกลบไปแล้ว) — ถ้ามีคนเปิดหน้านี้
+    // ผ่าน GitHub Pages/localhost/file:// (ดู Deployments ใน repo มี "github-pages" อยู่จริง)
+    // จะยิง request ไปหา backend ที่ตายแล้ว เปลี่ยนเป็น service ใหม่
+    return 'https://lineoa-docker.onrender.com';
   }
   // ถ้า host บน Render เอง → ใช้ origin ปกติ
   return origin;
