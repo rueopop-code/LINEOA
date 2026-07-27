@@ -2154,6 +2154,21 @@ button,.pcard,.cat-chip,.atab,.hdr-btn{-webkit-tap-highlight-color:transparent}
           </div>
         </div>
 
+        <!-- 🐛 BUG FIX: เดิมฟอร์มนี้ไม่มีตัวเลือก "คูปองลับ" เลย ทั้งที่ backend รองรับอยู่แล้ว
+             (และหน้า Admin panel ตัวเต็มก็มี checkbox นี้) — เพิ่มให้ตรงกัน ไม่งั้นสร้าง/แก้ไข
+             คูปองลับผ่านหน้าร้านนี้ไม่ได้เลย -->
+        <div style="background:#fff3ea;border:1.5px solid #ffd0a8;border-radius:10px;padding:10px 12px;margin-bottom:10px;">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:700;color:#B8560F;">
+            <input type="checkbox" id="sc_is_secret" style="width:16px;height:16px;accent-color:#E8593C;" onchange="toggleShopSecretCodeField()">
+            🔒 คูปองลับ <small style="color:#c98a5f;font-weight:400;">(ไม่แสดงในรายการคูปองปกติ ต้องรู้โค้ดถึงจะเปิดเผยได้)</small>
+          </label>
+          <div id="sc_secret_code_wrap" style="display:none;margin-top:10px;">
+            <input id="sc_secret_code" type="text" placeholder="โค้ดลับ (A-Z, 0-9)" class="s-inp"
+              style="text-transform:uppercase;font-weight:700;letter-spacing:2px;"
+              oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')">
+          </div>
+        </div>
+
 
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button onclick="saveShopCoupon()" id="shopCpnSaveBtn" class="save-btn" style="margin:0;flex:1;">💾 บันทึก</button>
@@ -2626,7 +2641,12 @@ window.onload = async () => {
 
 // แปลง product object → DB row
 function toRow(p) {
-  return { id: p.id, name: p.name, cat: p.cat, description: p.desc||'', emoji: p.emoji||'📦', img: p.img||'', sizes: p.sizes, is_new: p.isNew||false, ts: p.ts||Date.now() };
+  // 🐛 BUG FIX: เดิมไม่ส่ง new_days เลย ทำให้ตั้งค่า "ติด badge NEW กี่วัน" แล้วไม่เคยถูกบันทึก
+  // ลงฐานข้อมูลจริง — พอโหลดสินค้าสดจากเซิร์ฟเวอร์ (เครื่อง/เบราว์เซอร์อื่น หรือ localStorage
+  // ถูกล้าง) ค่าจะหายไปเป็น undefined ซึ่ง msIsNewVisible() ตีความว่า "โชว์ตลอดไป" ทำให้ป้าย
+  // NEW ที่ตั้งใจให้หมดอายุใน N วัน กลับติดค้างถาวรในทุกเครื่องยกเว้นเครื่องที่ตั้งค่าตอนแรก
+  // ⚠️ ต้องมี column new_days ใน table products ก่อน (ดู sql/check_add_new_days_column.sql)
+  return { id: p.id, name: p.name, cat: p.cat, description: p.desc||'', emoji: p.emoji||'📦', img: p.img||'', sizes: p.sizes, is_new: p.isNew||false, new_days: p.newDays||0, ts: p.ts||Date.now() };
 }
 // ═══════════════════════════════════════════
 //  SIZE SORT — เรียงขนาดสินค้าประเภทไซส์/เบอร์ (เช่น 2.5x5, 3x5, 20x30) ตามตัวเลขจากน้อยไปมาก
@@ -2660,7 +2680,7 @@ function sortProductSizes(sizes) {
 
 // แปลง DB row → product object
 function fromRow(r) {
-  return { id: r.id, name: r.name, cat: r.cat, desc: r.description||'', emoji: r.emoji||'📦', img: r.img||'', sizes: sortProductSizes(r.sizes||[]), isNew: r.is_new||false, ts: r.ts||0 };
+  return { id: r.id, name: r.name, cat: r.cat, desc: r.description||'', emoji: r.emoji||'📦', img: r.img||'', sizes: sortProductSizes(r.sizes||[]), isNew: r.is_new||false, newDays: r.new_days||0, ts: r.ts||0 };
 }
 
 async function loadStore() {
@@ -3842,16 +3862,24 @@ function updateShopCpnForm() {
     atype === 'manual' ? 'block' : 'none';
 }
 
+function toggleShopSecretCodeField() {
+  const isSecret = document.getElementById('sc_is_secret').checked;
+  document.getElementById('sc_secret_code_wrap').style.display = isSecret ? 'block' : 'none';
+  if (!isSecret) document.getElementById('sc_secret_code').value = '';
+}
+
 function resetShopCpnForm() {
   _scEditId = null;
   document.getElementById('shopCpnFormTitle').textContent = '➕ สร้างคูปองใหม่';
   document.getElementById('shopCpnSaveBtn').textContent = '💾 บันทึก';
-  ['sc_name','sc_desc','sc_dval','sc_maxdisc','sc_minorder','sc_limit','sc_start','sc_end','sc_code']
+  ['sc_name','sc_desc','sc_dval','sc_maxdisc','sc_minorder','sc_limit','sc_start','sc_end','sc_code','sc_secret_code']
     .forEach(id => { const el = document.getElementById(id); if(el) el.value=''; });
   document.getElementById('sc_dtype').value  = 'fixed';
   document.getElementById('sc_atype').value  = 'auto';
   document.getElementById('sc_cond').value   = 'always';
   document.getElementById('sc_active').checked    = true;
+  document.getElementById('sc_is_secret').checked = false;
+  document.getElementById('sc_secret_code_wrap').style.display = 'none';
 
   updateShopCpnForm();
 }
@@ -3871,6 +3899,9 @@ function editShopCoupon(c) {
   document.getElementById('sc_limit').value    = c.usage_limit || '';
   document.getElementById('sc_active').checked = c.is_active !== false;
   document.getElementById('sc_code').value     = c.code || '';
+  document.getElementById('sc_is_secret').checked = c.is_secret === true;
+  document.getElementById('sc_secret_code').value = c.secret_code || '';
+  document.getElementById('sc_secret_code_wrap').style.display = c.is_secret ? 'block' : 'none';
   if (c.start_date) document.getElementById('sc_start').value = c.start_date.slice(0,16);
   if (c.end_date)   document.getElementById('sc_end').value   = c.end_date.slice(0,16);
   updateShopCpnForm();
@@ -3886,6 +3917,9 @@ async function saveShopCoupon() {
   if (atype2 === 'manual' && !document.getElementById('sc_code').value.trim()) {
     toast('กรุณากรอกรหัสโค้ดสำหรับคูปอง Manual'); return;
   }
+  const isSecret = document.getElementById('sc_is_secret').checked;
+  const secretCode = document.getElementById('sc_secret_code').value.trim();
+  if (isSecret && !secretCode) { toast('กรุณากรอกโค้ดลับ'); return; }
 
   const atype   = document.getElementById('sc_atype').value;
   const cfstart = document.getElementById('sc_start').value;
@@ -3903,7 +3937,9 @@ async function saveShopCoupon() {
     usage_limit:    document.getElementById('sc_limit').value ? Number(document.getElementById('sc_limit').value) : null,
     start_date:     cfstart ? new Date(cfstart).toISOString() : null,
     end_date:       cfend   ? new Date(cfend).toISOString()   : null,
-    is_active:      document.getElementById('sc_active').checked
+    is_active:      document.getElementById('sc_active').checked,
+    is_secret:      isSecret,
+    secret_code:    isSecret ? secretCode.toUpperCase() : null
   };
 
   const btn = document.getElementById('shopCpnSaveBtn');
@@ -3976,6 +4012,7 @@ async function loadShopCoupons() {
               <span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px;${isAuto?'background:#e3f2fd;color:#1565c0;':'background:#f3e5f5;color:#6a1b9a;'}">
                 ${isAuto?'⚡ AUTO':'🔧 MANUAL'}
               </span>
+              ${c.is_secret?'<span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px;background:#fff3ea;color:#B8560F;">🔒 ลับ</span>':''}
             </div>
             ${c.description?`<div style="font-size:11px;color:#888;margin-bottom:5px;">${c.description}</div>`:''}
             <div style="display:flex;flex-wrap:wrap;gap:5px;font-size:11px;">
@@ -3996,7 +4033,7 @@ async function loadShopCoupons() {
             <div style="display:flex;gap:5px;">
               <button onclick="editShopCoupon(JSON.parse(decodeURIComponent('${safeC}')))"
                 style="padding:4px 10px;background:#e3f2fd;color:#1565c0;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Sarabun',sans-serif;">แก้ไข</button>
-              <button onclick="deleteShopCoupon(${c.id},'${c.name.replace(/'/g,"\'")}')"
+              <button onclick="deleteShopCoupon(${c.id},decodeURIComponent('${encodeURIComponent(c.name)}'))"
                 style="padding:4px 10px;background:#ffebee;color:#c62828;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Sarabun',sans-serif;">ลบ</button>
             </div>
           </div>

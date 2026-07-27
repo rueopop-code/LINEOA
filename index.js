@@ -2491,6 +2491,11 @@ app.post('/send-order', async (req, res) => {
             const rewardValue = parseFloat(cfg.referral_reward_value) || 50;
             const expireDays  = parseInt(cfg.referral_expire_days)    || 30;
             const maxRewards  = parseInt(cfg.referral_max_rewards)    || 0;
+            // 🐛 BUG FIX: เดิม min_order ตอนสร้างคูปองรางวัลชวนเพื่อน hardcode เป็น 0 เสมอ
+            // ทั้งที่หน้า "ตั้งค่าระบบชวนเพื่อน" มีช่อง "ยอดขั้นต่ำในการใช้คูปอง" ให้กรอกอยู่แล้ว
+            // (ส่งค่ามาเป็น referral_min_order) แต่ backend ไม่เคยรับ/บันทึก/อ่านค่านี้เลยสักที่
+            // เดียว (ดู POST /referral-config ด้านล่าง) ทำให้ตั้งค่าไปเท่าไหร่ก็ไม่มีผลจริง
+            const minOrder    = parseFloat(cfg.referral_min_order)    || 0;
 
             // ตรวจ max_rewards ต่อคนชวน
             let canReward = true;
@@ -2523,7 +2528,7 @@ app.post('/send-order', async (req, res) => {
                   is_active:      true,
                   is_secret:      false,
                   condition_type: null,
-                  min_order:      0
+                  min_order:      minOrder
                 })
                 .select('id,code').single();
 
@@ -4271,15 +4276,41 @@ app.post('/coupons', requirePerm('coupons'), async (req, res) => {
   const {
     name, description, code, discount_type, discount_value,
     max_discount, min_order, apply_type, condition_type,
-    start_date, end_date, usage_limit, is_active
+    start_date, end_date, usage_limit, is_active,
+    is_secret, secret_code
   } = req.body;
 
   if (!name || discount_value == null)
     return res.status(400).json({ error: 'name และ discount_value จำเป็น' });
 
+  // 🐛 BUG FIX: เดิม endpoint นี้ไม่รับ is_secret/secret_code จาก body เลย (ถูกทิ้งไปเงียบๆ)
+  // ทั้งที่หน้า Admin panel มี checkbox "คูปองลับ" ส่งค่านี้มาให้ครบอยู่แล้ว — ทำให้สร้าง
+  // "คูปองลับ" ไม่ได้จริงเลยสักครั้ง (backend ตอบ success กลับมาด้วยซ้ำ ทำให้แอดมินไม่รู้ตัว
+  // ว่าค่าไม่ถูกบันทึก) เพิ่มรับ 2 ฟิลด์นี้ พร้อม validate ว่าถ้าเป็นคูปองลับต้องมีโค้ดด้วย
+  const isSecretFlag = is_secret === true;
+  if (isSecretFlag && !String(secret_code || '').trim())
+    return res.status(400).json({ error: 'คูปองลับต้องระบุ secret_code' });
+  const secretCodeNormForCheck = isSecretFlag ? String(secret_code).trim().toUpperCase() : null;
+  if (secretCodeNormForCheck) {
+    const { data: dupSecret } = await supabase.from('coupons')
+      .select('id').eq('secret_code', secretCodeNormForCheck).eq('is_secret', true).eq('is_active', true).limit(1).maybeSingle();
+    if (dupSecret) return res.status(400).json({ error: `โค้ดลับ "${secretCodeNormForCheck}" มีคูปองอื่นใช้อยู่แล้ว กรุณาใช้โค้ดอื่น` });
+  }
+
+  // 🐛 BUG FIX (data integrity): เดิมไม่เช็คเลยว่ามีคูปอง active ตัวอื่นใช้ code เดียวกันอยู่
+  // แล้วหรือยัง — ถ้าสร้างคูปองแมนนวล 2 ใบ code ซ้ำกัน (พิมพ์ผิด/ไม่ทันสังเกต) จะทำให้
+  // /validate-coupon (ใช้ .maybeSingle()) error 500 ทันทีตอนลูกค้ากรอกโค้ดนั้น — ไม่ว่าจะ
+  // ตั้งใจใช้คูปองใบไหนก็ตาม กันไว้ตั้งแต่ตอนสร้าง/แก้ไข
+  const codeNormForCheck = code ? String(code).trim().toUpperCase() : null;
+  if (codeNormForCheck) {
+    const { data: dupCode } = await supabase.from('coupons')
+      .select('id').eq('code', codeNormForCheck).eq('is_active', true).limit(1).maybeSingle();
+    if (dupCode) return res.status(400).json({ error: `โค้ด "${codeNormForCheck}" มีคูปองอื่นใช้อยู่แล้ว กรุณาใช้โค้ดอื่น` });
+  }
+
   const { data, error } = await supabase.from('coupons').insert([{
     name, description: description || null,
-    code: code || null,
+    code: codeNormForCheck,
     discount_type: discount_type || 'fixed',
     discount_value: Number(discount_value),
     max_discount: max_discount ? Number(max_discount) : null,
@@ -4289,7 +4320,9 @@ app.post('/coupons', requirePerm('coupons'), async (req, res) => {
     start_date: start_date || null,
     end_date: end_date || null,
     usage_limit: usage_limit ? Number(usage_limit) : null,
-    is_active: is_active !== false
+    is_active: is_active !== false,
+    is_secret: isSecretFlag,
+    secret_code: secretCodeNormForCheck
   }]).select().single();
 
   if (error) return res.status(500).json({ error: error.message });
@@ -4300,12 +4333,38 @@ app.post('/coupons', requirePerm('coupons'), async (req, res) => {
 app.patch('/coupons/:id', requirePerm('coupons'), async (req, res) => {
   const id = parseInt(req.params.id);
   const updates = {};
+  // 🐛 BUG FIX: เดิม allow-list นี้ไม่มี is_secret/secret_code เลย ทำให้แก้ไข/เปิดใช้งาน
+  // "คูปองลับ" ผ่านหน้าแก้ไขไม่ได้จริงเลยสักครั้ง (ดูคำอธิบายเต็มที่ POST /coupons ด้านบน)
   const fields = [
     'name','description','code','discount_type','discount_value',
     'max_discount','min_order','apply_type','condition_type',
-    'start_date','end_date','usage_limit','is_active'
+    'start_date','end_date','usage_limit','is_active',
+    'is_secret','secret_code'
   ];
   fields.forEach(f => { if (req.body[f] !== undefined) updates[f] = req.body[f]; });
+
+  // ถ้าส่ง secret_code มา normalize ให้เป็นตัวพิมพ์ใหญ่เหมือนตอนสร้างใหม่ (กันเคส mismatch ตอนค้นหา)
+  if (updates.secret_code) updates.secret_code = String(updates.secret_code).trim().toUpperCase();
+  if (updates.is_secret === true && updates.secret_code === undefined) {
+    // เปิดคูปองลับแต่ไม่ได้ส่ง secret_code มาด้วย (เช่นแค่ติ๊กเปิดโดยไม่กรอกโค้ดใหม่) — ต้องเช็ค
+    // ว่าของเดิมในฐานข้อมูลมี secret_code อยู่แล้วหรือยัง ถ้าไม่มีเลยจะกลายเป็นคูปองลับที่ไม่มีโค้ด
+    const { data: existing } = await supabase.from('coupons').select('secret_code').eq('id', id).maybeSingle();
+    if (!existing?.secret_code)
+      return res.status(400).json({ error: 'คูปองลับต้องระบุ secret_code' });
+  }
+  if (updates.secret_code) {
+    const { data: dupSecret } = await supabase.from('coupons')
+      .select('id').eq('secret_code', updates.secret_code).eq('is_secret', true).eq('is_active', true).neq('id', id).limit(1).maybeSingle();
+    if (dupSecret) return res.status(400).json({ error: `โค้ดลับ "${updates.secret_code}" มีคูปองอื่นใช้อยู่แล้ว กรุณาใช้โค้ดอื่น` });
+  }
+
+  // 🐛 BUG FIX (data integrity): เดิมไม่เช็คโค้ดซ้ำตอนแก้ไขเลย — ดูคำอธิบายเต็มที่ POST /coupons
+  if (updates.code !== undefined && updates.code) {
+    updates.code = String(updates.code).trim().toUpperCase();
+    const { data: dupCode } = await supabase.from('coupons')
+      .select('id').eq('code', updates.code).eq('is_active', true).neq('id', id).limit(1).maybeSingle();
+    if (dupCode) return res.status(400).json({ error: `โค้ด "${updates.code}" มีคูปองอื่นใช้อยู่แล้ว กรุณาใช้โค้ดอื่น` });
+  }
 
   const { data, error } = await supabase
     .from('coupons').update(updates).eq('id', id).select().single();
@@ -4435,7 +4494,10 @@ app.get('/referral-config', async (req, res) => {
     referral_reward_type : 'fixed',
     referral_reward_value: 50,
     referral_max_rewards : 0,
-    referral_expire_days : 30
+    referral_expire_days : 30,
+    // 🐛 BUG FIX: เดิมไม่มี referral_min_order ใน defaults/การบันทึกเลย ทั้งที่ UI มีช่องกรอกนี้
+    // อยู่แล้ว — ดูคำอธิบายเต็มที่จุดสร้างคูปองรางวัลชวนเพื่อนด้านบน (ใน /send-order)
+    referral_min_order   : 0
   };
   res.json(data ? { ...defaults, ...data.value } : defaults);
 });
@@ -4448,6 +4510,10 @@ app.post('/referral-config', requirePerm('shop_settings'), async (req, res) => {
     referral_reward_value: parseFloat(req.body.referral_reward_value) || 50,
     referral_max_rewards : parseInt(req.body.referral_max_rewards)    || 0,
     referral_expire_days : parseInt(req.body.referral_expire_days)    || 30,
+    // 🐛 BUG FIX: เดิมไม่รับ/บันทึก referral_min_order เลย ทั้งที่ client (index.html) ส่งมาให้
+    // ครบอยู่แล้วตั้งแต่ต้น ทำให้ตั้งค่า "ยอดขั้นต่ำในการใช้คูปองรางวัล" เท่าไหร่ก็ไม่มีผลจริง
+    // (คูปองที่สร้างออกมาจะไม่มีขั้นต่ำเสมอ) เพิ่มรับค่านี้ให้ครบ
+    referral_min_order   : parseFloat(req.body.referral_min_order)    || 0,
   };
   const { error } = await supabase
     .from('settings')
@@ -5217,10 +5283,20 @@ app.get('/available-coupons', async (req, res) => {
   });
 
   // คำนวณ discount ให้แต่ละ coupon
-  const result = eligible.map(c => ({
-    ...c,
-    discountAmount: calcDiscount(c, total)
-  }));
+  // 🔒 SECURITY FIX: เดิม endpoint นี้ (public, ไม่ต้อง login) คืนค่า code ของคูปองโหมด
+  // "แมนนวล" ออกไปตรงๆ ใน response แม้ว่าฝั่ง client (renderCouponPicker) จะกรองคูปอง
+  // manual ออกจากการแสดงผลอยู่แล้วก็ตาม — ใครก็ยิง GET request ตรงๆ (ข้าม UI ไปเลย เช่น
+  // ผ่าน curl/Postman) ก็เก็บโค้ดคูปอง manual ทุกใบที่ active ไปได้หมดโดยไม่ต้องรู้/ได้รับ
+  // โค้ดมาจากช่องทางที่ร้านตั้งใจแจกจริงเลย (เช่น โพสต์โซเชียล, ใบปลิว) — ตัด code ออกจาก
+  // response สำหรับคูปอง manual (ยังคงเห็นว่ามีโปรอยู่ได้ แค่ไม่เปิดเผยโค้ดจริง)
+  const result = eligible.map(c => {
+    const { code, ...safe } = c;
+    return {
+      ...safe,
+      code: c.apply_type === 'manual' ? undefined : code,
+      discountAmount: calcDiscount(c, total)
+    };
+  });
 
   res.json({ coupons: result });
 });
