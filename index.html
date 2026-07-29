@@ -5934,10 +5934,11 @@ function adToggleChange() {
   const on = document.getElementById('adEnabled').checked;
   document.getElementById('adConfig').style.display = on ? 'block' : 'none';
   // บันทึกสถานะ enabled/disabled ขึ้น server ทันที (ไม่ใช่แค่ localStorage อีกต่อไป)
-  // 🐛 BUG FIX: เดิมถ้าบันทึกไม่สำเร็จ (เช่น เปิดใช้งานทั้งที่ยังไม่มีโฆษณาเลยสักรายการ หรือเน็ตหลุด)
-  // ช่องติ๊กและแผงตั้งค่าจะค้างแสดงเป็น "เปิดอยู่" ทั้งที่จริงๆ ไม่ได้ถูกบันทึกขึ้น server เลย
-  // (สถานะหลอกที่ทำให้แอดมินเข้าใจผิดว่าเปิดใช้งานสำเร็จแล้ว) แก้โดยเช็คผลลัพธ์แล้วดีดกลับ UI
-  // ให้ตรงกับสถานะจริงถ้าบันทึกไม่ผ่าน
+  // 🐛 BUG FIX: เดิมถ้าบันทึกไม่สำเร็จ (เช่น เน็ตหลุด หรือ server ตอบ error) ช่องติ๊กและแผงตั้งค่า
+  // จะค้างแสดงสถานะที่เพิ่งกดไว้ ทั้งที่จริงๆ ไม่ได้ถูกบันทึกขึ้น server เลย (สถานะหลอกที่ทำให้
+  // แอดมินเข้าใจผิดว่าสำเร็จแล้ว) แก้โดยเช็คผลลัพธ์แล้วดีดกลับ UI ให้ตรงกับสถานะจริงถ้าบันทึกไม่ผ่าน
+  // (หมายเหตุ: การเปิดใช้งานทั้งที่ยังไม่มีโฆษณาไม่ใช่เงื่อนไข error อีกต่อไป — ดูคอมเมนต์ใน
+  // saveAdSettings ด้านล่าง — เหตุผลที่ ok เป็น false เหลือแค่ปัญหาเน็ต/server จริงๆ เท่านั้น)
   saveAdSettings().then(ok => {
     if (!ok) {
       document.getElementById('adEnabled').checked = !on;
@@ -6027,33 +6028,14 @@ function adDeleteItem(i) {
   const removed = adItems.splice(i, 1)[0];
   if (adEditIdx === i) adResetForm();
   else { adEditIdx = -1; adRenderList(); }
-  // 🐛 BUG FIX (พบจากการตรวจซ้ำ): ถ้าลบโฆษณา "ชิ้นสุดท้าย" ออกไปตอนที่สวิตช์ "เปิดใช้งาน" ยังติ๊ก
-  // ค้างอยู่ — saveAdSettings จะโดนกฎ "ห้ามเปิดใช้งานทั้งที่ไม่มีโฆษณา" บล็อกการบันทึกทันที แล้ว
-  // ระบบกู้-รายการ-ที่ลบ-กลับอัตโนมัติ (จากที่แก้ไว้ก่อนหน้า) ก็จะเด้งรายการที่เพิ่งลบกลับคืนมา
-  // เท่ากับแอดมินลบโฆษณาชิ้นสุดท้ายไม่ได้เลยถ้าลืมปิดสวิตช์ก่อน แถมข้อความ error ("บันทึกไม่สำเร็จ")
-  // ยังทำให้เข้าใจผิดว่าเป็นปัญหาเน็ตอีกด้วย ทั้งที่จริงๆ คือกฎธุรกิจไปชนกันเอง
-  // แก้โดยถ้าลบจนเหลือ 0 รายการ ให้ปิดสวิตช์ "เปิดใช้งาน" ให้อัตโนมัติไปพร้อมกันเลย (ไม่มีอะไรให้
-  // แสดงอยู่ดี) ก่อนบันทึก — ถ้าบันทึกไม่สำเร็จจริงๆ (เน็ตหลุด) ค่อยกู้ทั้งรายการและสถานะสวิตช์กลับ
-  let autoDisabled = false;
-  if (!adItems.length && document.getElementById('adEnabled').checked) {
-    document.getElementById('adEnabled').checked = false;
-    document.getElementById('adConfig').style.display = 'none';
-    autoDisabled = true;
-  }
   // บันทึกขึ้น server ทันทีหลังลบ (ไม่ใช่แค่ localStorage)
   // 🐛 BUG FIX: เดิมไม่เช็คผลลัพธ์เลย — ถ้าเน็ตหลุดตอนนี้ รายการจะหายไปจากหน้าจอแอดมินทันที
   // ทั้งที่ server ยังมีข้อมูลเดิมอยู่ครบ (ยังไม่ได้ถูกลบจริง) ทำให้เข้าใจผิดว่าลบสำเร็จ
   saveAdSettings(true).then(ok => {
     if (!ok && removed) {
       adItems.splice(i, 0, removed);
-      if (autoDisabled) {
-        document.getElementById('adEnabled').checked = true;
-        document.getElementById('adConfig').style.display = 'block';
-      }
       adRenderList();
       toast('⚠️ กู้รายการที่ลบคืนแล้ว — บันทึกขึ้นเซิร์ฟเวอร์ไม่สำเร็จ (เช็กอินเทอร์เน็ต)');
-    } else if (ok && autoDisabled) {
-      toast('🔕 ปิดการแสดงโฆษณาให้อัตโนมัติ เพราะไม่มีโฆษณาเหลือแล้ว');
     }
   });
   toast('ลบโฆษณาแล้ว 🗑️');
@@ -6218,10 +6200,11 @@ function ytId(url) {
 // disable ปุ่ม "บันทึกทั้งหมด" (เพราะอาจไม่ได้ถูกกดตรงๆ)
 async function saveAdSettings(silent) {
   const enabled = document.getElementById('adEnabled').checked;
-  if (enabled && !adItems.length) {
-    if (!silent) toast('ยังไม่มีโฆษณา — กรุณาเพิ่มอย่างน้อย 1 รายการก่อนเปิดใช้งาน');
-    return false;
-  }
+  // 🐛 BUG FIX: เดิม (ที่ผมเพิ่มเข้ามาเอง) ห้ามบันทึกสถานะ "เปิดใช้งาน" ถ้ายังไม่มีโฆษณาสักรายการ
+  // เดียว ทำให้กดสวิตช์เปิดไม่ติดเลยจนกว่าจะเพิ่มโฆษณาก่อน — แต่กฎนี้ไม่มีอยู่ฝั่ง server เลย (backend
+  // ไม่เคยห้ามแบบนี้) และไม่จำเป็นด้วย เพราะฝั่งลูกค้า showAdOverlay() เช็ค items.length ก่อนแสดงผล
+  // อยู่แล้วเสมอ ต่อให้ enabled:true แต่ items ว่าง ก็แค่ไม่มีอะไรเด้งขึ้นมาให้ลูกค้าเห็น ไม่มีอันตราย
+  // อะไร — เอากฎที่เกินความจำเป็นนี้ออก ให้เปิด/ปิดสวิตช์ได้อิสระเหมือนพฤติกรรมเดิมก่อนแก้
   const cfg = {
     enabled,
     delay : parseFloat(document.getElementById('adDelay').value) || 1,
@@ -6245,7 +6228,8 @@ async function saveAdSettings(silent) {
     if (adItems.length < sentCount) {
       toast(`⚠️ บันทึกได้ ${adItems.length}/${sentCount} รายการ — บางรายการถูกตัดออก (เกินโควตาหรือข้อมูลไม่ครบ)`);
     } else if (!silent) {
-      toast(`บันทึกโฆษณา ${adItems.length} รายการแล้ว ✓ ลูกค้าเห็นทันที`);
+      if (enabled && !adItems.length) toast('เปิดใช้งานแล้ว — แต่ยังไม่มีโฆษณาสักรายการ ลูกค้าจะยังไม่เห็นอะไรจนกว่าจะเพิ่ม');
+      else toast(`บันทึกโฆษณา ${adItems.length} รายการแล้ว ✓ ลูกค้าเห็นทันที`);
     }
     return true;
   } catch(e) {
