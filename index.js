@@ -4613,10 +4613,14 @@ app.get('/hero-banner', async (req, res) => {
 // บันทึกป้ายโฆษณาหน้าร้าน (แอดมิน)
 app.post('/hero-banner', requirePerm('shop_settings'), async (req, res) => {
   const items = Array.isArray(req.body.items) ? req.body.items.slice(0, 10).map(it => ({
-    type    : ['image', 'video', 'youtube'].includes(it.type) ? it.type : 'image',
-    url     : String(it.url || '').slice(0, 1000),
-    caption : String(it.caption || '').slice(0, 200),
-    link    : String(it.link || '').slice(0, 1000)
+    type        : ['image', 'video', 'youtube'].includes(it.type) ? it.type : 'image',
+    url         : String(it.url || '').slice(0, 1000),
+    caption     : String(it.caption || '').slice(0, 200),
+    link        : String(it.link || '').slice(0, 1000),
+    // 🆕 แท็กสินค้า: ให้กดป้ายแล้วพาลูกค้าไปที่การ์ดสินค้านั้นในหน้าร้านได้ตรงๆ (เหมือนโฆษณา Pop-up)
+    // แทนที่จะต้องพึ่งลิงก์ภายนอกอย่างเดียว — เดิม field นี้ถูกทิ้งเงียบๆ ไม่ถูกบันทึกเลยแม้ client
+    // จะส่งมา ทำให้ป้ายกดแล้วไม่มีอะไรเกิดขึ้นถ้าแอดมินไม่ได้ใส่ลิงก์ภายนอกไว้ด้วย
+    tagProductId: String(it.tagProductId || '').slice(0, 100)
   })).filter(it => it.url) : [];
   const cfg = {
     enabled     : !!req.body.enabled,
@@ -4626,6 +4630,52 @@ app.post('/hero-banner', requirePerm('shop_settings'), async (req, res) => {
   const { error } = await supabase
     .from('settings')
     .upsert({ key: 'hero_banner', value: cfg }, { onConflict: 'key' });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true, config: cfg });
+});
+
+// ── GET /popup-ads ───────────────────────────────────────────
+// โฆษณา Pop-up หน้าร้าน (ลูกค้าและแอดมินใช้)
+// 🐛 BUG FIX: เดิม feature นี้เก็บ config ไว้ที่ localStorage ของเบราว์เซอร์ผู้ดูแลเครื่องที่
+// กดบันทึกเท่านั้น (ไม่เคยส่งขึ้น server เลย) ทำให้:
+//   1) เพิ่มโฆษณาจาก PC แล้วเปิดจากมือถือ/เบราว์เซอร์อื่นไม่เห็น (ข้อมูลไม่ "พ่วงกัน")
+//   2) ลูกค้าจริงที่เข้าหน้าร้าน (คนละเครื่องกับแอดมินเสมอ) ไม่เคยเห็นป๊อปอัปโฆษณานี้เลย
+//      เพราะฝั่งลูกค้าก็อ่านจาก localStorage ของตัวเอง ซึ่งว่างเปล่าตลอด
+// แก้โดยย้ายไปเก็บที่ Supabase (ตาราง settings) แบบเดียวกับ hero-banner / shop-hours / qr-config
+app.get('/popup-ads', async (req, res) => {
+  const { data, error } = await supabase
+    .from('settings')
+    .select('value')
+    .eq('key', 'popup_ads')
+    .maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  const defaults = { enabled: false, delay: 1, freq: 'daily', items: [] };
+  res.json(data ? { ...defaults, ...data.value } : defaults);
+});
+
+// ── POST /popup-ads ──────────────────────────────────────────
+// บันทึกโฆษณา Pop-up หน้าร้าน (แอดมิน)
+app.post('/popup-ads', requirePerm('shop_settings'), async (req, res) => {
+  const items = Array.isArray(req.body.items) ? req.body.items.slice(0, 20).map(it => ({
+    type        : ['image', 'video', 'youtube', 'url'].includes(it.type) ? it.type : 'image',
+    // 🐛 เดิมรูป/วีดิโอที่อัปโหลดถูกเก็บเป็น base64 (fileData) ตรงๆ ใน localStorage — ใช้ไม่ได้กับ
+    // การเก็บฝั่ง server (ตัวใหญ่เกินไปสำหรับแถวใน DB) จึงเปลี่ยนให้ต้องอัปโหลดขึ้น Cloudinary ก่อน
+    // (เหมือน hero-banner) แล้วเก็บแค่ url ที่ได้กลับมา
+    url         : String(it.url || '').slice(0, 1000),
+    caption     : String(it.caption || '').slice(0, 200),
+    btnUrl      : String(it.btnUrl || '').slice(0, 1000),
+    btnTxt      : String(it.btnTxt || '').slice(0, 60),
+    tagProductId: String(it.tagProductId || '').slice(0, 100)
+  })).filter(it => it.url) : [];
+  const cfg = {
+    enabled : !!req.body.enabled,
+    delay   : Math.min(30, Math.max(0, parseFloat(req.body.delay) || 1)),
+    freq    : ['always', 'session', 'daily', 'once'].includes(req.body.freq) ? req.body.freq : 'daily',
+    items
+  };
+  const { error } = await supabase
+    .from('settings')
+    .upsert({ key: 'popup_ads', value: cfg }, { onConflict: 'key' });
   if (error) return res.status(500).json({ error: error.message });
   res.json({ success: true, config: cfg });
 });

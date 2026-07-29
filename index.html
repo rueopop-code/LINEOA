@@ -963,7 +963,7 @@ button,.pcard,.cat-chip,.atab,.hdr-btn{-webkit-tap-highlight-color:transparent}
 .hb-dots{position:absolute;bottom:8px;right:12px;display:flex;gap:5px;z-index:5}
 .hb-dot{width:7px;height:7px;border-radius:99px;background:rgba(255,255,255,.45);border:none;padding:0;cursor:pointer;transition:.25s}
 .hb-dot.on{background:var(--gold);width:18px}
-.hb-badge{position:absolute;top:10px;left:10px;z-index:5;background:rgba(20,4,2,.55);backdrop-filter:blur(4px);color:#F3CE96;font-size:10px;font-weight:800;font-family:'Prompt',sans-serif;letter-spacing:1.5px;padding:4px 11px;border-radius:999px;border:1px solid rgba(243,206,150,.4)}
+.hb-badge{position:absolute;top:10px;left:10px;z-index:5;background:rgba(20,4,2,.55);backdrop-filter:blur(4px);color:#F3CE96;font-size:10px;font-weight:800;font-family:'Prompt',sans-serif;letter-spacing:1.5px;padding:4px 11px;border-radius:999px;border:1px solid rgba(243,206,150,.4);pointer-events:none}
 .hero-in.has-hb .hero-art{display:none}
 @media(max-width:860px){
   .hero-in.has-hb{flex-direction:column;align-items:stretch}
@@ -1866,6 +1866,7 @@ button,.pcard,.cat-chip,.atab,.hdr-btn{-webkit-tap-highlight-color:transparent}
                 <video id="adPrevVid" style="display:none" muted playsinline loop autoplay></video>
                 <button class="ad-prev-del" onclick="clearAdMedia()" title="ลบ">✕</button>
               </div>
+              <div id="adUpStatus" style="font-size:11px;color:#8A5A13;min-height:14px;margin-top:6px;text-align:center;"></div>
             </div>
 
             <div id="adUrlRow" style="display:none;margin-bottom:10px">
@@ -2613,11 +2614,17 @@ window.onload = async () => {
     handleReferralFromUrl();
 
     // 📢 แสดง Ad Popup (ถ้าตั้งค่าไว้)
-    const adCfg = adGetCfg();
-    if (adCfg.enabled) {
-      const delayMs = Math.max(0, (parseFloat(adCfg.delay) || 1)) * 1000;
-      setTimeout(() => showAdOverlay(adCfg, false), delayMs);
-    }
+    // 🐛 BUG FIX: เดิมอ่าน adGetCfg() ซึ่งดึงจาก localStorage ของลูกค้าเอง — ลูกค้าเป็นคนละเครื่อง
+    // กับแอดมินเสมอ จึงว่างเปล่าตลอดและป๊อปอัปนี้ไม่เคยแสดงให้ลูกค้าเห็นเลยจริงๆ แก้โดยดึงจาก
+    // server จริง (แคช localStorage ไว้ใช้เป็น fallback เร็วๆ ถ้าเน็ตช้า/หลุด เท่านั้น)
+    (async () => {
+      let adCfg = adGetCfg(); // fallback ทันทีระหว่างรอเน็ตเวิร์ก (ปกติจะว่างในเครื่องลูกค้าใหม่)
+      try { adCfg = await adFetchServerCfg(); } catch(_e) {}
+      if (adCfg.enabled) {
+        const delayMs = Math.max(0, (parseFloat(adCfg.delay) || 1)) * 1000;
+        setTimeout(() => showAdOverlay(adCfg, false), delayMs);
+      }
+    })();
 
     // 💳 โหลด QR config: localStorage ก่อนทันที (ไม่รอ network) แล้ว sync จาก backend เสมอ
     // 🐛 BUG FIX: เดิมโหลดจาก localStorage อย่างเดียว → ลูกค้าใหม่/เครื่องใหม่ที่ไม่เคยมี
@@ -5798,6 +5805,9 @@ function openAdmin() {
   adLoadUI();
   loadReferralConfig(); // โหลด referral config ทุกครั้งที่เปิด
   shLoadAdminUI();
+  // 🆕 รีเฟรชดรอปดาวน์ "แท็กสินค้า" ของป้ายโฆษณา Hero ทุกครั้งที่เปิดแผงแอดมิน กัน products
+  // โหลดไม่ทันตอน inject ครั้งแรกตอนหน้าเว็บเพิ่งโหลด (ดูคอมเมนต์ที่ hbFillTagDropdown)
+  if (typeof hbFillTagDropdown === 'function') hbFillTagDropdown();
 
   // 💳 QR config — apply จาก localStorage ทันทีก่อน (sync) แล้ว async sync backend
   const _qrLs = _qrLoadLS();
@@ -5852,41 +5862,88 @@ function saveSettings() {
 // ═══════════════════════════════════════════
 //  AD POPUP — multi-ad carousel
 // ═══════════════════════════════════════════
-const AD_KEY  = 'ms_ad_v2';           // v2 — array format
+// 🐛 BUG FIX (ซิงก์ข้ามอุปกรณ์ + ลูกค้าไม่เห็นโฆษณาเลย):
+// เดิม config ทั้งหมด (เปิด/ปิด, รายการโฆษณา) เก็บไว้ที่ localStorage ของเบราว์เซอร์เครื่องที่กด
+// บันทึกเท่านั้น ไม่เคยถูกส่งขึ้น server เลย ผลคือ:
+//   • เพิ่มโฆษณาจาก PC แล้วเปิดจากมือถือ (คนละเบราว์เซอร์/เครื่อง) จะไม่เห็น เพราะอ่านจาก
+//     localStorage ของตัวเอง ซึ่งว่างเปล่า — ไม่ได้ "พ่วงกัน" อย่างที่ควรจะเป็น
+//   • ลูกค้าจริงที่เข้าหน้าร้าน (คนละเครื่องกับแอดมินเสมอ) ไม่เคยเห็นป๊อปอัปโฆษณานี้เลยสักครั้ง
+//     เพราะฝั่งลูกค้าก็เรียก adGetCfg() ที่อ่านจาก localStorage ของลูกค้าเอง ซึ่งไม่มีทางมีข้อมูล
+// แก้โดยย้าย config ไปเก็บที่ Supabase ผ่าน endpoint /popup-ads (แบบเดียวกับ hero-banner /
+// shop-hours / qr-config ที่มีอยู่แล้ว) — localStorage ใช้แค่เป็น cache แสดงผลไว-ๆ ระหว่างรอ
+// เน็ตเวิร์กเท่านั้น ไม่ใช่แหล่งข้อมูลจริงอีกต่อไป
+//
+// 🐛 BUG FIX เพิ่มเติม (รูป/วีดิโอที่อัปโหลด): เดิมเก็บไฟล์เป็น base64 (fileData) ตรงๆ ในอ็อบเจกต์
+// โฆษณา ซึ่งใหญ่เกินกว่าจะเก็บใน DB ได้ทุกครั้งไป จึงเปลี่ยนให้อัปโหลดขึ้น Cloudinary ก่อน (เหมือน
+// ที่ระบบป้ายโฆษณา Hero และรูปสินค้าทำอยู่แล้ว) แล้วเก็บแค่ URL ที่ได้กลับมา
+const AD_KEY  = 'ms_ad_v2';           // ใช้เป็น local cache เท่านั้น ไม่ใช่แหล่งข้อมูลหลัก
 let adItems   = [];                    // array of ad objects
 let adEditIdx = -1;                    // -1 = new, >=0 = editing index
-let adFileData = '', adFileMime = '';  // temp for form
+let adUploadedUrl = '';                // URL จาก Cloudinary หลังอัปโหลดสำเร็จ (สำหรับฟอร์ม)
+let adUploading = false;               // กำลังอัปโหลดไฟล์อยู่ไหม (กันกดบันทึกซ้อน)
 let adCurSlide = 0;                    // current carousel slide
 
-// ── localStorage helpers ─────────────────────────────────
+// ── cache helpers (แสดงผลไว-ๆ เท่านั้น ไม่ใช่แหล่งข้อมูลจริง) ──
 function adGetCfg() {
   try { return JSON.parse(localStorage.getItem(AD_KEY)) || { enabled:false, delay:1, freq:'daily', items:[] }; }
   catch { return { enabled:false, delay:1, freq:'daily', items:[] }; }
 }
+function adSetCache(cfg) {
+  try { localStorage.setItem(AD_KEY, JSON.stringify(cfg)); } catch(_e) {}
+}
+
+// ── ดึง config จริงจาก server เสมอ (ใช้ทั้งฝั่งแอดมินและฝั่งลูกค้า) ──
+async function adFetchServerCfg() {
+  const r = await fetch(BACKEND_URL + '/popup-ads');
+  if (!r.ok) throw new Error('โหลดโฆษณาไม่สำเร็จ');
+  const cfg = await r.json();
+  adSetCache(cfg);
+  return cfg;
+}
 
 // ── Load UI when panel opens ─────────────────────────────
-function adLoadUI() {
-  const c = adGetCfg();
-  document.getElementById('adEnabled').checked = !!c.enabled;
-  document.getElementById('adConfig').style.display = c.enabled ? 'block' : 'none';
-  document.getElementById('adDelay').value = c.delay ?? 1;
-  document.getElementById('adFreq').value  = c.freq  || 'daily';
-  adItems = Array.isArray(c.items) ? c.items : [];
+async function adLoadUI() {
+  // แสดง cache ก่อนทันที (ถ้ามี) ระหว่างรอโหลดจาก server
+  const cached = adGetCfg();
+  adItems = Array.isArray(cached.items) ? cached.items : [];
+  document.getElementById('adEnabled').checked = !!cached.enabled;
+  document.getElementById('adConfig').style.display = cached.enabled ? 'block' : 'none';
+  document.getElementById('adDelay').value = cached.delay ?? 1;
+  document.getElementById('adFreq').value  = cached.freq  || 'daily';
   adRenderList();
   adResetForm();
   adFillTagDropdown('');
+
+  // แล้วซิงก์ของจริงจาก server ทับ (แหล่งข้อมูลถูกต้องเสมอ)
+  try {
+    const c = await adFetchServerCfg();
+    document.getElementById('adEnabled').checked = !!c.enabled;
+    document.getElementById('adConfig').style.display = c.enabled ? 'block' : 'none';
+    document.getElementById('adDelay').value = c.delay ?? 1;
+    document.getElementById('adFreq').value  = c.freq  || 'daily';
+    adItems = Array.isArray(c.items) ? c.items : [];
+    adRenderList();
+    adResetForm();
+    adFillTagDropdown('');
+  } catch (e) {
+    toast('⚠️ โหลดโฆษณาจากเซิร์ฟเวอร์ไม่สำเร็จ — แสดงข้อมูลที่แคชไว้');
+  }
 }
 
 function adToggleChange() {
   const on = document.getElementById('adEnabled').checked;
   document.getElementById('adConfig').style.display = on ? 'block' : 'none';
-  // บันทึกสถานะ enabled/disabled ลง localStorage ทันที
-  try {
-    const c = adGetCfg();
-    c.enabled = on;
-    localStorage.setItem(AD_KEY, JSON.stringify(c));
-    toast(on ? '📢 เปิดโฆษณาแล้ว' : '🔕 ปิดโฆษณาแล้ว — จะไม่แสดงจนกว่าจะเปิดใหม่');
-  } catch(_e) {}
+  // บันทึกสถานะ enabled/disabled ขึ้น server ทันที (ไม่ใช่แค่ localStorage อีกต่อไป)
+  // 🐛 BUG FIX: เดิมถ้าบันทึกไม่สำเร็จ (เช่น เปิดใช้งานทั้งที่ยังไม่มีโฆษณาเลยสักรายการ หรือเน็ตหลุด)
+  // ช่องติ๊กและแผงตั้งค่าจะค้างแสดงเป็น "เปิดอยู่" ทั้งที่จริงๆ ไม่ได้ถูกบันทึกขึ้น server เลย
+  // (สถานะหลอกที่ทำให้แอดมินเข้าใจผิดว่าเปิดใช้งานสำเร็จแล้ว) แก้โดยเช็คผลลัพธ์แล้วดีดกลับ UI
+  // ให้ตรงกับสถานะจริงถ้าบันทึกไม่ผ่าน
+  saveAdSettings().then(ok => {
+    if (!ok) {
+      document.getElementById('adEnabled').checked = !on;
+      document.getElementById('adConfig').style.display = !on ? 'block' : 'none';
+    }
+  });
 }
 
 // ── Render ad card list ──────────────────────────────────
@@ -5916,11 +5973,11 @@ function adRenderList() {
 }
 
 function adThumbHTML(item) {
-  if ((item.type==='image'||item.type==='video') && item.fileData) {
-    if ((item.fileMime||'').startsWith('video') || item.type==='video') {
-      return `<video src="${item.fileData}" muted style="width:100%;height:100%;object-fit:cover"></video>`;
+  if ((item.type==='image'||item.type==='video') && item.url) {
+    if (item.type==='video') {
+      return `<video src="${item.url}" muted style="width:100%;height:100%;object-fit:cover"></video>`;
     }
-    return `<img src="${item.fileData}" style="width:100%;height:100%;object-fit:cover">`;
+    return `<img src="${item.url}" style="width:100%;height:100%;object-fit:cover">`;
   }
   if (item.type==='youtube') return '▶️';
   if (item.type==='url' && item.url) return `<img src="${item.url}" style="width:100%;height:100%;object-fit:cover" onerror="this.parentNode.textContent='🌐'">`;
@@ -5929,7 +5986,8 @@ function adThumbHTML(item) {
 
 // ── Form helpers ─────────────────────────────────────────
 function adResetForm() {
-  adEditIdx = -1; adFileData = ''; adFileMime = '';
+  adEditIdx = -1; adUploadedUrl = ''; adUploading = false; adEditOrigUrl = '';
+  if (adPrevLocalUrl) { URL.revokeObjectURL(adPrevLocalUrl); adPrevLocalUrl = ''; }
   document.getElementById('adFormTitle').textContent = '➕ เพิ่มโฆษณาใหม่';
   document.getElementById('adType').value    = 'image';
   document.getElementById('adCaption').value = '';
@@ -5939,6 +5997,7 @@ function adResetForm() {
   document.getElementById('adUrlPrev').innerHTML = '';
   document.getElementById('adFile').value = '';
   adFillTagDropdown('');
+  adSetUploadStatus('');
   adShowPrev(); adTypeChange();
   adRenderList();
 }
@@ -5951,8 +6010,11 @@ function adEditItem(i) {
   document.getElementById('adCaption').value = item.caption || '';
   document.getElementById('adBtnUrl').value  = item.btnUrl  || '';
   document.getElementById('adBtnTxt').value  = item.btnTxt  || '';
-  document.getElementById('adUrl').value     = item.url     || '';
-  adFileData = item.fileData || ''; adFileMime = item.fileMime || '';
+  document.getElementById('adUrl').value     = (item.type==='youtube'||item.type==='url') ? (item.url || '') : '';
+  // สำหรับ image/video: url ที่มีอยู่แล้วคือไฟล์ที่เคยอัปโหลดขึ้น Cloudinary ไว้ก่อนหน้า
+  adUploadedUrl = (item.type==='image'||item.type==='video') ? (item.url || '') : '';
+  adEditOrigUrl = adUploadedUrl;
+  adUploading = false;
   adShowPrev(); adTypeChange();
   adFillTagDropdown(item.tagProductId || '');
   if (item.type==='youtube'||item.type==='url') adUrlPreview();
@@ -5962,15 +6024,38 @@ function adEditItem(i) {
 
 function adDeleteItem(i) {
   if (!confirm(`ลบโฆษณา #${i+1}?`)) return;
-  adItems.splice(i, 1);
-  // บันทึกลง localStorage ทันทีหลังลบ
-  try {
-    const c = adGetCfg();
-    c.items = adItems;
-    localStorage.setItem(AD_KEY, JSON.stringify(c));
-  } catch(_e) {}
+  const removed = adItems.splice(i, 1)[0];
   if (adEditIdx === i) adResetForm();
   else { adEditIdx = -1; adRenderList(); }
+  // 🐛 BUG FIX (พบจากการตรวจซ้ำ): ถ้าลบโฆษณา "ชิ้นสุดท้าย" ออกไปตอนที่สวิตช์ "เปิดใช้งาน" ยังติ๊ก
+  // ค้างอยู่ — saveAdSettings จะโดนกฎ "ห้ามเปิดใช้งานทั้งที่ไม่มีโฆษณา" บล็อกการบันทึกทันที แล้ว
+  // ระบบกู้-รายการ-ที่ลบ-กลับอัตโนมัติ (จากที่แก้ไว้ก่อนหน้า) ก็จะเด้งรายการที่เพิ่งลบกลับคืนมา
+  // เท่ากับแอดมินลบโฆษณาชิ้นสุดท้ายไม่ได้เลยถ้าลืมปิดสวิตช์ก่อน แถมข้อความ error ("บันทึกไม่สำเร็จ")
+  // ยังทำให้เข้าใจผิดว่าเป็นปัญหาเน็ตอีกด้วย ทั้งที่จริงๆ คือกฎธุรกิจไปชนกันเอง
+  // แก้โดยถ้าลบจนเหลือ 0 รายการ ให้ปิดสวิตช์ "เปิดใช้งาน" ให้อัตโนมัติไปพร้อมกันเลย (ไม่มีอะไรให้
+  // แสดงอยู่ดี) ก่อนบันทึก — ถ้าบันทึกไม่สำเร็จจริงๆ (เน็ตหลุด) ค่อยกู้ทั้งรายการและสถานะสวิตช์กลับ
+  let autoDisabled = false;
+  if (!adItems.length && document.getElementById('adEnabled').checked) {
+    document.getElementById('adEnabled').checked = false;
+    document.getElementById('adConfig').style.display = 'none';
+    autoDisabled = true;
+  }
+  // บันทึกขึ้น server ทันทีหลังลบ (ไม่ใช่แค่ localStorage)
+  // 🐛 BUG FIX: เดิมไม่เช็คผลลัพธ์เลย — ถ้าเน็ตหลุดตอนนี้ รายการจะหายไปจากหน้าจอแอดมินทันที
+  // ทั้งที่ server ยังมีข้อมูลเดิมอยู่ครบ (ยังไม่ได้ถูกลบจริง) ทำให้เข้าใจผิดว่าลบสำเร็จ
+  saveAdSettings(true).then(ok => {
+    if (!ok && removed) {
+      adItems.splice(i, 0, removed);
+      if (autoDisabled) {
+        document.getElementById('adEnabled').checked = true;
+        document.getElementById('adConfig').style.display = 'block';
+      }
+      adRenderList();
+      toast('⚠️ กู้รายการที่ลบคืนแล้ว — บันทึกขึ้นเซิร์ฟเวอร์ไม่สำเร็จ (เช็กอินเทอร์เน็ต)');
+    } else if (ok && autoDisabled) {
+      toast('🔕 ปิดการแสดงโฆษณาให้อัตโนมัติ เพราะไม่มีโฆษณาเหลือแล้ว');
+    }
+  });
   toast('ลบโฆษณาแล้ว 🗑️');
 }
 
@@ -5981,14 +6066,18 @@ function adSaveItem() {
   const caption = document.getElementById('adCaption').value.trim();
   const btnUrl  = document.getElementById('adBtnUrl').value.trim();
   const btnTxt  = document.getElementById('adBtnTxt').value.trim();
-  const url     = document.getElementById('adUrl').value.trim();
+  const urlIn   = document.getElementById('adUrl').value.trim();
 
   // validation
-  if ((type==='image'||type==='video') && !adFileData) { toast('กรุณาเลือกไฟล์ก่อน'); return; }
-  if ((type==='youtube'||type==='url') && !url) { toast('กรุณาใส่ URL ก่อน'); return; }
+  if ((type==='image'||type==='video')) {
+    if (adUploading) { toast('⏳ กำลังอัปโหลดไฟล์ — กรุณารอสักครู่แล้วลองใหม่'); return; }
+    if (!adUploadedUrl) { toast('กรุณาเลือกไฟล์ก่อน'); return; }
+  }
+  if ((type==='youtube'||type==='url') && !urlIn) { toast('กรุณาใส่ URL ก่อน'); return; }
 
+  const url = (type==='image'||type==='video') ? adUploadedUrl : urlIn;
   const tagProductId = document.getElementById('adTagProd')?.value || '';
-  const item = { type, caption, btnUrl, btnTxt, url, fileData: adFileData, fileMime: adFileMime, tagProductId };
+  const item = { type, caption, btnUrl, btnTxt, url, tagProductId };
   if (adEditIdx >= 0) {
     adItems[adEditIdx] = item;
     toast(`แก้ไขโฆษณา #${adEditIdx+1} แล้ว ✓`);
@@ -5997,6 +6086,8 @@ function adSaveItem() {
     toast(`เพิ่มโฆษณา #${adItems.length} แล้ว ✓`);
   }
   adResetForm();
+  // บันทึกขึ้น server ทันที กันเคสลืมกด "บันทึกทั้งหมด" แล้วนึกว่าบันทึกแล้ว
+  saveAdSettings(true);
 }
 
 // ── Type change / file pick / preview ───────────────────
@@ -6027,32 +6118,80 @@ function adTypeChange() {
   }
 }
 
+// ── เลือกไฟล์ → พรีวิวทันที (local) + อัปโหลดขึ้น Cloudinary เบื้องหลัง ──
+let adPrevLocalUrl = ''; // object URL สำหรับพรีวิวก่อนอัปโหลดเสร็จ (ไม่ใช่ค่าที่บันทึกจริง)
+let adEditOrigUrl = '';  // 🐛 เก็บ url เดิมของโฆษณาที่กำลังแก้ไขไว้ เผื่ออัปโหลดไฟล์ใหม่พัง จะได้กู้กลับ
+                          // ไม่งั้นฟอร์มจะค้างไม่มีรูปเลยทั้งที่ของเดิมยังอยู่บน Cloudinary ปกติดี
+function adSetUploadStatus(msg) {
+  const el = document.getElementById('adUpStatus');
+  if (el) el.textContent = msg;
+}
+function adHandleFile(f) {
+  if (!f) return;
+  adUploadedUrl = '';
+  if (adPrevLocalUrl) { URL.revokeObjectURL(adPrevLocalUrl); }
+  adPrevLocalUrl = URL.createObjectURL(f);
+  const mime = f.type || '';
+  adShowPrev(mime);
+  adUploadFile(f, mime);
+}
 function pickAd(inp) {
   const f = inp.files[0]; if (!f) return;
-  const r = new FileReader();
-  r.onload = e => { adFileData=e.target.result; adFileMime=f.type; adShowPrev(); };
-  r.readAsDataURL(f);
+  adHandleFile(f);
 }
 function dropAd(e) {
   e.preventDefault(); unDrag('adDrop');
   const f = e.dataTransfer.files[0]; if (!f) return;
-  const r = new FileReader();
-  r.onload = ev => { adFileData=ev.target.result; adFileMime=f.type; adShowPrev(); };
-  r.readAsDataURL(f);
+  adHandleFile(f);
 }
-function adShowPrev() {
+async function adUploadFile(f, mime) {
+  if (!CLOUDINARY_CLOUD || !CLOUDINARY_PRESET) { adSetUploadStatus('❌ ยังไม่ได้ตั้งค่า Cloudinary'); return; }
+  adUploading = true;
+  adSetUploadStatus('⏳ กำลังอัปโหลด...');
+  try {
+    const isVideo = mime.startsWith('video');
+    const fd = new FormData();
+    fd.append('file', f);
+    fd.append('upload_preset', CLOUDINARY_PRESET);
+    fd.append('folder', 'popup-ads');
+    const endpoint = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/${isVideo ? 'video' : 'image'}/upload`;
+    const r = await fetch(endpoint, { method:'POST', body:fd });
+    const d = await r.json();
+    if (!d.secure_url) throw new Error(d.error?.message || 'อัปโหลดไม่สำเร็จ');
+    adUploadedUrl = d.secure_url;
+    adSetUploadStatus('✅ อัปโหลดสำเร็จ');
+  } catch (e) {
+    adSetUploadStatus('❌ อัปโหลดไม่สำเร็จ: ' + e.message);
+    toast('❌ อัปโหลดไฟล์ไม่สำเร็จ ลองใหม่อีกครั้ง');
+    // 🐛 BUG FIX: ถ้ากำลังแก้ไขโฆษณาเดิมอยู่และเลือกไฟล์ใหม่แต่อัปโหลดพัง เดิมฟอร์มจะค้างไม่มีรูป
+    // เลยทั้งที่ของเดิมยังอยู่ปกติ — กู้ url เดิมกลับมาเป็นค่าตั้งต้นของฟอร์มแทน
+    if (adEditOrigUrl) {
+      adUploadedUrl = adEditOrigUrl;
+      if (adPrevLocalUrl) { URL.revokeObjectURL(adPrevLocalUrl); adPrevLocalUrl = ''; }
+      adShowPrev();
+    }
+  } finally {
+    adUploading = false;
+  }
+}
+function adShowPrev(mime) {
   const wrap = document.getElementById('adPrevWrap');
   const img  = document.getElementById('adPrevImg');
   const vid  = document.getElementById('adPrevVid');
   img.style.display='none'; vid.style.display='none';
-  if (!adFileData) { wrap.style.display='none'; return; }
+  // ระหว่างแก้ไขโฆษณาเดิม (ยังไม่ได้เลือกไฟล์ใหม่) ใช้ url ที่อัปโหลดไว้แล้วเป็นพรีวิว
+  const src = adPrevLocalUrl || adUploadedUrl;
+  if (!src) { wrap.style.display='none'; return; }
   wrap.style.display='inline-block';
-  if (adFileMime.startsWith('video')) { vid.src=adFileData; vid.style.display='block'; }
-  else { img.src=adFileData; img.style.display='block'; }
+  const isVideo = mime ? mime.startsWith('video') : (document.getElementById('adType').value==='video');
+  if (isVideo) { vid.src=src; vid.style.display='block'; }
+  else { img.src=src; img.style.display='block'; }
 }
 function clearAdMedia() {
-  adFileData=''; adFileMime='';
+  adUploadedUrl=''; adUploading=false; adEditOrigUrl='';
+  if (adPrevLocalUrl) { URL.revokeObjectURL(adPrevLocalUrl); adPrevLocalUrl=''; }
   document.getElementById('adFile').value='';
+  adSetUploadStatus('');
   adShowPrev();
 }
 function adUrlPreview() {
@@ -6074,35 +6213,71 @@ function ytId(url) {
   return m ? m[1] : null;
 }
 
-// ── Save / Clear all ─────────────────────────────────────
-function saveAdSettings() {
-  if (!adItems.length) { toast('ยังไม่มีโฆษณา — กรุณาเพิ่มอย่างน้อย 1 รายการ'); return; }
+// ── Save / Clear all — บันทึกขึ้น server (Supabase) เพื่อให้ลูกค้าทุกคน/ทุกเครื่องเห็นตรงกัน ──
+// silent=true: เรียกจากจุดที่บันทึกอัตโนมัติ (toggle เปิด/ปิด, ลบ, บันทึกโฆษณาแต่ละอัน) ไม่ต้อง
+// disable ปุ่ม "บันทึกทั้งหมด" (เพราะอาจไม่ได้ถูกกดตรงๆ)
+async function saveAdSettings(silent) {
+  const enabled = document.getElementById('adEnabled').checked;
+  if (enabled && !adItems.length) {
+    if (!silent) toast('ยังไม่มีโฆษณา — กรุณาเพิ่มอย่างน้อย 1 รายการก่อนเปิดใช้งาน');
+    return false;
+  }
   const cfg = {
-    enabled : document.getElementById('adEnabled').checked,
-    delay   : parseFloat(document.getElementById('adDelay').value) || 1,
-    freq    : document.getElementById('adFreq').value,
-    items   : adItems
+    enabled,
+    delay : parseFloat(document.getElementById('adDelay').value) || 1,
+    freq  : document.getElementById('adFreq').value,
+    items : adItems
   };
+  const btn = document.querySelector('[onclick="saveAdSettings()"]');
+  if (!silent && btn) { btn.disabled = true; btn.textContent = '⏳ กำลังบันทึก...'; }
   try {
-    localStorage.setItem(AD_KEY, JSON.stringify(cfg));
-    toast(`บันทึกโฆษณา ${adItems.length} รายการแล้ว ✓`);
+    const r = await fetch(BACKEND_URL + '/popup-ads', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cfg)
+    });
+    const d = await r.json();
+    if (!r.ok || !d.success) throw new Error(d.error || 'บันทึกไม่สำเร็จ');
+    const sentCount = cfg.items.length;
+    adItems = d.config.items; // ค่าที่ผ่านการ sanitize จาก server
+    adSetCache(d.config);
+    // 🐛 กันเคส server ตัดรายการทิ้งแบบเงียบๆ (เกิน 20 รายการ หรือรายการไหน url ว่างหลัง sanitize)
+    // โดยไม่บอกแอดมินเลยว่าของหายไปกี่ชิ้น
+    if (adItems.length < sentCount) {
+      toast(`⚠️ บันทึกได้ ${adItems.length}/${sentCount} รายการ — บางรายการถูกตัดออก (เกินโควตาหรือข้อมูลไม่ครบ)`);
+    } else if (!silent) {
+      toast(`บันทึกโฆษณา ${adItems.length} รายการแล้ว ✓ ลูกค้าเห็นทันที`);
+    }
+    return true;
   } catch(e) {
-    if (e.name==='QuotaExceededError') toast('ข้อมูลใหญ่เกิน 5 MB — ลดจำนวนหรือใช้ URL แทน');
-    else toast('บันทึกไม่ได้: '+e.message);
+    toast('❌ บันทึกไม่สำเร็จ: ' + e.message);
+    return false;
+  } finally {
+    if (!silent && btn) { btn.disabled = false; btn.textContent = '💾 บันทึกทั้งหมด'; }
   }
 }
-function clearAdSettings() {
+async function clearAdSettings() {
   if (!confirm('ลบโฆษณาทั้งหมด?')) return;
-  localStorage.removeItem(AD_KEY);
+  const prevItems = adItems, prevEnabled = document.getElementById('adEnabled').checked;
   adItems=[]; adResetForm();
   document.getElementById('adEnabled').checked=false;
   document.getElementById('adConfig').style.display='none';
-  toast('ลบโฆษณาทั้งหมดแล้ว');
+  const ok = await saveAdSettings(true);
+  // 🐛 BUG FIX: เดิมขึ้นข้อความ "ลบโฆษณาทั้งหมดแล้ว" เสมอไม่ว่าจะบันทึกสำเร็จจริงหรือไม่ — ถ้าเน็ตหลุด
+  // ระหว่างลบ แอดมินจะเข้าใจผิดว่าลบสำเร็จทั้งที่ server ยังมีข้อมูลเดิมอยู่ (saveAdSettings จะ toast
+  // แจ้ง error ของมันเองไปแล้วในเคสนี้ ไม่ต้องซ้อนข้อความ "ลบสำเร็จ" ทับ)
+  if (ok) {
+    toast('ลบโฆษณาทั้งหมดแล้ว');
+  } else {
+    // ย้อนกลับ UI เป็นค่าก่อนหน้า เพราะการลบไม่ได้ถูกบันทึกจริง
+    adItems = prevItems;
+    document.getElementById('adEnabled').checked = prevEnabled;
+    document.getElementById('adConfig').style.display = prevEnabled ? 'block' : 'none';
+    adRenderList();
+  }
 }
 function previewAd() {
-  const cfg = adGetCfg();
-  // preview ใช้ items จาก form ปัจจุบัน (ยังไม่ต้อง save)
-  const previewCfg = { ...cfg, items: adItems, enabled:true };
+  // preview ใช้ items จาก form ปัจจุบัน (ยังไม่ต้อง save) — ตัวที่กำลังอัปโหลดค้างอยู่จะยังไม่โผล่
+  const previewCfg = { enabled:true, delay:0, freq:'always', items: adItems };
   if (!previewCfg.items.length) { toast('ยังไม่มีโฆษณา'); return; }
   showAdOverlay(previewCfg, true);
 }
@@ -6160,15 +6335,15 @@ function adRenderSlide(items, idx) {
 
   // content
   const t = item.type || 'image';
-  if ((t==='image'||t==='video') && item.fileData) {
-    if ((item.fileMime||'').startsWith('video') || t==='video') {
+  if ((t==='image'||t==='video') && item.url) {
+    if (t==='video') {
       const v = document.createElement('video');
-      v.src=item.fileData; v.controls=true; v.autoplay=true; v.muted=false; v.loop=false;
+      v.src=item.url; v.controls=true; v.autoplay=true; v.muted=false; v.loop=false;
       v.style.cssText='width:100%;max-height:55vh;object-fit:contain;background:#000';
       content.appendChild(v);
     } else {
       const img = document.createElement('img');
-      img.src=item.fileData; img.alt=item.caption||'โฆษณา';
+      img.src=item.url; img.alt=item.caption||'โฆษณา';
       img.style.cssText='width:100%;max-height:55vh;object-fit:contain;display:block';
       if (item.tagProductId) img.style.cursor='pointer';
       content.appendChild(img);
@@ -8208,7 +8383,9 @@ setTimeout(shInit,600);
     track.className = 'hb-track';
     items.forEach(function (it) {
       var s = document.createElement('div');
-      s.className = 'hb-slide' + (it.link ? ' linked' : '');
+      // 🆕 ตามที่แจ้งเพิ่ม: "กดดูรูปได้" — ทุกป้ายกดขยายดูรูปเต็มๆ ได้เสมอ ไม่ต้องรอให้ตั้งลิงก์/
+      // แท็กสินค้าไว้ก่อนถึงจะกดได้ (จากรอบก่อนพลาดตีความว่าต้องมีลิงก์/แท็กก่อนถึงจะกดได้)
+      s.className = 'hb-slide linked';
       if (it.type === 'video') {
         var v = document.createElement('video');
         v.src = it.url; v.muted = true; v.loop = true; v.autoplay = true; v.playsInline = true;
@@ -8221,6 +8398,12 @@ setTimeout(shInit,600);
           f.src = 'https://www.youtube.com/embed/' + id + '?autoplay=1&mute=1&loop=1&playlist=' + id + '&controls=0&playsinline=1';
           f.allow = 'autoplay; encrypted-media';
           s.appendChild(f);
+          // 🐛 BUG FIX: iframe เป็นเอกสารคนละ origin — คลิกที่ตกลงบนตัว iframe โดยตรงจะไม่ bubble
+          // ขึ้นมาที่ element แม่เลยตามข้อจำกัดของเบราว์เซอร์ ทำให้ป้ายชนิด YouTube กดไม่ติดสักที
+          // (คลิกไปโดนตัวเล่นวิดีโอของ YouTube เองแทน) แก้โดยวางชั้นโปร่งใสทับไว้ดักคลิกแทน
+          var capLayer = document.createElement('div');
+          capLayer.style.cssText = 'position:absolute;inset:0;z-index:3;cursor:pointer';
+          s.appendChild(capLayer);
         }
       } else {
         var img = document.createElement('img');
@@ -8232,7 +8415,24 @@ setTimeout(shInit,600);
         c.className = 'hb-cap'; c.textContent = it.caption;
         s.appendChild(c);
       }
-      if (it.link) s.onclick = function () { window.open(it.link, '_blank'); };
+      // 🆕 กดป้ายแล้วเปิดดูรูป/วิดีโอขยายใหญ่ (ใช้กล่องดูโฆษณาเดิมของโฆษณา Pop-up มาแสดงซ้ำ — โค้ด
+      // เดียวกัน ผ่านการตรวจสอบแล้ว ไม่ต้องสร้าง lightbox ใหม่) พร้อมปุ่ม "ดูสินค้า" (ถ้าแท็กสินค้าไว้)
+      // หรือปุ่ม "ดูเพิ่มเติม" ไปลิงก์ภายนอก (ถ้าตั้งลิงก์ไว้) ต่อท้ายให้อัตโนมัติ — ถ้าไม่ได้ตั้งอะไร
+      // ไว้เลยก็จะเห็นแค่รูปขยายใหญ่เฉยๆ ตามที่ขอ
+      s.onclick = function () {
+        if (typeof showAdOverlay !== 'function') return;
+        showAdOverlay({
+          enabled: true,
+          items: [{
+            type: it.type,
+            url: it.url,
+            caption: it.caption,
+            btnUrl: it.link || '',
+            btnTxt: it.link ? 'ดูเพิ่มเติม' : '',
+            tagProductId: it.tagProductId || ''
+          }]
+        }, true);
+      };
       track.appendChild(s);
     });
     stage.appendChild(track);
@@ -8287,9 +8487,30 @@ setTimeout(shInit,600);
 
   /* ── แอดมิน: ฉีดส่วนจัดการเข้า tab ร้าน ── */
   var hbDraft = null; // สำเนาแก้ไขก่อนบันทึก
+  // 🆕 เติมตัวเลือกสินค้าในดรอปดาวน์ "แท็กสินค้า" (เหมือนโฆษณา Pop-up)
+  // เปิดเป็น global (window.hbFillTagDropdown) เพราะ openAdmin() อยู่นอก IIFE นี้ และต้องเรียกซ้ำ
+  // ทุกครั้งที่เปิดแผงแอดมิน — ไม่งั้นถ้า products ยังโหลดไม่เสร็จตอน inject ครั้งแรก (ตอนหน้าเว็บ
+  // เพิ่งโหลด) ดรอปดาวน์จะค้างว่างเปล่าตลอดไป
+  function hbFillTagDropdown() {
+    var sel = document.getElementById('hbTagProd');
+    if (!sel || typeof products === 'undefined' || !Array.isArray(products)) return;
+    var cur = sel.value;
+    sel.innerHTML = '<option value="">— ไม่แท็กสินค้า —</option>';
+    var sorted = products.slice().sort(function (a, b) { return a.name.localeCompare(b.name, 'th'); });
+    sorted.forEach(function (p) {
+      var opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.name + (p.cat ? ' (' + p.cat + ')' : '');
+      sel.appendChild(opt);
+    });
+    sel.value = cur || '';
+  }
+  window.hbFillTagDropdown = hbFillTagDropdown;
+
   function hbAdminRefresh() {
     var listEl = document.getElementById('hbList');
     if (!listEl || !hbDraft) return;
+    hbFillTagDropdown();
     var en = document.getElementById('hbEnabled');
     if (en) en.checked = !!hbDraft.enabled;
     var sec = document.getElementById('hbSec');
@@ -8309,7 +8530,11 @@ setTimeout(shInit,600);
       info.className = 'hb-item-info';
       info.innerHTML = '<b></b><small></small>';
       info.querySelector('b').textContent = it.caption || ('ป้ายที่ ' + (i + 1));
-      info.querySelector('small').textContent = (it.type === 'image' ? '🖼️ รูปภาพ' : it.type === 'youtube' ? '▶️ YouTube' : '🎬 วิดีโอ') + (it.link ? ' · มีลิงก์' : '');
+      var tagProd = it.tagProductId && typeof products !== 'undefined' ? products.find(function (p) { return String(p.id) === String(it.tagProductId); }) : null;
+      var subParts = [it.type === 'image' ? '🖼️ รูปภาพ' : it.type === 'youtube' ? '▶️ YouTube' : '🎬 วิดีโอ'];
+      if (tagProd) subParts.push('🏷️ ' + tagProd.name);
+      else if (it.link) subParts.push('มีลิงก์');
+      info.querySelector('small').textContent = subParts.join(' · ');
       var del = document.createElement('button');
       del.className = 'hb-item-del'; del.textContent = '🗑';
       del.onclick = function () { hbDraft.items.splice(i, 1); hbAdminRefresh(); };
@@ -8340,8 +8565,12 @@ setTimeout(shInit,600);
         '</div>' +
         '<input class="s-inp" id="hbUrl" placeholder="🔗 URL รูป / วิดีโอ mp4 / ลิงก์ YouTube" style="margin-bottom:8px;">' +
         '<input class="s-inp" id="hbCaption" placeholder="📝 ข้อความบนป้าย (ไม่บังคับ)" style="margin-bottom:8px;">' +
-        '<input class="s-inp" id="hbLink" placeholder="👆 ลิงก์เมื่อลูกค้าแตะป้าย (ไม่บังคับ)" style="margin-bottom:10px;">' +
-        '<button class="save-btn" id="hbAddBtn" style="padding:10px;">➕ เพิ่มป้ายนี้</button>' +
+        '<input class="s-inp" id="hbLink" placeholder="👆 ลิงก์ภายนอกเมื่อลูกค้าแตะป้าย (ไม่บังคับ)" style="margin-bottom:8px;">' +
+        '<div class="ad-tag-wrap">' +
+          '<div class="ad-tag-lbl">🏷️ แท็กสินค้า <span style="font-weight:400;color:#888;font-size:11px">(กดป้ายแล้วพาไปดูสินค้านี้ในร้าน — สำคัญกว่าลิงก์ภายนอกถ้าตั้งไว้)</span></div>' +
+          '<select class="ad-tag-sel" id="hbTagProd"><option value="">— ไม่แท็กสินค้า —</option></select>' +
+        '</div>' +
+        '<button class="save-btn" id="hbAddBtn" style="padding:10px;margin-top:2px;">➕ เพิ่มป้ายนี้</button>' +
         '<div id="hbUpStatus" style="font-size:11px;color:#8A5A13;min-height:14px;margin-top:6px;text-align:center;"></div>' +
       '</div>' +
       '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">' +
@@ -8351,6 +8580,7 @@ setTimeout(shInit,600);
       '</div>' +
       '<button class="save-btn" id="hbSaveBtn">💾 บันทึกป้ายโฆษณาหน้าร้าน</button>';
     pane.appendChild(box);
+    hbFillTagDropdown();
 
     document.getElementById('hbFile').onchange = function () {
       var f = this.files && this.files[0];
@@ -8373,12 +8603,15 @@ setTimeout(shInit,600);
       var url = document.getElementById('hbUrl').value.trim();
       if (!url) { if (typeof toast === 'function') toast('ใส่ URL หรืออัปโหลดรูปก่อนนะ'); return; }
       var type = ytIdOf(url) ? 'youtube' : (/\.(mp4|webm|ogg)(\?|$)/i.test(url) ? 'video' : 'image');
+      var tagSel = document.getElementById('hbTagProd');
       hbDraft.items.push({ type: type, url: url,
         caption: document.getElementById('hbCaption').value.trim(),
-        link: document.getElementById('hbLink').value.trim() });
+        link: document.getElementById('hbLink').value.trim(),
+        tagProductId: tagSel ? tagSel.value : '' });
       document.getElementById('hbUrl').value = '';
       document.getElementById('hbCaption').value = '';
       document.getElementById('hbLink').value = '';
+      if (tagSel) tagSel.value = '';
       document.getElementById('hbUpStatus').textContent = '';
       hbAdminRefresh();
     };
