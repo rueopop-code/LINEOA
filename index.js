@@ -547,6 +547,31 @@ function normalizePhone(p) {
   return String(p || '').replace(/\D/g, '');
 }
 
+// ── helper: ตัดสินว่าออเดอร์/ghost 2 รายการนี้เป็นคนเดียวกันไหม (สำหรับผูก line_user_id อัตโนมัติ) ──
+// 🔒 SECURITY FIX: เดิมทุกจุดที่ผูก line_user_id อัตโนมัติ (auto-link ตอน /send-order,
+// /backfill-line-links, /resend-order) ใช้ OR ระหว่างเบอร์กับชื่อ — แค่ "ชื่อตรง" อย่างเดียว
+// (ไม่ต้องมีเบอร์ตรงด้วย) ก็ผูก LINE UID ให้ได้แล้ว อันตรายมากเพราะชื่อ/ชื่อเล่น LINE ซ้ำกันได้
+// ง่ายมาก (เช่น "หนึ่ง"/"เอ"/"บอล") จะผูก LINE UID ของคนนึงไปให้ออเดอร์ของอีกคนโดยไม่ตั้งใจ —
+// กระทบทั้งการแจ้งเตือน LINE ที่จะส่งไปผิดคน และทำให้เช็ค first_order/coupon reuse (ที่พึ่งเพิ่ม
+// ให้อิงจาก LINE UID เป็นหลัก) ผิดเพี้ยนตามไปด้วย เพราะฐานที่ใช้ระบุตัวตนไม่แน่นพอ
+// กติกาใหม่ (เข้มขึ้น): ถ้ามีเบอร์ให้เทียบทั้งสองฝั่ง ต้อง "เบอร์ตรง" เท่านั้นถึงจะถือว่าใช่คนเดียวกัน
+// (เบอร์ไม่ตรง = ไม่ใช่ทันที ต่อให้ชื่อจะตรงก็ตาม ไม่ให้ชื่อ override เบอร์ได้) ถ้ามีแค่ฝั่งเดียวที่มี
+// เบอร์ (อีกฝั่งไม่มีข้อมูลเบอร์เลย) ถือว่าเทียบไม่ได้แน่ชัด → ไม่ผูก (เข้มงวดไว้ก่อน ให้แอดมินผูกมือ
+// ผ่านปุ่ม "รวมออเดอร์" แทน) ใช้ชื่อ fallback ได้เฉพาะกรณีไม่มีเบอร์ให้เทียบทั้งสองฝั่งจริงๆ เท่านั้น
+function isSameIdentity(myPhone, myNames, otherPhone, otherNames) {
+  const namesA = (Array.isArray(myNames) ? myNames : [myNames])
+    .map(n => String(n || '').trim().toLowerCase()).filter(Boolean);
+  const namesB = (Array.isArray(otherNames) ? otherNames : [otherNames])
+    .map(n => String(n || '').trim().toLowerCase()).filter(Boolean);
+  const pA = normalizePhone(myPhone);
+  const pB = normalizePhone(otherPhone);
+
+  if (pA && pB) return pA === pB;
+  if (pA || pB) return false; // มีเบอร์แค่ฝั่งเดียว เทียบไม่ได้แน่ชัด → ไม่ถือว่าใช่
+
+  return namesA.some(a => namesB.includes(a));
+}
+
 // 🔒 SECURITY FIX: เดิม /sales/:salesId และ /invite/:refCode เอาค่าจาก URL (req.params) ที่ใครก็
 // พิมพ์อะไรก็ได้ไปแปะในหน้า HTML ตรงๆ โดยไม่ escape เลย (เช่น <div>...${salesId}</div>) — ทำให้
 // ใครก็สร้างลิงก์แชร์ เช่น /sales/<script>alert(document.cookie)</script> แล้วส่งให้เหยื่อกดได้
@@ -2159,7 +2184,31 @@ app.post('/send-order', async (req, res) => {
           if (usageByPhone) alreadyUsedCoupon = true;
         }
 
-        if (!alreadyUsedCoupon) {
+        // 🔒 SECURITY FIX: จุดนี้คือ endpoint ที่ตัดส่วนลด/ยืนยันคูปองจริง (source of truth)
+        // แต่เดิมไม่เคยเช็ค coup.condition_type === 'first_order' เลย — /validate-coupon,
+        // /applicable-discounts, /available-coupons เช็คตอนแสดงผล/พรีวิว แต่ /send-order
+        // (ตอนกดยืนยันสั่งซื้อจริง) กลับไม่รีเช็คซ้ำ ทำให้ถ้า couponId/discountAmount ถูกส่งตรง
+        // เข้ามา (เช่น ค่าที่ค้างจาก validate ตอนยังเป็นออเดอร์แรก แล้วเอามาใช้ซ้ำในออเดอร์ถัดไป
+        // โดยไม่ re-validate หรือยิง API ตรงๆ ข้าม UI) ลูกค้าเก่าก็ยังใช้คูปอง "ลูกค้าใหม่เท่านั้น"
+        // ผ่านได้อยู่ดี — ใช้ isReturningCustomer() เช็คให้ครบ: customer_id → LINE UID → เบอร์โทร
+        // → ชื่อตรงทั้งชื่อ → ชื่อตรงบางส่วน (ดู comment เต็มที่ตัว helper) กันเคสลูกค้าเก่าเคลียร์
+        // localStorage / เปลี่ยนเครื่อง / สลับ LIFF↔LINE Login แล้วได้ customer_id ใหม่มาใช้ซ้ำ
+        let failsFirstOrderCondition = false;
+        if (coup.condition_type === 'first_order') {
+          const check = await isReturningCustomer({
+            customerId, lineUserId: lineUidForCoupon, phone: normPhone, customerName
+          });
+          if (check.error) {
+            // query พลาด → ปลอดภัยไว้ก่อน ไม่ให้ส่วนลดลูกค้าใหม่ผ่าน (กันกรณี error แล้วเผลอปล่อยผ่าน)
+            failsFirstOrderCondition = true;
+            console.warn(`⚠️ first_order check query error for coupon ${coup.code}, customer=${customerId}:`, check.error.message);
+          } else if (check.isReturning) {
+            failsFirstOrderCondition = true;
+            console.warn(`🚫 coupon ${coup.code} เป็นคูปองลูกค้าใหม่เท่านั้น แต่ customer=${customerId} เคยสั่งซื้อมาแล้ว (matched by: ${check.matchedBy}) — ข้ามการใช้คูปองสำหรับออเดอร์นี้`);
+          }
+        }
+
+        if (!alreadyUsedCoupon && !failsFirstOrderCondition) {
           // 🔒 SECURITY FIX: เดิม finalDiscount = Math.min(discountAmount, total) เชื่อ
           // discountAmount ที่ client ส่งมาตรงๆ (จำกัดแค่ไม่ให้เกิน total ที่ client ก็ส่งมาเอง
           // เหมือนกัน — ไม่ป้องกันอะไรเลยจริงๆ) ตอนนี้คำนวณส่วนลดใหม่จากกฎคูปองจริง +
@@ -2183,7 +2232,7 @@ app.post('/send-order', async (req, res) => {
               if (e) console.warn('coupon_usages insert failed:', e.message);
             });
           }
-        } else {
+        } else if (alreadyUsedCoupon) {
           console.warn(`🚫 coupon ${coup.code} already used by LINE=${lineUidForCoupon?.slice(0,12)} phone=${normPhone}`);
         }
       }
@@ -2317,7 +2366,6 @@ app.post('/send-order', async (req, res) => {
   let autoLinkedLineUid = null;
   try {
     const normPhone = (p) => String(p || '').replace(/\D/g, '');
-    const norm = (s) => String(s || '').trim().toLowerCase();
     const myPhone = normPhone(phone);
 
     // ── วิธีที่ 0 (เร็วและแม่นที่สุด): ค้น LINK-{customerId} row โดยตรง ──
@@ -2351,7 +2399,10 @@ app.post('/send-order', async (req, res) => {
       }
     }
 
-    // ── วิธีที่ 2: ค้นจาก ghost orders (LINE-% / LINK-%) ด้วย phone + ชื่อ ──
+    // ── วิธีที่ 2: ค้นจาก ghost orders (LINE-% / LINK-%) ด้วย phone เป็นหลัก ──
+    // 🔒 SECURITY FIX: เดิม match แค่ "ชื่อตรง" อย่างเดียว (ไม่ต้องมีเบอร์ตรงด้วย) ก็ผูกได้แล้ว —
+    // เปลี่ยนมาใช้ isSameIdentity() ที่บังคับเบอร์ตรงเป็นหลักเมื่อมีเบอร์ให้เทียบทั้งสองฝั่ง (ดู
+    // comment เต็มที่ตัว helper)
     if (!autoLinkedLineUid) {
       const { data: ghostOrders } = await supabase.from('orders')
         .select('order_id, line_user_id, customer_name, line_name, phone')
@@ -2359,16 +2410,9 @@ app.post('/send-order', async (req, res) => {
         .not('line_user_id', 'is', null);
 
       if (ghostOrders?.length) {
-        const myLineName = norm(lineName);
-        const myCustName = norm(customerName);
-        const matched = ghostOrders.find(g => {
-          const gLine = norm(g.line_name);
-          const gCust = norm(g.customer_name);
-          return (myPhone && normPhone(g.phone) === myPhone) ||
-                 (myLineName && gLine && gLine === myLineName) ||
-                 (myLineName && gCust && gCust === myLineName) ||
-                 (myCustName && gCust && gCust === myCustName);
-        });
+        const matched = ghostOrders.find(g =>
+          isSameIdentity(myPhone, [lineName, customerName], g.phone, [g.line_name, g.customer_name])
+        );
         if (matched?.line_user_id) {
           autoLinkedLineUid = matched.line_user_id;
           console.log(`🔗 auto-linked via ghost order match: ${matched.order_id}`);
@@ -3110,23 +3154,22 @@ app.post('/backfill-line-links', requirePerm('orders'), async (req, res) => {
 
   if (!ghosts?.length) return res.json({ updated: 0, message: 'no ghost orders' });
 
-  const normPhone = (p) => String(p || '').replace(/\D/g, '');
-
   let totalUpdated = 0;
   const linked = [];
   for (const g of ghosts) {
-    const phone = normPhone(g.phone);
-    const name  = (g.customer_name || '').trim().toLowerCase();
-
-    // หาออเดอร์จริงที่ phone หรือ name ตรงกัน แต่ยังไม่มี line_user_id
+    // หาออเดอร์จริงที่เป็นคนเดียวกันจริงๆ แต่ยังไม่มี line_user_id
     const { data: realOrders } = await supabase.from('orders')
       .select('order_id, customer_id, customer_name, phone')
       .not('order_id', 'like', 'LINE-%')
       .is('line_user_id', null);
 
+    // 🔒 SECURITY FIX: เดิม match ด้วย "phone ตรง หรือ name ตรง" (OR) — แค่ชื่อตรงอย่างเดียว
+    // (ไม่ต้องมีเบอร์ตรงด้วย) ก็ผูก LINE UID ให้ทั้งกลุ่ม customer_id นั้นได้เลย อันตรายมากเพราะ
+    // ชื่อซ้ำกันได้ง่าย จะผูก LINE UID ของคนนึงไปให้ออเดอร์ของอีกคน — เปลี่ยนมาใช้
+    // isSameIdentity() ที่บังคับเบอร์ตรงเป็นหลักเมื่อมีเบอร์ให้เทียบทั้งสองฝั่ง (ดู comment เต็มที่
+    // ตัว helper)
     const matches = (realOrders || []).filter(o =>
-      (phone && normPhone(o.phone) === phone) ||
-      (name && (o.customer_name || '').trim().toLowerCase() === name)
+      isSameIdentity(g.phone, g.customer_name, o.phone, o.customer_name)
     );
 
     if (matches.length) {
@@ -3171,26 +3214,28 @@ app.post('/resend-order/:orderId', requirePerm('orders'), async (req, res) => {
     if (targetUid) linkedHow = 'customer_id';
   }
 
-  // fallback 2: หาจาก phone/name match กับ ghost orders
+  // fallback 2: หาจาก identity match กับ ghost orders (เบอร์เป็นหลัก)
+  // 🔒 SECURITY FIX: เดิม match ด้วย "phone ตรง หรือ name ตรง" (OR) — แค่ชื่อตรงอย่างเดียวก็ผูกได้
+  // เปลี่ยนมาใช้ isSameIdentity() บังคับเบอร์ตรงเป็นหลักเมื่อมีเบอร์ให้เทียบทั้งสองฝั่ง (ดู comment
+  // เต็มที่ตัว helper) — endpoint นี้ resend ข้อความสรุปออเดอร์ไปหา LINE UID ที่หาได้ ถ้าผูกผิดคน
+  // จะส่งข้อมูลออเดอร์/ยอดเงินของลูกค้าคนนี้ไปให้ LINE ของอีกคนโดยตรง จึงต้องเข้มงวดเป็นพิเศษ
   if (!targetUid) {
-    const normPhone = (p) => String(p || '').replace(/\D/g, '');
-    const myPhone = normPhone(order.phone);
-    const myName  = (order.customer_name || '').trim().toLowerCase();
+    const myPhone = order.phone;
+    const myName  = order.customer_name;
 
-    if (myPhone || myName) {
+    if (normalizePhone(myPhone) || String(myName || '').trim()) {
       const { data: ghosts } = await supabase.from('orders')
         .select('line_user_id, customer_name, phone')
         .like('order_id', 'LINE-%')
         .not('line_user_id', 'is', null);
 
       const matched = (ghosts || []).find(g =>
-        (myPhone && normPhone(g.phone) === myPhone) ||
-        (myName && (g.customer_name || '').trim().toLowerCase() === myName)
+        isSameIdentity(myPhone, myName, g.phone, g.customer_name)
       );
 
       if (matched?.line_user_id) {
         targetUid = matched.line_user_id;
-        linkedHow = matched.phone === order.phone ? 'phone' : 'name';
+        linkedHow = normalizePhone(matched.phone) && normalizePhone(matched.phone) === normalizePhone(order.phone) ? 'phone' : 'name';
 
         // backfill ให้ออเดอร์ของ customer คนนี้ทุกตัว
         if (order.customer_id) {
@@ -4113,6 +4158,66 @@ function calcDiscount(coupon, orderTotal) {
   return Math.min(coupon.discount_value, orderTotal); // ไม่ลดจนติดลบ
 }
 
+// ── helper: escape wildcard พิเศษของ SQL LIKE/ILIKE (% และ _) ──────────────
+// 🔒 SECURITY: บั๊กคลาสเดียวกันนี้เคยเจอมาก่อนแล้วที่ /validate-coupon และ /reveal-coupon (ดู
+// SECURITY FIX comment ของสองจุดนั้น) — ilike ตีความ % และ _ เป็น wildcard เสมอ ถ้าไม่ escape
+// ค่าที่ผู้ใช้พิมพ์มาก่อนจะทำให้ pattern กว้างเกินตั้งใจ (เช่น ชื่อมี % ปนอยู่ หรือแย่สุดถ้ามีคน
+// ส่งแค่ "%" มาตรงๆ จะ match ทุกแถว) — ใช้ helper นี้ escape ก่อนทุกครั้งที่เอาค่า user ไปต่อ ilike
+function escapeLikePattern(s) {
+  return String(s).replace(/[%_\\]/g, '\\$&');
+}
+
+// ── helper: เช็คว่า customer นี้เป็น "ลูกค้าเก่า" (เคยมีออเดอร์จริงมาก่อน) หรือไม่ ────────────
+// 🔒 SECURITY FIX: ใช้ระบุตัวตนลูกค้าข้าม customer_id เดิมที่ผูกกับ device/localStorage เดียว
+// (กันลูกค้าเก่าเคลียร์ localStorage / เปลี่ยนเครื่อง / สลับ LIFF↔LINE Login แล้วได้ customer_id
+// ใหม่ ทำให้ระบบเข้าใจผิดว่าเป็นลูกค้าใหม่) เช็คตามลำดับความแม่นยำจากมากไปน้อย หยุดทันทีที่เจอ
+// (ลด query โดยไม่จำเป็น):
+//   1) customer_id ตรง
+//   2) LINE UID ตรง
+//   3) เบอร์โทรตรง
+//   4) ชื่อลูกค้าตรงทั้งชื่อ (exact match)
+//   5) ชื่อลูกค้าตรงบางส่วน (partial/substring match)
+// ⚠️ ข้อ 5 เป็นสัญญาณที่หลวมที่สุด — ลูกค้าใหม่ที่ชื่อพ้อง/คล้ายกับลูกค้าเก่าอาจถูกเข้าใจผิดว่า
+// เป็นคนเดิมได้ (false positive) จึงข้ามเงื่อนไขนี้ถ้าชื่อสั้นกว่า 2 ตัวอักษร กันจับคู่มั่วเกินไป
+// เฉพาะแถวออเดอร์จริงเท่านั้น (exclude LINE-/LINK- ghost mapping rows — ยืนยันแล้วว่า order_id
+// จริงทุกใบขึ้นต้นด้วย "ORD" จาก genOrderId() เท่านั้น ไม่มีออเดอร์จริงใบไหนใช้ prefix LINE-/LINK-
+// เลย จึง exclude ได้อย่างปลอดภัยโดยไม่ทำให้ประวัติออเดอร์จริงของลูกค้าเก่าหายไปจากการเช็คนี้)
+async function isReturningCustomer({ customerId, lineUserId, phone, customerName }) {
+  async function queryBy(column, value, isPartial = false) {
+    let q = supabase.from('orders').select('id');
+    q = isPartial ? q.ilike(column, value) : q.eq(column, value);
+    return q.not('order_id', 'like', 'LINE-%').not('order_id', 'like', 'LINK-%').limit(1);
+  }
+
+  if (customerId) {
+    const { data, error } = await queryBy('customer_id', customerId);
+    if (error) return { error, isReturning: false };
+    if (data?.length) return { error: null, isReturning: true, matchedBy: 'customer_id' };
+  }
+  if (lineUserId) {
+    const { data, error } = await queryBy('line_user_id', lineUserId);
+    if (error) return { error, isReturning: false };
+    if (data?.length) return { error: null, isReturning: true, matchedBy: 'line_user_id' };
+  }
+  if (phone) {
+    const { data, error } = await queryBy('phone', phone);
+    if (error) return { error, isReturning: false };
+    if (data?.length) return { error: null, isReturning: true, matchedBy: 'phone' };
+  }
+  const trimmedName = String(customerName || '').trim();
+  if (trimmedName) {
+    const { data, error } = await queryBy('customer_name', trimmedName);
+    if (error) return { error, isReturning: false };
+    if (data?.length) return { error: null, isReturning: true, matchedBy: 'name_exact' };
+  }
+  if (trimmedName.length >= 2) {
+    const { data, error } = await queryBy('customer_name', `%${escapeLikePattern(trimmedName)}%`, true);
+    if (error) return { error, isReturning: false };
+    if (data?.length) return { error: null, isReturning: true, matchedBy: 'name_partial' };
+  }
+  return { error: null, isReturning: false };
+}
+
 // ── GET /applicable-discounts ─────────────────────────────
 // ส่งคืน auto-discounts ที่ลูกค้านี้ใช้ได้ตอนนี้
 app.get('/applicable-discounts', async (req, res) => {
@@ -4135,15 +4240,29 @@ app.get('/applicable-discounts', async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
 
   // ตรวจ first_order
-  let isFirstOrder = false;
-  const { data: prevOrders } = await supabase
-    .from('orders')
-    .select('id')
-    .eq('customer_id', customerId)
-    .not('order_id', 'like', 'LINE-%')
-    .not('order_id', 'like', 'LINK-%')
-    .limit(1);
-  isFirstOrder = !prevOrders?.length;
+  // 🔒 SECURITY FIX: เดิมเช็คแค่ customer_id อย่างเดียว — เพิ่มเช็คด้วย LINE UID ที่ผูกกับ
+  // customer_id นี้ด้วย (แพทเทิร์นเดียวกับ /send-order, /validate-coupon) กันเคสลูกค้าเก่าเคลียร์
+  // localStorage / เปลี่ยนเครื่อง / สลับ LIFF↔LINE Login แล้วได้ customer_id ใหม่ ทำให้เมนูนี้โชว์
+  // ว่ามีคูปองลูกค้าใหม่ให้ใช้ทั้งที่จริงใช้ไม่ได้ (endpoint นี้ไม่มี phone/customerName ให้เช็ค
+  // เพิ่มเหมือน /send-order เพราะฝั่งหน้าเว็บยังไม่ได้ส่งมาที่นี่)
+  let lineUidForDiscounts = null;
+  const linkRowIdAD = `LINK-${customerId.slice(0, 20)}`;
+  const { data: linkRowAD } = await supabase.from('orders')
+    .select('line_user_id').eq('order_id', linkRowIdAD)
+    .not('line_user_id', 'is', null).maybeSingle();
+  if (linkRowAD?.line_user_id) lineUidForDiscounts = linkRowAD.line_user_id;
+  if (!lineUidForDiscounts) {
+    const { data: luRowAD } = await supabase.from('line_users')
+      .select('user_id').eq('customer_id', customerId)
+      .order('last_seen', { ascending: false }).limit(1).maybeSingle();
+    if (luRowAD?.user_id) lineUidForDiscounts = luRowAD.user_id;
+  }
+
+  const returningCheckAD = await isReturningCustomer({ customerId, lineUserId: lineUidForDiscounts });
+  const isFirstOrder = returningCheckAD.error ? false : !returningCheckAD.isReturning;
+  // หมายเหตุ: ถ้า query พลาด (returningCheckAD.error) จะ fallback เป็น isFirstOrder=false
+  // (ปลอดภัยไว้ก่อน ไม่โชว์คูปองลูกค้าใหม่ให้ถ้าเช็คไม่ได้แน่ชัด) — endpoint นี้เป็นแค่พรีวิว
+  // การตัดส่วนลดจริงยังถูกยืนยันซ้ำอีกชั้นที่ /send-order เสมอ
 
   // กรอง coupons ตาม condition + usage_limit
   const eligible = (coupons || []).filter(c => {
@@ -4177,7 +4296,7 @@ app.get('/applicable-discounts', async (req, res) => {
 // ── GET /validate-coupon ──────────────────────────────────
 // ตรวจสอบ manual coupon code ที่ลูกค้ากรอก
 app.get('/validate-coupon', rateLimit(20), async (req, res) => {
-  const { code, customerId, orderTotal, phone } = req.query;
+  const { code, customerId, orderTotal, phone, customerName } = req.query;
   if (!code) return res.status(400).json({ error: 'กรุณากรอกรหัสคูปอง' });
 
   const total = parseFloat(orderTotal) || 0;
@@ -4210,19 +4329,11 @@ app.get('/validate-coupon', rateLimit(20), async (req, res) => {
   if (coupon.min_order > 0 && total < coupon.min_order)
     return res.status(400).json({ error: `ต้องสั่งขั้นต่ำ ฿${coupon.min_order.toLocaleString()} ถึงจะใช้คูปองนี้ได้`, coupon });
 
-  // ตรวจ first_order condition
-  if (coupon.condition_type === 'first_order' && customerId) {
-    const { data: prev } = await supabase
-      .from('orders').select('id').eq('customer_id', customerId)
-      .not('order_id', 'like', 'LINE-%').not('order_id', 'like', 'LINK-%').limit(1);
-    if (prev?.length)
-      return res.status(400).json({ error: 'คูปองนี้สำหรับการสั่งซื้อครั้งแรกเท่านั้น' });
-  }
-
-  // 🔒 ตรวจว่า LINE UID หรือเบอร์โทรนี้เคยใช้คูปองนี้ไปแล้วหรือยัง
+  // 🔒 หา LINE UID จาก LINK- row หรือ line_users ก่อน — ย้ายมาไว้ตรงนี้ (เดิมอยู่หลังเช็ค
+  // first_order) เพื่อเอาไปใช้ร่วมกับเช็ค first_order ด้วย ไม่ใช่แค่เช็ค "ใช้คูปองซ้ำ" อย่างเดียว
+  let lineUidForValidate = null;
+  const normPhone = String(phone || '').replace(/\D/g, '');
   if (customerId) {
-    // หา LINE UID จาก LINK- row หรือ line_users
-    let lineUidForValidate = null;
     const linkRowId = `LINK-${customerId.slice(0, 20)}`;
     const { data: linkRow } = await supabase.from('orders')
       .select('line_user_id').eq('order_id', linkRowId)
@@ -4235,7 +4346,27 @@ app.get('/validate-coupon', rateLimit(20), async (req, res) => {
         .order('last_seen', { ascending: false }).limit(1).maybeSingle();
       if (luRow?.user_id) lineUidForValidate = luRow.user_id;
     }
+  }
 
+  // ตรวจ first_order condition
+  // 🔒 SECURITY FIX: เดิมเช็คแค่ customer_id อย่างเดียว — ใช้ isReturningCustomer() เช็คให้ครบ
+  // ทั้ง customer_id, LINE UID, เบอร์โทร, ชื่อตรงทั้งชื่อ, ชื่อตรงบางส่วน (แพทเทิร์นเดียวกับ
+  // /send-order — ดู comment เต็มที่ตัว helper) กันเคสลูกค้าเก่าเคลียร์ localStorage /
+  // เปลี่ยนเครื่อง / สลับ LIFF↔LINE Login แล้วได้ customer_id ใหม่มาผ่านเช็คนี้ได้
+  // หมายเหตุ: หน้าเว็บปัจจุบันยังไม่ได้ส่ง customerName มาที่ endpoint นี้ (ส่งแค่ตอน /send-order)
+  // ถ้าอยากให้เช็คชื่อได้ตั้งแต่ตอน validate ต้องแก้ index.html ให้ส่ง customerName มาด้วย
+  if (coupon.condition_type === 'first_order' && customerId) {
+    const check = await isReturningCustomer({
+      customerId, lineUserId: lineUidForValidate, phone: normPhone, customerName
+    });
+    if (check.error)
+      return res.status(500).json({ error: check.error.message });
+    if (check.isReturning)
+      return res.status(400).json({ error: 'คูปองนี้สำหรับการสั่งซื้อครั้งแรกเท่านั้น' });
+  }
+
+  // 🔒 ตรวจว่า LINE UID หรือเบอร์โทรนี้เคยใช้คูปองนี้ไปแล้วหรือยัง
+  if (customerId) {
     if (lineUidForValidate) {
       const { data: usageByUid } = await supabase.from('coupon_usages')
         .select('id').eq('coupon_id', coupon.id).eq('line_user_id', lineUidForValidate)
@@ -4244,7 +4375,6 @@ app.get('/validate-coupon', rateLimit(20), async (req, res) => {
         return res.status(400).json({ error: 'คูปองนี้ถูกใช้ไปแล้วในบัญชีของคุณ' });
     }
 
-    const normPhone = String(phone || '').replace(/\D/g, '');
     if (normPhone) {
       const { data: usageByPhone } = await supabase.from('coupon_usages')
         .select('id').eq('coupon_id', coupon.id).eq('phone', normPhone)
@@ -5317,12 +5447,28 @@ app.get('/available-coupons', async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
 
   // ตรวจ first_order
+  // 🔒 SECURITY FIX: เดิมเช็คแค่ customer_id อย่างเดียว — เพิ่มเช็คด้วย LINE UID ที่ผูกกับ
+  // customer_id นี้ด้วย (แพทเทิร์นเดียวกับ /send-order, /validate-coupon, /applicable-discounts)
+  // กันเคสลูกค้าเก่าเคลียร์ localStorage / เปลี่ยนเครื่อง / สลับ LIFF↔LINE Login แล้วได้
+  // customer_id ใหม่ ทำให้ picker นี้โชว์คูปองลูกค้าใหม่ให้ทั้งที่จริงใช้ไม่ได้
   let isFirstOrder = false;
   if (customerId) {
-    const { data: prevOrders } = await supabase
-      .from('orders').select('id').eq('customer_id', customerId)
-      .not('order_id', 'like', 'LINE-%').not('order_id', 'like', 'LINK-%').limit(1);
-    isFirstOrder = !prevOrders?.length;
+    let lineUidForAvail = null;
+    const linkRowIdAV = `LINK-${customerId.slice(0, 20)}`;
+    const { data: linkRowAV } = await supabase.from('orders')
+      .select('line_user_id').eq('order_id', linkRowIdAV)
+      .not('line_user_id', 'is', null).maybeSingle();
+    if (linkRowAV?.line_user_id) lineUidForAvail = linkRowAV.line_user_id;
+    if (!lineUidForAvail) {
+      const { data: luRowAV } = await supabase.from('line_users')
+        .select('user_id').eq('customer_id', customerId)
+        .order('last_seen', { ascending: false }).limit(1).maybeSingle();
+      if (luRowAV?.user_id) lineUidForAvail = luRowAV.user_id;
+    }
+
+    const returningCheckAV = await isReturningCustomer({ customerId, lineUserId: lineUidForAvail });
+    // query พลาด → ปลอดภัยไว้ก่อน ไม่โชว์คูปองลูกค้าใหม่ให้ (isFirstOrder เริ่มเป็น false อยู่แล้ว)
+    isFirstOrder = returningCheckAV.error ? false : !returningCheckAV.isReturning;
   }
 
   // กรองตาม condition + usage_limit
