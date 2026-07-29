@@ -2783,9 +2783,14 @@ async function _adminApi(path, body) {
 }
 
 // แนบ x-admin-key อัตโนมัติให้ทุก request ที่เป็นงานฝั่งจัดการร้าน
-// (คูปอง/เวลาทำการ/QR/แบนเนอร์/referral) — พร้อมถามคีย์ใหม่ถ้าโดน 401
+// (คูปอง/เวลาทำการ/QR/แบนเนอร์/referral/โฆษณา Pop-up) — พร้อมถามคีย์ใหม่ถ้าโดน 401
 (function installAdminKeyInjector() {
-  const ADMIN_RE = [/\/coupons(\/|$)/, /\/shop-hours$/, /\/qr-config$/, /\/hero-banner$/, /\/referral-config$/, /\/admin\//];
+  // 🐛 BUG FIX: ตอนเพิ่ม endpoint POST /popup-ads (ใช้ requirePerm('shop_settings') เหมือน
+  // /hero-banner, /shop-hours, /qr-config ทุกอย่าง) ลืมเพิ่มเข้า whitelist นี้ด้วย — ผลคือ
+  // request บันทึก/เปิด-ปิด/ลบโฆษณา Pop-up ทุกครั้งจะไม่มี x-admin-key แนบไปเลย ทำให้ backend
+  // ปฏิเสธด้วย 401 unauthorized เสมอ (ต่อให้ backend อื่นๆ เช่น QR/hero-banner ทำงานปกติดี
+  // เพราะ endpoint พวกนั้นอยู่ใน whitelist อยู่แล้ว) เพิ่ม /popup-ads เข้าไปให้ครบ
+  const ADMIN_RE = [/\/coupons(\/|$)/, /\/shop-hours$/, /\/qr-config$/, /\/hero-banner$/, /\/popup-ads$/, /\/referral-config$/, /\/admin\//];
   // 🐛 BUG FIX: เดิม GET request ทุกตัวถูกยกเว้นไม่แนบ x-admin-key เลย (ตอนเขียนครั้งแรก
   // GET /coupons ยังเป็น public ไม่ต้อง auth) — ตอนหลังมีการแก้ security ให้ GET /coupons
   // ต้องมี auth ด้วย (กันคนอื่นดึงโค้ดคูปองลับออกไปได้) แต่ลืมอัปเดตจุดนี้ให้ตรงกัน ทำให้
