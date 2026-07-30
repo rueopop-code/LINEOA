@@ -3435,6 +3435,7 @@ app.post('/webhook', async (req, res) => {
       }
     } catch (e) {
       console.warn('webhook signature check error:', e.message);
+      return res.sendStatus(403);
     }
   }
   res.sendStatus(200);
