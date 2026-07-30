@@ -498,6 +498,7 @@ textarea.fi{resize:none;height:70px}
 #loadScreen{position:fixed;inset:0;background:var(--bg);z-index:1000;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;transition:opacity .4s}
 .spin{width:38px;height:38px;border:3.5px solid var(--border);border-top-color:var(--c1);border-radius:50%;animation:sp .7s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
+.ms-btn-spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:6px}
 
 @media(max-width:500px){.grid{grid-template-columns:repeat(2,1fr);gap:10px}.form-grid{grid-template-columns:1fr}.main{padding:14px 12px}}
 
@@ -991,6 +992,25 @@ button,.pcard,.cat-chip,.atab,.hdr-btn{-webkit-tap-highlight-color:transparent}
 .mascot-spark.s3{bottom:52px;left:6px;font-size:15px;animation-delay:1.7s}
 @keyframes sparkTw{0%,100%{opacity:.25;transform:scale(.8)}50%{opacity:1;transform:scale(1.2)}}
 @media(prefers-reduced-motion:reduce){.hero-mascot,.mascot-spark{animation:none}}
+
+/* ── ms-loading: กรอบหมุนรอบไอคอนนิ่ง (ใช้ตอนตรวจสลิป) ── */
+@keyframes msFrameSpin{to{transform:rotate(360deg)}}
+.ms-slip-ov{position:fixed;inset:0;z-index:9999;background:rgba(39,29,24,.55);display:none;align-items:center;justify-content:center;backdrop-filter:blur(1px)}
+.ms-slip-ov.show{display:flex}
+.ms-slip-card{width:240px;background:#fff;border-radius:20px;padding:28px 20px;text-align:center;font-family:'Prompt',sans-serif;box-shadow:0 12px 34px rgba(0,0,0,.25)}
+.ms-slip-icon-wrap{width:52px;height:52px;margin:0 auto 14px;border-radius:14px;background:var(--gold-soft);position:relative;overflow:hidden}
+.ms-slip-icon-wrap::before{content:'';position:absolute;inset:0;background:conic-gradient(var(--c1) 0deg,var(--c1) 90deg,transparent 90deg,transparent 360deg);animation:msFrameSpin 1.1s linear infinite;transform-origin:center}
+.ms-slip-icon-wrap i{position:absolute;inset:4px;border-radius:10px;background:#fff;display:flex;align-items:center;justify-content:center;color:var(--c1);font-size:18px;font-style:normal}
+.ms-slip-title{font-weight:500;font-size:14px;color:var(--text);margin:0 0 4px}
+.ms-slip-sub{font-size:12px;color:var(--sub);margin:0;font-family:'Sarabun',sans-serif}
+@media(prefers-reduced-motion:reduce){.ms-slip-icon-wrap::before{animation:none}}
+
+/* ── ms-loading: ไอคอนเด้งขึ้นลง (ใช้ตอนโหลด/ตรวจสอบออเดอร์) ── */
+@keyframes msBounceIcon{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+.ms-order-loading{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:36px 20px;font-family:'Prompt',sans-serif}
+.ms-order-loading .ms-oi{width:44px;height:44px;border-radius:12px;background:var(--c1);display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px;animation:msBounceIcon .9s ease-in-out infinite;margin-bottom:10px}
+.ms-order-loading .ms-ot{font-weight:500;font-size:13px;color:var(--text)}
+@media(prefers-reduced-motion:reduce){.ms-order-loading .ms-oi{animation:none}}
 .load-mascot{height:130px;filter:drop-shadow(0 8px 16px rgba(92,14,10,.2));animation:mascotBob 3s ease-in-out infinite}
 .foot-brand{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
 .foot-mascot{height:74px;filter:drop-shadow(0 5px 10px rgba(0,0,0,.3))}
@@ -1609,6 +1629,15 @@ button,.pcard,.cat-chip,.atab,.hdr-btn{-webkit-tap-highlight-color:transparent}
       <button class="sclose" onclick="closeQRPayPage(); openMyOrders();" style="background:linear-gradient(120deg,var(--c2),var(--c1));color:#fff;margin-bottom:8px;width:100%;">📋 ดูออเดอร์ของฉัน / ตรวจสอบสถานะ</button>
       <button class="sclose" onclick="closeQRPayPage()" style="width:100%;">ปิดหน้านี้ (ชำระภายหลัง)</button>
     </div>
+  </div>
+</div>
+
+<!-- ── ตรวจสลิป: ป็อปอัพกรอบหมุนรอบไอคอนนิ่ง ── -->
+<div class="ms-slip-ov" id="msSlipOv" role="status" aria-live="polite">
+  <div class="ms-slip-card">
+    <div class="ms-slip-icon-wrap"><i aria-hidden="true">🧾</i></div>
+    <p class="ms-slip-title" id="msSlipOvTitle">กำลังตรวจสอบสลิป</p>
+    <p class="ms-slip-sub" id="msSlipOvSub">กรุณารอสักครู่...</p>
   </div>
 </div>
 
@@ -4640,7 +4669,7 @@ async function sendOrder() {
   }
 
   const btn = document.getElementById('sendBtn');
-  btn.disabled=true; btn.textContent='⏳ กำลังส่ง...';
+  btn.disabled=true; btn.innerHTML='<span class="ms-btn-spin"></span>กำลังส่ง...';
 
   const _needsAddr = cartOT==='delivery' || cartOT==='express';
   const addrNo   = _needsAddr ? document.getElementById('cAddrNo').value.trim()       : '';
@@ -4972,7 +5001,7 @@ function closeMyOrders() {
 
 async function renderMyOrdersList() {
   const body = document.getElementById('moBody');
-  body.innerHTML = '<div class="mo-empty"><div class="em-icon">⏳</div><div>กำลังโหลด...</div></div>';
+  body.innerHTML = '<div class="ms-order-loading"><div class="ms-oi">📦</div><div class="ms-ot">กำลังตรวจสอบออเดอร์...</div></div>';
   try {
     const res = await fetch(`${BACKEND_URL}/my-orders/${encodeURIComponent(CUSTOMER_ID)}`);
     if (!res.ok) throw new Error('โหลดไม่ได้');
@@ -5449,6 +5478,18 @@ function _compressImgBase64(base64, maxPx, quality) {
   });
 }
 
+// ── ป็อปอัพ "กำลังตรวจสอบสลิป" (กรอบหมุนรอบไอคอนนิ่ง) ──
+function showMsSlipOverlay(title, sub) {
+  const ov = document.getElementById('msSlipOv');
+  if (!ov) return;
+  document.getElementById('msSlipOvTitle').textContent = title || 'กำลังตรวจสอบสลิป';
+  document.getElementById('msSlipOvSub').textContent = sub || 'กรุณารอสักครู่...';
+  ov.classList.add('show');
+}
+function hideMsSlipOverlay() {
+  document.getElementById('msSlipOv')?.classList.remove('show');
+}
+
 async function submitSlip(orderId) {
   const amountEl  = document.getElementById('slipAmountInput');
   const refEl     = document.getElementById('slipRefInput');
@@ -5459,74 +5500,81 @@ async function submitSlip(orderId) {
   if (!_slipFileData) { toast('⚠️ กรุณาเลือกรูปสลิปก่อน'); return; }
   if (!amount || amount <= 0) { toast('⚠️ กรุณากรอกยอดที่โอน'); return; }
 
-  // 🐛 BUG FIX: implementation นี้ (หน้ารายละเอียดออเดอร์) เดิมไม่มีการปลุก server ก่อนส่งเลย
-  // ต่างจาก _successSlipSubmit ของหน้า "ชำระเงิน" หลักที่มีอยู่แล้ว — เพิ่มให้ตรงกัน กัน
-  // Render หลับแล้ว request ทั้งชุด (อัปโหลด Cloudinary + ยืนยันสลิป) ล้มเหลวหรือช้ามาก
-  if (statusEl) { statusEl.textContent = '⏳ กำลังเชื่อมต่อ server...'; statusEl.style.color = '#2980b9'; }
+  showMsSlipOverlay('กำลังเชื่อมต่อ server', 'กรุณารอสักครู่...');
   try {
-    await fetch(`${BACKEND_URL}/health`, { signal: AbortSignal.timeout(40000) });
-  } catch(e) { console.warn('pre-slip wake failed:', e.message); }
+    // 🐛 BUG FIX: implementation นี้ (หน้ารายละเอียดออเดอร์) เดิมไม่มีการปลุก server ก่อนส่งเลย
+    // ต่างจาก _successSlipSubmit ของหน้า "ชำระเงิน" หลักที่มีอยู่แล้ว — เพิ่มให้ตรงกัน กัน
+    // Render หลับแล้ว request ทั้งชุด (อัปโหลด Cloudinary + ยืนยันสลิป) ล้มเหลวหรือช้ามาก
+    if (statusEl) { statusEl.textContent = '⏳ กำลังเชื่อมต่อ server...'; statusEl.style.color = '#2980b9'; }
+    try {
+      await fetch(`${BACKEND_URL}/health`, { signal: AbortSignal.timeout(40000) });
+    } catch(e) { console.warn('pre-slip wake failed:', e.message); }
 
-  if (statusEl) statusEl.textContent = '⏳ กำลังอัปโหลดสลิป...';
+    if (statusEl) statusEl.textContent = '⏳ กำลังอัปโหลดสลิป...';
+    showMsSlipOverlay('กำลังอัปโหลดสลิป', 'กรุณารอสักครู่...');
 
-  let slipUrl = null;
-  try {
-    // อัปโหลดสลิปไป Cloudinary
-    const blob = await (await fetch(_slipFileData)).blob();
-    const formData = new FormData();
-    formData.append('file', blob);
-    formData.append('upload_preset', CLOUDINARY_PRESET);
-    formData.append('folder', 'slips');
-    const upRes = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, {
-      method: 'POST', body: formData
-    });
-    if (!upRes.ok) throw new Error('อัปโหลดรูปไม่ได้');
-    const upData = await upRes.json();
-    slipUrl = upData.secure_url;
-  } catch(e) {
-    // ถ้า Cloudinary ล้มเหลว ใช้ base64 แทน (ส่งใน chat message)
-    console.warn('Cloudinary upload failed, using base64 fallback:', e.message);
-    slipUrl = null; // ส่ง text แทน
-  }
-
-  if (statusEl) statusEl.textContent = '⏳ กำลังส่งสลิป...';
-
-  try {
-    const res = await fetch(`${BACKEND_URL}/submit-slip`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        order_id       : orderId,
-        customer_id    : CUSTOMER_ID,
-        slip_url       : slipUrl,
-        slip_amount    : amount,
-        slip_ref_manual: manualRef
-      })
-    });
-    const d = await res.json();
-    if (!res.ok) throw new Error(d.error || 'ส่งไม่ได้');
-
-    // แสดงผลลัพธ์
-    if (d.reason === 'duplicate') {
-      toast('⚠️ สลิปนี้เคยถูกใช้ยืนยันออเดอร์อื่นไปแล้ว');
-      if (statusEl) { statusEl.textContent = '⚠️ สลิปนี้เคยถูกใช้ยืนยันออเดอร์อื่นไปแล้ว — ติดต่อร้านค้า'; statusEl.style.color = '#e74c3c'; }
-    } else if (d.isMatch) {
-      toast('✅ ยืนยันการโอนสำเร็จ! ยอดตรงกัน');
-      if (statusEl) { statusEl.textContent = '✅ ยืนยันสำเร็จ! ยอดตรงกัน'; statusEl.style.color = '#27ae60'; }
-    } else if (d.diff > 0) {
-      toast(`⚠️ ยอดขาด ฿${d.diff.toFixed(2)} — ร้านได้รับแจ้งแล้ว`);
-      if (statusEl) { statusEl.textContent = `⚠️ ยอดขาดอีก ฿${d.diff.toFixed(2)} — กรุณาโอนเพิ่มแล้วส่งสลิปใหม่`; statusEl.style.color = '#e67e22'; }
-    } else {
-      toast('✅ ส่งสลิปแล้ว รอร้านตรวจสอบ');
-      if (statusEl) { statusEl.textContent = '✅ ส่งสลิปแล้ว รอร้านตรวจสอบ'; statusEl.style.color = '#2980b9'; }
+    let slipUrl = null;
+    try {
+      // อัปโหลดสลิปไป Cloudinary
+      const blob = await (await fetch(_slipFileData)).blob();
+      const formData = new FormData();
+      formData.append('file', blob);
+      formData.append('upload_preset', CLOUDINARY_PRESET);
+      formData.append('folder', 'slips');
+      const upRes = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, {
+        method: 'POST', body: formData
+      });
+      if (!upRes.ok) throw new Error('อัปโหลดรูปไม่ได้');
+      const upData = await upRes.json();
+      slipUrl = upData.secure_url;
+    } catch(e) {
+      // ถ้า Cloudinary ล้มเหลว ใช้ base64 แทน (ส่งใน chat message)
+      console.warn('Cloudinary upload failed, using base64 fallback:', e.message);
+      slipUrl = null; // ส่ง text แทน
     }
 
-    _slipFileData = null;
-    // Reload order detail เพื่ออัปเดตสถานะ
-    await loadMyOrders();
-    setTimeout(() => openOrderDetail(orderId), 500);
-  } catch(e) {
-    if (statusEl) { statusEl.textContent = '❌ ' + e.message; statusEl.style.color = '#e74c3c'; }
+    if (statusEl) statusEl.textContent = '⏳ กำลังส่งสลิป...';
+    showMsSlipOverlay('กำลังตรวจสอบสลิป', 'ระบบกำลังตรวจสอบยอดเงิน...');
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/submit-slip`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          order_id       : orderId,
+          customer_id    : CUSTOMER_ID,
+          slip_url       : slipUrl,
+          slip_amount    : amount,
+          slip_ref_manual: manualRef
+        })
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'ส่งไม่ได้');
+
+      // แสดงผลลัพธ์
+      if (d.reason === 'duplicate') {
+        toast('⚠️ สลิปนี้เคยถูกใช้ยืนยันออเดอร์อื่นไปแล้ว');
+        if (statusEl) { statusEl.textContent = '⚠️ สลิปนี้เคยถูกใช้ยืนยันออเดอร์อื่นไปแล้ว — ติดต่อร้านค้า'; statusEl.style.color = '#e74c3c'; }
+      } else if (d.isMatch) {
+        toast('✅ ยืนยันการโอนสำเร็จ! ยอดตรงกัน');
+        if (statusEl) { statusEl.textContent = '✅ ยืนยันสำเร็จ! ยอดตรงกัน'; statusEl.style.color = '#27ae60'; }
+      } else if (d.diff > 0) {
+        toast(`⚠️ ยอดขาด ฿${d.diff.toFixed(2)} — ร้านได้รับแจ้งแล้ว`);
+        if (statusEl) { statusEl.textContent = `⚠️ ยอดขาดอีก ฿${d.diff.toFixed(2)} — กรุณาโอนเพิ่มแล้วส่งสลิปใหม่`; statusEl.style.color = '#e67e22'; }
+      } else {
+        toast('✅ ส่งสลิปแล้ว รอร้านตรวจสอบ');
+        if (statusEl) { statusEl.textContent = '✅ ส่งสลิปแล้ว รอร้านตรวจสอบ'; statusEl.style.color = '#2980b9'; }
+      }
+
+      _slipFileData = null;
+      // Reload order detail เพื่ออัปเดตสถานะ
+      await loadMyOrders();
+      setTimeout(() => openOrderDetail(orderId), 500);
+    } catch(e) {
+      if (statusEl) { statusEl.textContent = '❌ ' + e.message; statusEl.style.color = '#e74c3c'; }
+    }
+  } finally {
+    hideMsSlipOverlay();
   }
 }
 
@@ -5634,84 +5682,94 @@ async function _successSlipSubmit() {
 
   btn.disabled = true; btn.textContent = '⏳ กำลังส่ง...';
   if (statusEl) statusEl.textContent = '⏳ กำลังอัปโหลดสลิป...';
-
-  // ── ปลุก server ก่อนส่งเสมอ (กัน Render หลับ) ──
-  try {
-    if (statusEl) { statusEl.textContent = '⏳ กำลังเชื่อมต่อ server...'; statusEl.style.color = '#2980b9'; }
-    await fetch(`${BACKEND_URL}/health`, { signal: AbortSignal.timeout(40000) });
-  } catch(e) { console.warn('pre-slip wake failed:', e.message); }
-  if (statusEl) statusEl.textContent = '⏳ กำลังอัปโหลดสลิป...';
-
-  let slipUrl = null;
-  try {
-    const blob = await (await fetch(window._successSlipData)).blob();
-    const fd = new FormData();
-    fd.append('file', blob);
-    fd.append('upload_preset', CLOUDINARY_PRESET);
-    fd.append('folder', 'slips');
-    const up = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, { method:'POST', body:fd });
-    if (up.ok) { const ud = await up.json(); slipUrl = ud.secure_url; }
-  } catch(e) { console.warn('Cloudinary fallback:', e.message); }
-
-  if (statusEl) statusEl.textContent = '⏳ กำลังส่งสลิป...';
+  showMsSlipOverlay('กำลังอัปโหลดสลิป', 'กรุณารอสักครู่...');
 
   try {
-    const res = await fetch(`${BACKEND_URL}/submit-slip`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ order_id: orderId, customer_id: customerId, slip_url: slipUrl, slip_amount: amount, slip_ref_manual: manualRef })
-    });
-    // ป้องกัน Render ตื่นนอนช้า → ตอบ HTML แทน JSON
-    const text = await res.text();
-    let d;
-    try { d = JSON.parse(text); }
-    catch(_) {
-      // server ยังไม่ตื่น → รอ 5 วิแล้ว retry อัตโนมัติ
-      if (statusEl) { statusEl.textContent = '⏳ server กำลังตื่น รอสักครู่...'; statusEl.style.color = '#e67e22'; }
-      await new Promise(r => setTimeout(r, 5000));
-      if (statusEl) statusEl.textContent = '🔄 กำลังลองใหม่...';
-      const res2 = await fetch(`${BACKEND_URL}/submit-slip`, {
+    // ── ปลุก server ก่อนส่งเสมอ (กัน Render หลับ) ──
+    try {
+      if (statusEl) { statusEl.textContent = '⏳ กำลังเชื่อมต่อ server...'; statusEl.style.color = '#2980b9'; }
+      showMsSlipOverlay('กำลังเชื่อมต่อ server', 'กรุณารอสักครู่...');
+      await fetch(`${BACKEND_URL}/health`, { signal: AbortSignal.timeout(40000) });
+    } catch(e) { console.warn('pre-slip wake failed:', e.message); }
+    if (statusEl) statusEl.textContent = '⏳ กำลังอัปโหลดสลิป...';
+    showMsSlipOverlay('กำลังอัปโหลดสลิป', 'กรุณารอสักครู่...');
+
+    let slipUrl = null;
+    try {
+      const blob = await (await fetch(window._successSlipData)).blob();
+      const fd = new FormData();
+      fd.append('file', blob);
+      fd.append('upload_preset', CLOUDINARY_PRESET);
+      fd.append('folder', 'slips');
+      const up = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, { method:'POST', body:fd });
+      if (up.ok) { const ud = await up.json(); slipUrl = ud.secure_url; }
+    } catch(e) { console.warn('Cloudinary fallback:', e.message); }
+
+    if (statusEl) statusEl.textContent = '⏳ กำลังส่งสลิป...';
+    showMsSlipOverlay('กำลังตรวจสอบสลิป', 'ระบบกำลังตรวจสอบยอดเงิน...');
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/submit-slip`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ order_id: orderId, customer_id: customerId, slip_url: slipUrl, slip_amount: amount, slip_ref_manual: manualRef })
       });
-      const text2 = await res2.text();
-      try { d = JSON.parse(text2); }
+      // ป้องกัน Render ตื่นนอนช้า → ตอบ HTML แทน JSON
+      const text = await res.text();
+      let d;
+      try { d = JSON.parse(text); }
       catch(_) {
-        if (statusEl) { statusEl.textContent = '❌ เชื่อมต่อไม่ได้ กรุณาลองใหม่'; statusEl.style.color = '#e74c3c'; }
-        btn.disabled = false; btn.textContent = '📤 ลองใหม่';
-        return;
+        // server ยังไม่ตื่น → รอ 5 วิแล้ว retry อัตโนมัติ
+        if (statusEl) { statusEl.textContent = '⏳ server กำลังตื่น รอสักครู่...'; statusEl.style.color = '#e67e22'; }
+        showMsSlipOverlay('server กำลังตื่น', 'รอสักครู่แล้วลองใหม่อัตโนมัติ...');
+        await new Promise(r => setTimeout(r, 5000));
+        if (statusEl) statusEl.textContent = '🔄 กำลังลองใหม่...';
+        showMsSlipOverlay('กำลังลองใหม่', 'กรุณารอสักครู่...');
+        const res2 = await fetch(`${BACKEND_URL}/submit-slip`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order_id: orderId, customer_id: customerId, slip_url: slipUrl, slip_amount: amount, slip_ref_manual: manualRef })
+        });
+        const text2 = await res2.text();
+        try { d = JSON.parse(text2); }
+        catch(_) {
+          if (statusEl) { statusEl.textContent = '❌ เชื่อมต่อไม่ได้ กรุณาลองใหม่'; statusEl.style.color = '#e74c3c'; }
+          btn.disabled = false; btn.textContent = '📤 ลองใหม่';
+          return;
+        }
       }
-    }
-    if (!res.ok && !d?.success) throw new Error(d?.error || 'ส่งไม่ได้');
+      if (!res.ok && !d?.success) throw new Error(d?.error || 'ส่งไม่ได้');
 
-    if (d.reason === 'duplicate') {
-      if (statusEl) { statusEl.textContent = '⚠️ สลิปนี้เคยถูกใช้ยืนยันออเดอร์อื่นไปแล้ว — ติดต่อร้านค้า'; statusEl.style.color = '#e74c3c'; }
-      toast('⚠️ สลิปนี้เคยถูกใช้ยืนยันออเดอร์อื่นไปแล้ว');
+      if (d.reason === 'duplicate') {
+        if (statusEl) { statusEl.textContent = '⚠️ สลิปนี้เคยถูกใช้ยืนยันออเดอร์อื่นไปแล้ว — ติดต่อร้านค้า'; statusEl.style.color = '#e74c3c'; }
+        toast('⚠️ สลิปนี้เคยถูกใช้ยืนยันออเดอร์อื่นไปแล้ว');
+        btn.disabled = false; btn.textContent = '📤 ส่งสลิป';
+      } else if (d.isMatch) {
+        if (statusEl) { statusEl.textContent = '✅ ยืนยันสำเร็จ! ยอดตรงกัน — ร้านได้รับแล้ว'; statusEl.style.color = '#27ae60'; }
+        toast('✅ ยืนยันการโอนสำเร็จ! ยอดตรงกัน');
+        btn.textContent = '✅ ส่งแล้ว';
+        // 🆕 AUTO-CONFIRM (ฝั่งหน้าเว็บ): ยอดตรง → ปิดหน้าชำระเงินอัตโนมัติแล้วขึ้นหน้า
+        // "ชำระเงินสำเร็จ" ทันที ไม่ต้องรอผู้ใช้กดอะไรเพิ่ม
+        // หมายเหตุ: การเปลี่ยนสถานะออเดอร์ในฐานข้อมูลจริง (pending → paid/confirmed)
+        // เป็นหน้าที่ของ backend ตอนตอบ isMatch=true — ฝั่งนี้แค่สะท้อนผลให้ผู้ใช้เห็นไว
+        const orderIdForSuccess = slipSec?._orderId;
+        setTimeout(() => {
+          closeQRPayPage();
+          _showAutoPaidSuccess(orderIdForSuccess);
+        }, 1200);
+      } else if (d.diff > 0) {
+        if (statusEl) { statusEl.textContent = `⚠️ ยอดขาดอีก ฿${d.diff.toFixed(2)} — ส่งสลิปใหม่หลังโอนเพิ่ม`; statusEl.style.color = '#e67e22'; }
+        toast(`⚠️ ยอดขาด ฿${d.diff.toFixed(2)}`);
+        btn.disabled = false; btn.textContent = '📤 ส่งสลิปใหม่';
+      } else {
+        if (statusEl) { statusEl.textContent = '✅ ส่งสลิปแล้ว รอร้านตรวจสอบ'; statusEl.style.color = '#2980b9'; }
+        toast('✅ ส่งสลิปแล้ว รอร้านตรวจสอบ');
+        btn.textContent = '✅ ส่งแล้ว';
+      }
+    } catch(e) {
+      if (statusEl) { statusEl.textContent = '❌ ' + e.message; statusEl.style.color = '#e74c3c'; }
       btn.disabled = false; btn.textContent = '📤 ส่งสลิป';
-    } else if (d.isMatch) {
-      if (statusEl) { statusEl.textContent = '✅ ยืนยันสำเร็จ! ยอดตรงกัน — ร้านได้รับแล้ว'; statusEl.style.color = '#27ae60'; }
-      toast('✅ ยืนยันการโอนสำเร็จ! ยอดตรงกัน');
-      btn.textContent = '✅ ส่งแล้ว';
-      // 🆕 AUTO-CONFIRM (ฝั่งหน้าเว็บ): ยอดตรง → ปิดหน้าชำระเงินอัตโนมัติแล้วขึ้นหน้า
-      // "ชำระเงินสำเร็จ" ทันที ไม่ต้องรอผู้ใช้กดอะไรเพิ่ม
-      // หมายเหตุ: การเปลี่ยนสถานะออเดอร์ในฐานข้อมูลจริง (pending → paid/confirmed)
-      // เป็นหน้าที่ของ backend ตอนตอบ isMatch=true — ฝั่งนี้แค่สะท้อนผลให้ผู้ใช้เห็นไว
-      const orderIdForSuccess = slipSec?._orderId;
-      setTimeout(() => {
-        closeQRPayPage();
-        _showAutoPaidSuccess(orderIdForSuccess);
-      }, 1200);
-    } else if (d.diff > 0) {
-      if (statusEl) { statusEl.textContent = `⚠️ ยอดขาดอีก ฿${d.diff.toFixed(2)} — ส่งสลิปใหม่หลังโอนเพิ่ม`; statusEl.style.color = '#e67e22'; }
-      toast(`⚠️ ยอดขาด ฿${d.diff.toFixed(2)}`);
-      btn.disabled = false; btn.textContent = '📤 ส่งสลิปใหม่';
-    } else {
-      if (statusEl) { statusEl.textContent = '✅ ส่งสลิปแล้ว รอร้านตรวจสอบ'; statusEl.style.color = '#2980b9'; }
-      toast('✅ ส่งสลิปแล้ว รอร้านตรวจสอบ');
-      btn.textContent = '✅ ส่งแล้ว';
     }
-  } catch(e) {
-    if (statusEl) { statusEl.textContent = '❌ ' + e.message; statusEl.style.color = '#e74c3c'; }
-    btn.disabled = false; btn.textContent = '📤 ส่งสลิป';
+  } finally {
+    hideMsSlipOverlay();
   }
 }
 
@@ -6996,9 +7054,11 @@ function doDrag(e,id){e.preventDefault();document.getElementById(id).classList.a
 function unDrag(id){document.getElementById(id).classList.remove('drag');}
 
 let _tt;
-function toast(msg){
+function toast(msg, type = ''){
   const el=document.getElementById('toast');
-  el.textContent=msg; el.style.opacity=1;
+  const icons = { success: '✅', error: '❌', warn: '⚠️', cancel: '🚫' };
+  const alreadyIconed = /^[\u2600-\u27BF\u2B00-\u2BFF\uD83C-\uDBFF][\uDC00-\uDFFF]?/.test(String(msg).trim());
+  el.textContent=(icons[type] && !alreadyIconed ? icons[type] + ' ' : '') + msg; el.style.opacity=1;
   clearTimeout(_tt); _tt=setTimeout(()=>el.style.opacity=0,2200);
 }
 
