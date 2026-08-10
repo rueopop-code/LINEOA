@@ -683,6 +683,26 @@ function orderTypeLabel(order_type) {
   return '📦 จอง/รับเอง';
 }
 
+// กล่องแบนเนอร์ประเภทออเดอร์แบบมีไอคอนวงกลม — ใช้ร่วมกันทั้ง buildOrderSummaryFlex (การ์ด
+// ยืนยันออเดอร์) และ buildStatusUpdateFlex (การ์ดอัปเดตสถานะ) กันแต่ละจุดออกแบบไม่ตรงกัน
+function orderTypeBannerBox(order_type) {
+  const cfg =
+    order_type === 'delivery' ? { bg: BRAND_CREAM,     fg: BRAND_GOLD_TXT, ic: '🚚', text: 'คำสั่งซื้อจัดส่งธรรมดา' } :
+    order_type === 'express'  ? { bg: '#FCEAEA',       fg: BRAND_RED_DARK, ic: '⚡', text: 'คำสั่งซื้อส่งด่วน' } :
+                                 { bg: BRAND_GOLD_PALE, fg: BRAND_GOLD_TXT, ic: '📦', text: 'คำสั่งซื้อแบบจอง/รับเองที่ร้าน' };
+  return {
+    type:'box', layout:'horizontal', backgroundColor: cfg.bg, cornerRadius:'10px',
+    paddingAll:'sm', alignItems:'center', spacing:'sm',
+    contents:[
+      { type:'box', layout:'vertical', width:'26px', height:'26px', cornerRadius:'999px',
+        backgroundColor:'#ffffff', justifyContent:'center', alignItems:'center',
+        contents:[ { type:'text', text: cfg.ic, size:'sm', align:'center' } ]
+      },
+      { type:'text', text: cfg.text, size:'xs', color: cfg.fg, weight:'bold', wrap:true, flex:1, gravity:'center' }
+    ]
+  };
+}
+
 async function buildAdminMsg(order) {
   const { customer_name, items, total, order_id, created_at, phone, address, note,
           coupon_code, discount_amount, ref_code, order_type, payment_method, payment_label } = order;
@@ -690,6 +710,13 @@ async function buildAdminMsg(order) {
   const typeLabel = orderTypeLabel(order_type);
   const payLabel  = payment_label || (payment_method === 'cod' ? '🏍️ เก็บปลายทาง' : payment_method === 'transfer' ? '📲 โอน/สแกน QR' : null);
   let msg = `🛒 ออเดอร์ใหม่! #${order_id}\n`;
+  // 📦🚚⚡ ป้ายประเภทออเดอร์ต้องเด่นชัดตั้งแต่บรรทัดแรกๆ ของเดิมมีแค่บรรทัด "ประเภท:" ปนอยู่กับ
+  // รายละเอียดอื่นด้านล่าง ทำให้พลาดง่าย — ขยายให้ครบทั้ง 3 แบบ ไม่ใช่แค่จอง/รับเอง
+  const orderBanner =
+    order_type === 'delivery' ? `🚚 คำสั่งซื้อจัดส่งธรรมดา\n` :
+    order_type === 'express'  ? `⚡ ⚠️ คำสั่งซื้อส่งด่วน — โปรดจัดส่งเร่งด่วน ⚠️\n` :
+                                 `📦 ⚠️ คำสั่งซื้อแบบจอง/รับเองที่ร้าน — ไม่ต้องจัดส่ง ⚠️\n`;
+  msg += orderBanner;
   msg += `${'─'.repeat(24)}\n`;
   msg += `👤 ${customer_name}\n`;
   // 🤝 แสดงผู้แนะนำใต้ชื่อลูกค้า (เซล: ชื่อ+รหัส / เพื่อน: ชื่อเพื่อน)
@@ -874,6 +901,11 @@ async function buildOrderSummaryFlex(order) {
     { type:'separator', margin:'md', color:'#f5e6e6' }
   ];
 
+  // 🐛 BUG FIX: เดิม "ประเภท: จอง/รับเอง" เป็นแค่แถวเล็กๆ ปนกับรายละเอียดอื่น ลูกค้าอาจพลาดได้
+  // ง่ายว่านี่ไม่ใช่ออเดอร์จัดส่ง — เพิ่มแบนเนอร์เด่นไว้บนสุดของ body ครบทั้ง 3 ประเภทออเดอร์
+  // (ไม่ใช่แค่จอง/รับเองแบบเดิม) ใช้ orderTypeBannerBox() ร่วมกับการ์ดอัปเดตสถานะ ให้หน้าตาตรงกัน
+  const pickupBanner = [{ ...orderTypeBannerBox(order.order_type), margin:'md' }];
+
   return {
     type: 'flex',
     altText: `ออเดอร์ #${orderId} ของคุณ ฿${total.toLocaleString()}`,
@@ -901,6 +933,7 @@ async function buildOrderSummaryFlex(order) {
       body: {
         type:'box', layout:'vertical', spacing:'md', paddingAll:'lg',
         contents: [
+          ...pickupBanner,
           ...orderInfoRows,
           { type:'text', text:'รายการสินค้า', size:'xs', color:'#C8912A', weight:'bold' },
           ...itemRows,
@@ -1141,6 +1174,10 @@ async function buildStatusUpdateFlex(order, status) {
       body: {
         type:'box', layout:'vertical', spacing:'md', paddingAll:'lg', paddingTop:'sm',
         contents: [
+          // 🐛 BUG FIX: การ์ดนี้ไม่เคยโชว์ประเภทออเดอร์เลย — ลูกค้าที่จอง/รับเองอาจเห็นขั้นตอน
+          // "จัดส่ง" ในแถบสถานะแล้วสับสนว่าร้านจะส่งของให้จริงๆ เพิ่มแบนเนอร์เดียวกับข้อความ
+          // ยืนยันออเดอร์ตอนแรก ให้เห็นประเภทชัดเจนทุกครั้งที่มีอัปเดตสถานะด้วย
+          orderTypeBannerBox(order.order_type),
           ...trackerBox,
           { type:'box', layout:'horizontal', margin:'md',
             contents: [
