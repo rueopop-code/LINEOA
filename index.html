@@ -6418,6 +6418,10 @@ async function openOrderDetail(orderId) {
       <div class="ds-st">${STATUS_TH[st] || st}</div>
       <div class="ds-total">ยอดรวม ฿${(o.total||0).toLocaleString()}</div>
     </div>
+    ${st === 'shipped' ? `
+    <button onclick="openTrackPage('${escapeShop(o.order_id)}')" style="width:100%;background:linear-gradient(120deg,var(--c2),var(--c1));color:#fff;border:none;border-radius:12px;padding:12px;font-family:'Sarabun',sans-serif;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:14px;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:var(--sh);">
+      🛵 ติดตามไรเดอร์แบบสด
+    </button>` : ''}
     <div class="det-items">${itemsHtml}</div>
 
     <div style="background:#f9f9f9;border:1px solid #eee;border-radius:12px;padding:10px 14px;margin-bottom:12px;font-size:13px;display:flex;flex-direction:column;gap:6px;">
