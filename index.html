@@ -1422,6 +1422,20 @@ button,.pcard,.cat-chip,.atab,.hdr-btn{-webkit-tap-highlight-color:transparent}
 /* ── บัญชีของฉัน (Account Dashboard) ── */
 #acctOv{display:none;position:fixed;inset:0;z-index:9100;background:var(--bg);flex-direction:column}
 #acctOv.show{display:flex}
+
+/* 🛵 ติดตามไรเดอร์ — reuses .acct-hdr/.acct-back/.acct-hdr-txt above */
+#trackOv{display:none;position:fixed;inset:0;z-index:9200;background:var(--bg);flex-direction:column}
+#trackOv.show{display:flex}
+.track-hdr{background:linear-gradient(120deg,var(--c2),var(--c1));color:#fff;padding:16px 20px;display:flex;align-items:center;gap:14px;flex-shrink:0}
+.track-body{flex:1;overflow-y:auto;padding:16px;max-width:720px;margin:0 auto;width:100%;box-sizing:border-box}
+.track-status-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px;display:flex;align-items:center;gap:14px;box-shadow:var(--sh);margin-bottom:14px}
+.track-status-icon{width:48px;height:48px;border-radius:50%;background:var(--cp);display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0}
+.track-status-text{flex:1;min-width:0}
+#trackStatusMain{font-weight:700;font-size:15px;color:var(--ink)}
+.track-status-sub{font-size:12.5px;color:var(--sub);margin-top:3px}
+.track-map-wrap{border-radius:var(--r);overflow:hidden;box-shadow:var(--sh);border:1px solid var(--border)}
+#track-map{width:100%;height:min(52vh,420px);background:#eee}
+.track-not-found{text-align:center;padding:60px 20px;color:var(--sub)}
 .acct-hdr{background:linear-gradient(120deg,var(--c2),var(--c1));color:#fff;padding:16px 20px;display:flex;align-items:center;gap:14px;flex-shrink:0}
 .acct-back{width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.15);border:1.5px solid rgba(255,255,255,.3);color:#fff;font-size:16px;cursor:pointer;flex-shrink:0}
 .acct-hdr-txt h2{font-family:'Prompt',sans-serif;font-size:16px;font-weight:800}
@@ -2075,6 +2089,34 @@ button,.pcard,.cat-chip,.atab,.hdr-btn{-webkit-tap-highlight-color:transparent}
 </div>
 
 <!-- ── บัญชีของฉัน (Account Dashboard) — ใช้ข้อมูล/ฟังก์ชันจริงทั้งหมด ── -->
+<!-- 🛵 ติดตามไรเดอร์แบบสด — เข้าถึงผ่านลิงก์แจ้งเตือน LINE (#track?order=XXX) จาก
+     Jobs.gs ตอนไรเดอร์รับงาน/ออกเดินทาง/ใกล้ถึง — โครงสร้างเหมือน acctOv (full-page
+     overlay) แต่มีแผนที่ Leaflet แทน ดึงข้อมูลตรงจาก Supabase (ตาราง rider_jobs +
+     rider_location) ด้วย anon key เดียวกับที่ใช้อยู่แล้วทั้งไซต์ -->
+<div id="trackOv">
+  <div class="track-hdr">
+    <button class="acct-back" onclick="closeTrackPage()">←</button>
+    <div class="acct-hdr-txt"><h2>ติดตามไรเดอร์</h2><span id="trackOrderIdLabel">—</span></div>
+  </div>
+  <div class="track-body">
+    <div id="trackStatusCard" class="track-status-card">
+      <div id="trackStatusIcon" class="track-status-icon">📦</div>
+      <div class="track-status-text">
+        <div id="trackStatusMain">กำลังโหลด...</div>
+        <div id="trackStatusSub" class="track-status-sub"></div>
+      </div>
+    </div>
+    <div id="trackMapWrap" class="track-map-wrap">
+      <div id="track-map"></div>
+    </div>
+    <div id="trackNotFound" class="track-not-found" style="display:none;">
+      <div style="font-size:38px;">🔍</div>
+      <div>ไม่พบข้อมูลการติดตามสำหรับออเดอร์นี้</div>
+      <div style="font-size:13px;color:var(--sub);margin-top:6px;">ลิงก์อาจหมดอายุ หรือออเดอร์นี้ยังไม่ได้จัดส่ง</div>
+    </div>
+  </div>
+</div>
+
 <div id="acctOv">
   <div class="acct-hdr">
     <button class="acct-back" onclick="closeAccountPage()">←</button>
@@ -3217,6 +3259,7 @@ window.onload = async () => {
     if (_mnInitHash === 'orders') openMyOrders();
     else if (_mnInitHash === 'referral') openReferralSheet();
     else if (_mnInitHash === 'account') openAccountPage();
+    else if (_mnInitHash.startsWith('track?order=')) openTrackPage(decodeURIComponent(_mnInitHash.split('=')[1] || ''));
 
     // 📢 แสดง Ad Popup (ถ้าตั้งค่าไว้)
     // 🐛 BUG FIX: เดิมอ่าน adGetCfg() ซึ่งดึงจาก localStorage ของลูกค้าเอง — ลูกค้าเป็นคนละเครื่อง
@@ -3406,12 +3449,15 @@ window.addEventListener('popstate', function () {
   if (h === 'orders') { openMyOrders(); return; }
   if (h === 'referral') { openReferralSheet(); return; }
   if (h === 'account') { openAccountPage(); return; }
+  if (h.startsWith('track?order=')) { openTrackPage(decodeURIComponent(h.split('=')[1] || '')); return; }
   const moOv = document.getElementById('myOrdersOv');
   const refOv = document.getElementById('referralOv');
   const acctOv = document.getElementById('acctOv');
+  const trackOv = document.getElementById('trackOv');
   if (moOv && moOv.classList.contains('show')) closeMyOrders();
   if (refOv && refOv.style.display === 'flex') closeReferralSheet();
   if (acctOv && acctOv.classList.contains('show')) closeAccountPage();
+  if (trackOv && trackOv.classList.contains('show')) closeTrackPage();
 });
 
 function mnCartGoStep(n) {
@@ -5858,6 +5904,166 @@ function closeAccountPage() {
   document.getElementById('acctOv').classList.remove('show');
   _mnClearHash();
 }
+
+// ═══════════════════════════════════════════════════════════
+//  🛵 ติดตามไรเดอร์แบบสด (#track?order=XXX)
+//  ที่มา: ลิงก์ "ติดตามพัสดุ" ใน LINE push message ที่ Jobs.gs (แอพไรเดอร์)
+//  ส่งให้ลูกค้าตอนไรเดอร์รับงาน/ออกเดินทาง/ใกล้ถึงจุดหมาย — ก่อนหน้านี้ลิงก์นี้
+//  พาไปหน้าที่ไม่มีอยู่จริงเลย (คลิกแล้วไม่มีอะไรเกิดขึ้น)
+//  อ่านข้อมูลตรงจาก Supabase (rider_jobs + rider_location) ด้วย anon key เดิม
+//  ที่ไซต์นี้ใช้อยู่แล้ว — ไม่ผ่าน backend index.js เพิ่ม เพื่อความเรียบง่าย
+// ═══════════════════════════════════════════════════════════
+let _trackMap = null;
+let _trackRiderMarker = null;
+let _trackDestMarker = null;
+let _trackPollTimer = null;
+let _trackLeafletLoading = false;
+const TRACK_POLL_MS = 8000;
+const TRACK_RIDER_ONLINE_MS = 45000; // matches the admin GPS page's own "online" cutoff
+
+async function openTrackPage(orderId) {
+  document.getElementById('trackOv').classList.add('show');
+  document.getElementById('trackOrderIdLabel').textContent = 'ออเดอร์ #' + orderId;
+  _mnSetHash('track?order=' + orderId);
+  document.getElementById('trackNotFound').style.display = 'none';
+  document.getElementById('trackMapWrap').style.display = '';
+  document.getElementById('trackStatusCard').style.display = '';
+
+  if (!window.L) await _trackLoadLeaflet();
+  _trackInitMap();
+
+  if (_trackPollTimer) clearInterval(_trackPollTimer);
+  await _trackPoll(orderId);
+  _trackPollTimer = setInterval(() => _trackPoll(orderId), TRACK_POLL_MS);
+}
+
+function closeTrackPage() {
+  document.getElementById('trackOv').classList.remove('show');
+  _mnClearHash();
+  if (_trackPollTimer) { clearInterval(_trackPollTimer); _trackPollTimer = null; }
+}
+
+function _trackLoadLeaflet() {
+  if (window.L) return Promise.resolve();
+  if (_trackLeafletLoading) {
+    // another call already kicked off the load — just wait for it
+    return new Promise(resolve => {
+      const check = setInterval(() => { if (window.L) { clearInterval(check); resolve(); } }, 100);
+    });
+  }
+  _trackLeafletLoading = true;
+  return new Promise(resolve => {
+    if (!document.querySelector('link[href*="leaflet"]')) {
+      const l = document.createElement('link');
+      l.rel = 'stylesheet'; l.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+      document.head.appendChild(l);
+    }
+    const s = document.createElement('script');
+    s.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    s.crossOrigin = 'anonymous';
+    s.onload = () => { _trackLeafletLoading = false; resolve(); };
+    document.head.appendChild(s);
+  });
+}
+
+function _trackInitMap() {
+  const el = document.getElementById('track-map');
+  if (!el || !window.L || _trackMap) return;
+  _trackMap = L.map('track-map', { attributionControl: false }).setView([18.145, 100.14], 13);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(_trackMap);
+}
+
+const TRACK_STATUS_LABEL = {
+  offered:   { icon: '📦', main: 'กำลังรอไรเดอร์รับงาน', sub: 'ร้านกำลังเตรียมจัดส่งให้คุณ' },
+  accepted:  { icon: '🛵', main: 'ไรเดอร์รับออเดอร์แล้ว', sub: 'กำลังเตรียมออกเดินทาง' },
+  departed:  { icon: '🚚', main: 'ไรเดอร์กำลังเดินทางมาส่ง', sub: 'ติดตามตำแหน่งได้แบบสดด้านล่าง' },
+  arrived:   { icon: '📍', main: 'ไรเดอร์ถึงที่หมายแล้ว', sub: 'กรุณาเตรียมรับสินค้า' },
+  done:      { icon: '✅', main: 'จัดส่งสำเร็จแล้ว', sub: 'ขอบคุณที่อุดหนุนมนชิน ซัพพลายค่ะ' },
+  failed:    { icon: '⚠️', main: 'จัดส่งไม่สำเร็จ', sub: 'ทางร้านจะติดต่อกลับเพื่อจัดส่งใหม่' },
+  cancelled: { icon: '🚫', main: 'ออเดอร์นี้ถูกยกเลิก', sub: '' }
+};
+
+async function _trackPoll(orderId) {
+  const sb = getSB();
+  if (!sb) return;
+  try {
+    const { data: jobs, error: jobErr } = await sb
+      .from('rider_jobs')
+      .select('id,status,rider_id,dest_lat,dest_lng,cust_address')
+      .eq('order_id', orderId)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (jobErr) throw jobErr;
+
+    if (!jobs || !jobs.length) {
+      document.getElementById('trackMapWrap').style.display = 'none';
+      document.getElementById('trackStatusCard').style.display = 'none';
+      document.getElementById('trackNotFound').style.display = '';
+      if (_trackPollTimer) { clearInterval(_trackPollTimer); _trackPollTimer = null; } // nothing to poll for
+      return;
+    }
+    const job = jobs[0];
+    const label = TRACK_STATUS_LABEL[job.status] || { icon: '📦', main: job.status, sub: '' };
+    document.getElementById('trackStatusIcon').textContent = label.icon;
+    document.getElementById('trackStatusMain').textContent = label.main;
+    document.getElementById('trackStatusSub').textContent = label.sub;
+
+    // destination pin — static, from the order's delivery address
+    if (_trackMap && job.dest_lat != null && job.dest_lng != null) {
+      if (!_trackDestMarker) {
+        const destIcon = L.divIcon({
+          className: '', iconSize: [26, 26], iconAnchor: [13, 26],
+          html: '<div style="font-size:26px;line-height:1;">📍</div>'
+        });
+        _trackDestMarker = L.marker([job.dest_lat, job.dest_lng], { icon: destIcon }).addTo(_trackMap);
+      } else {
+        _trackDestMarker.setLatLng([job.dest_lat, job.dest_lng]);
+      }
+    }
+
+    // rider pin — only meaningful once a rider is actually assigned and the
+    // job is in an active state; stop showing it once done/cancelled/failed
+    const activeStatuses = ['accepted', 'departed', 'arrived'];
+    if (job.rider_id && activeStatuses.includes(job.status)) {
+      const { data: locs, error: locErr } = await sb
+        .from('rider_location')
+        .select('lat,lng,updated_at')
+        .eq('rider_id', job.rider_id)
+        .limit(1);
+      if (!locErr && locs && locs.length && _trackMap) {
+        const loc = locs[0];
+        const isOnline = loc.updated_at && (Date.now() - new Date(loc.updated_at).getTime()) < TRACK_RIDER_ONLINE_MS;
+        const riderIcon = L.divIcon({
+          className: '', iconSize: [34, 34], iconAnchor: [17, 17],
+          html: `<div style="width:34px;height:34px;border-radius:50%;background:${isOnline ? '#27ae60' : '#9CA3AF'};border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;font-size:16px;">🛵</div>`
+        });
+        if (!_trackRiderMarker) {
+          _trackRiderMarker = L.marker([loc.lat, loc.lng], { icon: riderIcon }).addTo(_trackMap);
+        } else {
+          _trackRiderMarker.setLatLng([loc.lat, loc.lng]).setIcon(riderIcon);
+        }
+        if (!isOnline) {
+          document.getElementById('trackStatusSub').textContent = 'สัญญาณไรเดอร์หายไปชั่วคราว กำลังพยายามเชื่อมต่อใหม่';
+        }
+        const bounds = [[loc.lat, loc.lng]];
+        if (job.dest_lat != null) bounds.push([job.dest_lat, job.dest_lng]);
+        if (bounds.length > 1) _trackMap.fitBounds(bounds, { padding: [50, 50] });
+        else _trackMap.setView(bounds[0], 15);
+      }
+    } else {
+      // no active rider position to show yet (still offered, or already done) —
+      // just center on the destination so the map isn't blank/meaningless
+      if (_trackRiderMarker) { _trackMap.removeLayer(_trackRiderMarker); _trackRiderMarker = null; }
+      if (job.dest_lat != null && _trackMap) _trackMap.setView([job.dest_lat, job.dest_lng], 15);
+      if (['done', 'failed', 'cancelled'].includes(job.status) && _trackPollTimer) {
+        clearInterval(_trackPollTimer); _trackPollTimer = null; // delivery finished — no more live position to poll for
+      }
+    }
+  } catch (e) {
+    console.warn('trackPoll error:', e.message);
+  }
+}
+
 
 function renderAcctOverview() {
   const DONE_ST = ['done', 'cancelled', 'failed'];
