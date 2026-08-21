@@ -2161,6 +2161,37 @@ app.post('/send-order', async (req, res) => {
   if (!customerId || !customerName || !items?.length || total == null)
     return res.status(400).json({ error: 'ข้อมูลไม่ครบ (customerId/customerName/items/total)' });
 
+  // 🔒 กันออเดอร์ซ้ำจากการ retry — ถ้าเน็ตหลุดตอนได้รับ response กลับมา (เซิร์ฟเวอร์
+  // บันทึกออเดอร์สำเร็จแล้วจริง แต่ฝั่งลูกค้าไม่เห็น response) ปุ่ม "ยืนยันสั่งซื้อ" จะ
+  // กลับมากดได้แล้วขึ้น error ให้ลองใหม่ — ถ้าลูกค้ากดซ้ำจริงๆ จะเข้ามาที่ endpoint นี้
+  // อีกรอบด้วย customerId + รายการสินค้าเดียวกันเป๊ะ เช็คก่อนว่ามีออเดอร์แบบเดียวกันจาก
+  // ลูกค้าคนนี้เพิ่งสร้างไปภายใน 60 วินาทีที่แล้วไหม ถ้ามีให้คืนออเดอร์เดิมแทนที่จะสร้างซ้ำ
+  //
+  // สำคัญ: เช็คนี้ต้องอยู่ตรงนี้ ก่อนเริ่มคำนวณราคา/ใช้คูปองเลย ไม่ใช่หลัง — รอบก่อนวางไว้
+  // ท้ายฟังก์ชัน (หลัง coupon_usages insert ไปแล้ว) ซึ่งเป็นบั๊กจริง: ป้องกันออเดอร์ซ้ำได้
+  // ก็จริง แต่ retry ที่มีคูปองติดมาด้วยจะยังคง insert แถวการใช้คูปองซ้ำไปแล้วก่อนเช็คเจอ
+  // ทำให้คูปองแบบจำกัดจำนวนใช้/1 คนใช้ได้ครั้งเดียว ถูกนับซ้ำผิดพลาดได้ — ใช้ items/total
+  // ดิบจาก request ตรงๆ เปรียบเทียบ (ไม่ใช่ verifiedItems/verifiedTotal ที่ยังไม่ถูกคำนวณ ณ
+  // จุดนี้) เพราะ retry จริงๆ จะส่งตะกร้าเดิมมาเป๊ะไบต์ต่อไบต์อยู่แล้ว
+  const _dupCheckSince = new Date(Date.now() - 60000).toISOString();
+  const { data: _recentOrders } = await supabase.from('orders')
+    .select('order_id, items, total, created_at')
+    .eq('customer_id', customerId)
+    .gte('created_at', _dupCheckSince)
+    .order('created_at', { ascending: false })
+    .limit(5);
+  if (Array.isArray(_recentOrders)) {
+    const _newItemsKey = JSON.stringify(items.map(it => [it.productId, it.qty, it.price]).sort());
+    const dup = _recentOrders.find(o => {
+      const oKey = JSON.stringify((o.items || []).map(it => [it.productId, it.qty, it.price]).sort());
+      return oKey === _newItemsKey && Math.abs((o.total || 0) - Number(total)) < 1;
+    });
+    if (dup) {
+      console.warn(`⚠️ กันออเดอร์ซ้ำ: customer=${customerId} ส่งเคาร์ทเดียวกันซ้ำภายใน 60s — คืนออเดอร์เดิม ${dup.order_id}`);
+      return res.json({ success: true, orderId: dup.order_id, duplicatePrevented: true });
+    }
+  }
+
   // 🔒 SECURITY FIX: ตรวจ/คำนวณราคาสินค้าใหม่ฝั่ง server จากตาราง products จริง ไม่เชื่อ
   // items[].price / total ที่ client ส่งมาอีกต่อไป (ดูคำอธิบายเต็มที่ computeVerifiedItemPricing)
   const pricing = await computeVerifiedItemPricing(items);
@@ -2293,30 +2324,6 @@ app.post('/send-order', async (req, res) => {
       lng = found.lng;
       hasValidPin = true;
       console.log(`📍 auto-extracted pin from text: ${lat},${lng}`);
-    }
-  }
-
-  // 🔒 กันออเดอร์ซ้ำจากการ retry — ถ้าเน็ตหลุดตอนได้รับ response กลับมา (เซิร์ฟเวอร์
-  // บันทึกออเดอร์สำเร็จแล้วจริง แต่ฝั่งลูกค้าไม่เห็น response) ปุ่ม "ยืนยันสั่งซื้อ" จะ
-  // กลับมากดได้แล้วขึ้น error ให้ลองใหม่ — ถ้าลูกค้ากดซ้ำจริงๆ จะเข้ามาที่ endpoint นี้
-  // อีกรอบด้วย customerId + รายการสินค้าเดียวกันเป๊ะ เช็คก่อนว่ามีออเดอร์แบบเดียวกันจาก
-  // ลูกค้าคนนี้เพิ่งสร้างไปภายใน 60 วินาทีที่แล้วไหม ถ้ามีให้คืนออเดอร์เดิมแทนที่จะสร้างซ้ำ
-  const _dupCheckSince = new Date(Date.now() - 60000).toISOString();
-  const { data: _recentOrders } = await supabase.from('orders')
-    .select('order_id, items, total, created_at')
-    .eq('customer_id', customerId)
-    .gte('created_at', _dupCheckSince)
-    .order('created_at', { ascending: false })
-    .limit(5);
-  if (Array.isArray(_recentOrders)) {
-    const _newItemsKey = JSON.stringify(verifiedItems.map(it => [it.productId, it.qty, it.price]).sort());
-    const dup = _recentOrders.find(o => {
-      const oKey = JSON.stringify((o.items || []).map(it => [it.productId, it.qty, it.price]).sort());
-      return oKey === _newItemsKey && Math.abs((o.total || 0) - verifiedTotal) < 1;
-    });
-    if (dup) {
-      console.warn(`⚠️ กันออเดอร์ซ้ำ: customer=${customerId} ส่งเคาร์ทเดียวกันซ้ำภายใน 60s — คืนออเดอร์เดิม ${dup.order_id}`);
-      return res.json({ success: true, orderId: dup.order_id, duplicatePrevented: true });
     }
   }
 
