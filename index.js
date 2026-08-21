@@ -2296,6 +2296,30 @@ app.post('/send-order', async (req, res) => {
     }
   }
 
+  // 🔒 กันออเดอร์ซ้ำจากการ retry — ถ้าเน็ตหลุดตอนได้รับ response กลับมา (เซิร์ฟเวอร์
+  // บันทึกออเดอร์สำเร็จแล้วจริง แต่ฝั่งลูกค้าไม่เห็น response) ปุ่ม "ยืนยันสั่งซื้อ" จะ
+  // กลับมากดได้แล้วขึ้น error ให้ลองใหม่ — ถ้าลูกค้ากดซ้ำจริงๆ จะเข้ามาที่ endpoint นี้
+  // อีกรอบด้วย customerId + รายการสินค้าเดียวกันเป๊ะ เช็คก่อนว่ามีออเดอร์แบบเดียวกันจาก
+  // ลูกค้าคนนี้เพิ่งสร้างไปภายใน 60 วินาทีที่แล้วไหม ถ้ามีให้คืนออเดอร์เดิมแทนที่จะสร้างซ้ำ
+  const _dupCheckSince = new Date(Date.now() - 60000).toISOString();
+  const { data: _recentOrders } = await supabase.from('orders')
+    .select('order_id, items, total, created_at')
+    .eq('customer_id', customerId)
+    .gte('created_at', _dupCheckSince)
+    .order('created_at', { ascending: false })
+    .limit(5);
+  if (Array.isArray(_recentOrders)) {
+    const _newItemsKey = JSON.stringify(verifiedItems.map(it => [it.productId, it.qty, it.price]).sort());
+    const dup = _recentOrders.find(o => {
+      const oKey = JSON.stringify((o.items || []).map(it => [it.productId, it.qty, it.price]).sort());
+      return oKey === _newItemsKey && Math.abs((o.total || 0) - verifiedTotal) < 1;
+    });
+    if (dup) {
+      console.warn(`⚠️ กันออเดอร์ซ้ำ: customer=${customerId} ส่งเคาร์ทเดียวกันซ้ำภายใน 60s — คืนออเดอร์เดิม ${dup.order_id}`);
+      return res.json({ success: true, orderId: dup.order_id, duplicatePrevented: true });
+    }
+  }
+
   let order_id     = genOrderId();
   const created_at = new Date().toISOString();
 
