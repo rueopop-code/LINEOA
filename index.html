@@ -1868,8 +1868,7 @@ button,.pcard,.cat-chip,.atab,.hdr-btn{-webkit-tap-highlight-color:transparent}
         <div class="map-preview" id="mapPreview">
           <iframe id="mapIframe" title="แผนที่"></iframe>
         </div>
-      </div>
-      <!-- pickup extra -->
+      </div>      <!-- pickup extra -->
       <div class="pickup-extra" id="pickupExtra">
         <label style="font-size:12px;color:#555;margin-bottom:4px;display:block;">📅 วัน/เวลารับสินค้า *</label>
         <input class="fi" id="cPickTime" type="datetime-local" style="color:#333;">
@@ -2085,6 +2084,34 @@ button,.pcard,.cat-chip,.atab,.hdr-btn{-webkit-tap-highlight-color:transparent}
         <div>ยังไม่มีออเดอร์</div>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- ── ปักหมุดตำแหน่งจัดส่ง แบบโต้ตอบได้ (สไตล์ LINE MAN/Grab) ──
+     สองวิธีเลือกตำแหน่งในหน้าเดียวกัน:
+     1) "ใช้ตำแหน่งปัจจุบัน" — ดึง GPS จริงมาปักให้ทันที (ของเดิมที่มีอยู่แล้ว)
+     2) ลาก/แตะบนแผนที่เพื่อขยับหมุดไปจุดที่ต้องการเอง — ของใหม่ที่เพิ่ม
+     หมุดค้างอยู่ตรงกลางจอเสมอ (แผนที่เลื่อนใต้หมุด แทนลากตัวหมุดเอง — วิธีเดียว
+     กับที่ LINE MAN/Grab ใช้ เพราะแม่นกว่าบนจอสัมผัส ไม่ต้องเล็งนิ้วให้ตรงหมุดเป๊ะ) -->
+<div id="mapPickOv" style="display:none;position:fixed;inset:0;background:var(--bg,#F7F4EE);z-index:9300;flex-direction:column;">
+  <div style="background:linear-gradient(120deg,var(--c2,#8E1515),var(--c1,#D32F2F));color:#fff;padding:14px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0;">
+    <button onclick="closeMapPick()" style="width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.15);border:1.5px solid rgba(255,255,255,.3);color:#fff;font-size:16px;flex-shrink:0;">←</button>
+    <div>
+      <div style="font-family:'Prompt',sans-serif;font-size:15px;font-weight:800;">ปักหมุดตำแหน่งจัดส่ง</div>
+      <div style="font-size:11px;opacity:.85;">เลื่อนแผนที่ให้หมุดตรงจุดที่ต้องการ หรือใช้ตำแหน่งปัจจุบัน</div>
+    </div>
+  </div>
+
+  <div style="position:relative;flex:1;min-height:0;">
+    <div id="mapPickMap" style="width:100%;height:100%;"></div>
+    <!-- หมุดค้างกลางจอตายตัว (ไม่ใช่ marker ของ Leaflet) — ขยับแผนที่ใต้มันแทน -->
+    <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-100%);pointer-events:none;z-index:500;font-size:38px;filter:drop-shadow(0 3px 6px rgba(0,0,0,.35));">📍</div>
+    <button onclick="mapPickUseCurrentLocation()" id="mapPickGpsBtn" style="position:absolute;right:14px;bottom:110px;width:46px;height:46px;border-radius:50%;background:#fff;border:none;box-shadow:0 3px 12px rgba(0,0,0,.25);font-size:20px;display:flex;align-items:center;justify-content:center;z-index:500;">🎯</button>
+  </div>
+
+  <div style="padding:14px 16px calc(16px + env(safe-area-inset-bottom));background:#fff;border-top:1px solid var(--border,#E8E0D3);flex-shrink:0;">
+    <div id="mapPickCoordLabel" style="font-size:12px;color:var(--sub,#6E6058);text-align:center;margin-bottom:10px;">กำลังหาตำแหน่ง...</div>
+    <button onclick="mapPickConfirm()" style="width:100%;padding:13px;background:linear-gradient(120deg,var(--c2,#8E1515),var(--c1,#D32F2F));color:#fff;border:none;border-radius:12px;font-family:'Sarabun',sans-serif;font-size:14.5px;font-weight:700;">✓ ยืนยันตำแหน่งนี้</button>
   </div>
 </div>
 
@@ -4755,21 +4782,66 @@ function selCOT(t){
 // ═══════════════════════════════════════════
 //  MAP PIN
 // ═══════════════════════════════════════════
+// ══════════════════════════════════════════════════════════
+//  ปักหมุดตำแหน่งจัดส่งแบบโต้ตอบได้ (LINE MAN/Grab style)
+//  หมุดค้างกลางจอ (CSS, ไม่ใช่ Leaflet marker) — เลื่อนแผนที่ใต้หมุดแทนลากหมุด,
+//  วิธีเดียวกับที่ LINE MAN/Grab ใช้บนมือถือ เพราะแม่นกว่าการลาก marker เล็กๆ
+//  ด้วยนิ้ว พิกัดที่เลือกจริงๆ ณ เวลาใดก็ตาม = จุดกึ่งกลางของแผนที่ตอนนั้น
+// ══════════════════════════════════════════════════════════
+let _mapPickMap = null;
+let _mapPickCenter = null; // {lat, lng} — synced from the map's center on every move
+
 function openMapPick() {
-  if (!navigator.geolocation) { alert('เบราว์เซอร์นี้ไม่รองรับ GPS'); return; }
-  navigator.geolocation.getCurrentPosition(pos => {
-    mapLat = pos.coords.latitude;
-    mapLng = pos.coords.longitude;
-    showMapPin();
-  }, () => {
-    // fallback: let user type coordinates
-    const inp = prompt('ไม่สามารถเข้าถึง GPS\nกรอกลิงค์ Google Maps หรือ lat,lng:');
-    if (inp) {
-      const m = inp.match(/(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)/);
-      if (m) { mapLat=parseFloat(m[1]); mapLng=parseFloat(m[2]); showMapPin(); }
+  document.getElementById('mapPickOv').style.display = 'flex';
+  _trackLoadLeaflet().then(() => {
+    const startLat = mapLat || 18.145;
+    const startLng = mapLng || 100.14;
+    if (!_mapPickMap) {
+      _mapPickMap = L.map('mapPickMap', { attributionControl: false, zoomControl: false }).setView([startLat, startLng], 16);
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(_mapPickMap);
+      L.control.zoom({ position: 'bottomright' }).addTo(_mapPickMap);
+      _mapPickMap.on('move', () => {
+        const c = _mapPickMap.getCenter();
+        _mapPickCenter = { lat: c.lat, lng: c.lng };
+        const label = document.getElementById('mapPickCoordLabel');
+        if (label) label.textContent = `📍 พิกัด: ${c.lat.toFixed(5)}, ${c.lng.toFixed(5)}`;
+      });
+    } else {
+      _mapPickMap.setView([startLat, startLng], 16);
     }
+    _mapPickCenter = { lat: startLat, lng: startLng };
+    setTimeout(() => _mapPickMap.invalidateSize(), 100);
   });
 }
+
+function closeMapPick() {
+  document.getElementById('mapPickOv').style.display = 'none';
+}
+
+function mapPickUseCurrentLocation() {
+  if (!navigator.geolocation) { alert('เบราว์เซอร์นี้ไม่รองรับ GPS'); return; }
+  const btn = document.getElementById('mapPickGpsBtn');
+  if (btn) btn.textContent = '⏳';
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      if (btn) btn.textContent = '🎯';
+      if (_mapPickMap) _mapPickMap.setView([pos.coords.latitude, pos.coords.longitude], 17);
+    },
+    () => {
+      if (btn) btn.textContent = '🎯';
+      alert('ไม่สามารถเข้าถึงตำแหน่งปัจจุบันได้ — เลื่อนแผนที่เลือกเองได้เลย');
+    }
+  );
+}
+
+function mapPickConfirm() {
+  if (!_mapPickCenter) return;
+  mapLat = _mapPickCenter.lat;
+  mapLng = _mapPickCenter.lng;
+  showMapPin();
+  closeMapPick();
+}
+
 function showMapPin() {
   const info = document.getElementById('pinInfo');
   const preview = document.getElementById('mapPreview');
