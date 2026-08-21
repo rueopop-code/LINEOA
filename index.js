@@ -2148,7 +2148,7 @@ app.post('/liff-token', rateLimit(20), async (req, res) => {
 });
 
 // ── POST /send-order ──────────────────────────────────────
-app.post('/send-order', async (req, res) => {
+app.post('/send-order', rateLimit(15), async (req, res) => {
   const {
     customerId, customerName, lineName, phone, address, note,
     items, total, orderType, extra,
