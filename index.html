@@ -6502,7 +6502,7 @@ function buildSlipUploadForm(o, variant) {
             style="width:100%;padding:9px 12px;border:1.5px solid ${borderColor};border-radius:9px;font-size:14px;font-family:'Sarabun',sans-serif;outline:none;box-sizing:border-box;">
         </div>
         <div id="slipStatusMsg" style="font-size:12px;min-height:16px;margin-bottom:6px;"></div>
-        <button onclick="submitSlip('${o.order_id}')"
+        <button id="slipSubmitBtn" data-label="${btnLabel}" onclick="submitSlip('${o.order_id}')"
           style="width:100%;padding:12px;background:linear-gradient(120deg,var(--c2),var(--c1));color:#fff;border:none;border-radius:999px;font-size:14px;font-weight:700;font-family:'Prompt',sans-serif;cursor:pointer;box-shadow:0 5px 16px rgba(211,47,47,.25);letter-spacing:.3px;">
           ${btnLabel}
         </button>
@@ -6857,11 +6857,16 @@ async function submitSlip(orderId) {
   const amountEl  = document.getElementById('slipAmountInput');
   const refEl     = document.getElementById('slipRefInput');
   const statusEl  = document.getElementById('slipStatusMsg');
+  const btnEl     = document.getElementById('slipSubmitBtn');
   const amount    = parseFloat(amountEl?.value);
   const manualRef = (refEl?.value || '').trim() || null;
 
   if (!_slipFileData) { toast('⚠️ กรุณาเลือกรูปสลิปก่อน'); return; }
   if (!amount || amount <= 0) { toast('⚠️ กรุณากรอกยอดที่โอน'); return; }
+  // 🐛 BUG FIX: เดิมปุ่มนี้ไม่ถูก disable ระหว่างส่ง — แตะรัว/แตะซ้ำจังหวะเน็ตช้าจะยิง
+  // submit-slip ซ้ำหลายครั้งจากสลิปรูปเดียวกัน (ทำให้แอดมินได้รับแจ้งเตือนซ้ำเป็นชุด) ป้องกันโดย
+  // disable ปุ่มทันทีที่กด เหมือนปุ่มส่งสลิปหน้า "ชำระเงิน" หลัก (_successSlipSubmit) ที่มีอยู่แล้ว
+  if (btnEl) { if (btnEl.disabled) return; btnEl.disabled = true; btnEl.textContent = '⏳ กำลังส่ง...'; }
 
   showMsSlipOverlay('กำลังเชื่อมต่อ server', 'กรุณารอสักครู่...');
   try {
@@ -6930,11 +6935,13 @@ async function submitSlip(orderId) {
       }
 
       _slipFileData = null;
-      // Reload order detail เพื่ออัปเดตสถานะ
+      // Reload order detail เพื่ออัปเดตสถานะ (จะ re-render ปุ่มใหม่ทั้งหน้าอยู่แล้ว ไม่ต้อง re-enable เอง)
       await loadMyOrders();
       setTimeout(() => openOrderDetail(orderId), 500);
     } catch(e) {
       if (statusEl) { statusEl.textContent = '❌ ' + e.message; statusEl.style.color = '#e74c3c'; }
+      // ส่งไม่สำเร็จจริงๆ (error) → ปลดล็อกปุ่มให้กดใหม่ได้ (คืนข้อความปุ่มเดิมที่บันทึกไว้ตอน render)
+      if (btnEl) { btnEl.disabled = false; btnEl.textContent = btnEl.dataset.label || '📤 ส่งสลิป'; }
     }
   } finally {
     hideMsSlipOverlay();
@@ -10263,14 +10270,9 @@ setTimeout(shInit,600);
     heroIn.appendChild(stage);
   }
 
-  function loadHB() {
-    if (!API) return;
-    fetch(API + '/hero-banner').then(function (r) { return r.json(); }).then(function (d) {
-      if (d && !d.error) { hbCfg = d; renderHero(); hbAdminRefresh(); }
-    }).catch(function () {});
-  }
-
-  /* ── แอดมิน: ฉีดส่วนจัดการเข้า tab ร้าน ── */
+  // 🐛 BUG FIX: ฟังก์ชัน loadHB() นี้เป็นโค้ดที่หลงเหลือจากรุ่นก่อนหน้า — ไม่มีที่ไหนในไฟล์เรียกใช้เลย
+  // เพราะ boot() ด้านล่างทำหน้าที่เดียวกัน (fetch /hero-banner แล้วตั้งค่า hbCfg + renderHero()) อยู่แล้ว
+  // ไม่กระทบการทำงานเพราะไม่เคยถูกเรียก แต่เป็นโค้ดซ้ำซ้อนที่ทำให้สับสนได้ ตัดออก
   var hbDraft = null; // สำเนาแก้ไขก่อนบันทึก
   var hbSelectedTagIds = []; // 🆕 สินค้าที่แท็กไว้ในฟอร์ม "เพิ่มป้ายใหม่" (สูงสุด 3 ชิ้น)
   var HB_TAG_MAX = 3;

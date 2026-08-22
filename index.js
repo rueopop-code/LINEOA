@@ -5253,6 +5253,15 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
     }
   }
 
+  // 🐛 BUG FIX (พบจากเคสจริง): ลูกค้าส่งสลิป "รูปเดียวกันเป๊ะ" ซ้ำเข้ามาให้ออเดอร์เดิม (เช่น
+  // แอปค้าง/ตอบช้าเลยกดส่งซ้ำ, หรือฝั่งเว็บมี auto-retry เมื่อ server ตื่นช้าแล้วตอบไม่ทัน — ดู
+  // _successSlipSubmit() ฝั่ง frontend) เดิมระบบไม่เคยเช็คว่า "รูปนี้เพิ่งถูกประมวลผลให้ออเดอร์นี้
+  // ไปแล้วหรือยัง" (เช็คแค่ว่ารูปนี้เคยใช้ยืนยัน "ออเดอร์อื่น" หรือไม่ — ดูโค้ดด้านล่าง) จึงประมวลผล
+  // ซ้ำทุกครั้งและยิงแจ้งเตือนแอดมิน (ข้อความ + การ์ด Flex + รูปสลิป) ซ้ำเป็นชุดๆ ทั้งที่ลูกค้าส่งมา
+  // แค่รูปเดียว — แก้โดยเทียบ hash ของรูปที่ส่งมารอบนี้กับ hash ที่บันทึกไว้แล้วบนออเดอร์เดียวกัน
+  // ถ้าตรงกัน (รูปเป๊ะเดียวกัน ออเดอร์เดียวกัน) → ยังคงตอบลูกค้าปกติ แต่ "ไม่" แจ้งแอดมินซ้ำอีกรอบ
+  const isSameSlipResubmit = !!(ocr?.imageHash && order.slip_image_hash && ocr.imageHash === order.slip_image_hash);
+
   // ═══ 🚫 กันสลิปซ้ำ — รูปเดิม/เลขอ้างอิงเดิมถูกใช้ยืนยันออเดอร์อื่นไปแล้วหรือไม่ ═══
   let dupReason = null;
   try {
@@ -5390,6 +5399,10 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
     }
   }
   if (nameMismatchNote) adminMsg += nameMismatchNote;
+  // รูปเดียวกันเป๊ะที่เพิ่งประมวลผลให้ออเดอร์นี้ไปแล้ว — บอกลูกค้าตรงๆ กันสับสนว่าทำไม "เหมือนไม่มีอะไรเกิดขึ้น"
+  if (isSameSlipResubmit && !isMatch) {
+    chatMsg = `🔁 ระบบได้รับสลิปรูปนี้ไปแล้วก่อนหน้านี้สำหรับออเดอร์นี้ (ผลตรวจเหมือนเดิม)\n\n${chatMsg}`;
+  }
 
   try {
     await supabase.from('messages').insert([{
@@ -5400,27 +5413,31 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
   // 📝 Note ภายในสำหรับแอดมินเท่านั้น (sender: 'admin_note' — ไม่โผล่ในแชทของลูกค้าเด็ดขาด ดู /messages/:orderId)
   // ให้เหตุผลละเอียดแบบเทคนิค (ยอดที่ server อ่านจากรูปจริง / เหตุผลบล็อก ฯลฯ) ไปอยู่ในหน้าแชทของแอดมินพาเนลด้วย
   // ไม่ใช่แค่ผ่าน LINE push อย่างเดียว เผื่อแอดมินพลาดดู LINE ตอนนั้น
-  try {
-    await supabase.from('messages').insert([{
-      order_id, customer_id, sender: 'admin_note', text: adminMsg, created_at: now
-    }]);
-  } catch(e) { console.warn('insert admin note:', e.message); }
+  // 🐛 BUG FIX: ข้าม insert/แจ้งเตือนซ้ำถ้าเป็นรูปสลิปเดียวกันเป๊ะที่เพิ่งประมวลผลให้ออเดอร์นี้ไปแล้ว
+  // (ดู isSameSlipResubmit ด้านบน) — กันแอดมินโดนสแปมข้อความ+การ์ด+รูปซ้ำจากสลิปใบเดียว
+  if (!isSameSlipResubmit) {
+    try {
+      await supabase.from('messages').insert([{
+        order_id, customer_id, sender: 'admin_note', text: adminMsg, created_at: now
+      }]);
+    } catch(e) { console.warn('insert admin note:', e.message); }
 
-  if (process.env.LINE_TOKEN) {
-    const payResult = isMatch ? 'match' : (diff > 0 ? 'under' : 'over');
-    // 🐛 BUG FIX: เดิม adminMsg (ข้อความละเอียดที่บอกเหตุผลชัดเจน เช่น "🚨 สลิปซ้ำ!") ถูกสร้างไว้
-    // แต่ไม่เคยถูกส่งไปที่ไหนเลย แอดมินได้แค่การ์ด Flex ทั่วไปที่แยกเคสฉ้อโกงกับยอดไม่ตรงธรรมดาไม่ออก
-    // ตอนนี้ส่ง adminMsg เป็นข้อความ text ไปด้วยเสมอ ให้แอดมินเห็นเหตุผลตรงๆ ใน LINE OA ทันที
-    const msgs = [
-      { type: 'text', text: adminMsg },
-      buildPaymentFlex({
-        audience:'admin', result: payResult, order_id,
-        customer_name: order.customer_name,
-        paid: paidAmount, expected: expectedTotal, diff
-      })
-    ];
-    if (slip_url) msgs.push({ type:'image', originalContentUrl: slip_url, previewImageUrl: slip_url });
-    notifyAllAdmins(msgs).catch(e => console.warn('slip notify:', e.message));
+    if (process.env.LINE_TOKEN) {
+      const payResult = isMatch ? 'match' : (diff > 0 ? 'under' : 'over');
+      // 🐛 BUG FIX: เดิม adminMsg (ข้อความละเอียดที่บอกเหตุผลชัดเจน เช่น "🚨 สลิปซ้ำ!") ถูกสร้างไว้
+      // แต่ไม่เคยถูกส่งไปที่ไหนเลย แอดมินได้แค่การ์ด Flex ทั่วไปที่แยกเคสฉ้อโกงกับยอดไม่ตรงธรรมดาไม่ออก
+      // ตอนนี้ส่ง adminMsg เป็นข้อความ text ไปด้วยเสมอ ให้แอดมินเห็นเหตุผลตรงๆ ใน LINE OA ทันที
+      const msgs = [
+        { type: 'text', text: adminMsg },
+        buildPaymentFlex({
+          audience:'admin', result: payResult, order_id,
+          customer_name: order.customer_name,
+          paid: paidAmount, expected: expectedTotal, diff
+        })
+      ];
+      if (slip_url) msgs.push({ type:'image', originalContentUrl: slip_url, previewImageUrl: slip_url });
+      notifyAllAdmins(msgs).catch(e => console.warn('slip notify:', e.message));
+    }
   }
 
   res.json({
@@ -5465,21 +5482,19 @@ app.post('/read-slip', rateLimit(10), async (req, res) => {
 });
 
 // ── helper: แยกยอดเงินจากข้อความ OCR สลิปโอนเงิน ──────────
+// 🩹 BUG FIX (พบจากเคสจริง): เดิม "Pattern 1" (ตัวเลขเดี่ยวบนบรรทัดของตัวเอง) ถูกเช็คก่อน
+// "Pattern 2" (ตัวเลขที่อยู่ติดคำว่า "จำนวน"/"ยอดโอน" ฯลฯ ซึ่งแม่นยำกว่ามาก) — และ regex ของ
+// Pattern 1 เดิมมีส่วนทศนิยมเป็น optional จึงจับเลขหลักเดียวลอยๆ เช่น "1" (ซึ่งอาจเป็นขยะที่ OCR
+// อ่านผิดจากไอคอน/เครื่องหมายถูก/เลขบัญชีที่ถูกมาส์กบางส่วน) แล้ว return ยอดผิดทันที ก่อนจะได้ไป
+// เจอบรรทัด "จำนวน 438.00 บาท" ที่ถูกต้องจริงๆ เลย ทำให้ระบบแจ้ง "ยอดไม่ตรง" ทั้งที่ลูกค้าโอนถูกต้อง
+// แก้โดย: (1) สลับให้ Pattern คำสำคัญ (แม่นยำกว่า) ทำงานก่อนเสมอ (2) บังคับให้ Pattern เลขเดี่ยว
+// ต้องมีทศนิยม 2 ตำแหน่ง (สลิปโอนเงินจริงมีทศนิยมเสมอ) กันไม่ให้ตัวเลขหลักเดียวลอยๆ ที่ไม่มีจุด
+// ถูกเข้าใจผิดว่าเป็นยอดเงิน
 function extractAmountFromSlip(text) {
   const lines = text.split(/\n/).map(l => l.trim()).filter(Boolean);
 
-  // Pattern 1: ตัวเลขที่ขึ้นต้นบรรทัดเดียวหรือมีแค่ตัวเลข+จุด (ยอดหลักในสลิป PromptPay/KTB)
-  // เช่น "2,000.00" หรือ "58.00" อยู่บรรทัดเดียวกัน
-  for (const line of lines) {
-    const stripped = line.replace(/\s/g, '');
-    const soloNum = stripped.match(/^(\d{1,3}(,\d{3})*(\.\d{2})?)$|^(\d+\.\d{2})$/);
-    if (soloNum) {
-      const val = parseFloat(stripped.replace(/,/g, ''));
-      if (val >= 1 && val <= 999999) return val;
-    }
-  }
-
-  // Pattern 2: keyword ที่มักอยู่ก่อนยอดเงิน (ไทย + Krungthai + KBank + SCB)
+  // Pattern 1 (เดิมคือ Pattern 2): keyword ที่มักอยู่ก่อนยอดเงิน (ไทย + Krungthai + KBank + SCB)
+  // เช็คก่อนเสมอเพราะแม่นยำกว่าการเดาจากตัวเลขลอยๆ มาก
   const amountKeywords = /จำนวนเงิน|ยอดโอน|ยอดเงิน|จำนวน|amount|total|โอนเงิน|เงิน|จํานวนเงิน|จํานวน|รายการโอนเงิน|การโอนเงิน/i;
   for (let i = 0; i < lines.length; i++) {
     if (amountKeywords.test(lines[i])) {
@@ -5493,6 +5508,18 @@ function extractAmountFromSlip(text) {
         const next2LineNum = parseThaiNumber(lines[i + 2]);
         if (next2LineNum) return next2LineNum;
       }
+    }
+  }
+
+  // Pattern 2 (เดิมคือ Pattern 1): ตัวเลขที่อยู่บรรทัดของตัวเอง — บังคับต้องมีทศนิยม 2 ตำแหน่ง
+  // (เช่น "2,000.00" หรือ "58.00") เพื่อกันเลขหลักเดียว/เลขจำนวนเต็มลอยๆ ที่ไม่มีจุดทศนิยม
+  // (เช่น "1" จาก OCR อ่านผิด) ถูกเข้าใจผิดว่าเป็นยอดเงิน — สลิปโอนเงินจริงมีทศนิยมเสมอ
+  for (const line of lines) {
+    const stripped = line.replace(/\s/g, '');
+    const soloNum = stripped.match(/^(\d{1,3}(,\d{3})*\.\d{2})$|^(\d+\.\d{2})$/);
+    if (soloNum) {
+      const val = parseFloat(stripped.replace(/,/g, ''));
+      if (val >= 1 && val <= 999999) return val;
     }
   }
 
