@@ -4677,6 +4677,134 @@ app.patch('/orders/:orderId/status', requirePerm('orders'), async (req, res) => 
 });
 
 // ═══════════════════════════════════════════════════════════
+//  🔒 SECURITY: generic admin order field editor + delete
+// ═══════════════════════════════════════════════════════════
+// These two exist to close a real RLS gap: `orders` has an "allow all anon"
+// Supabase policy (found in an earlier audit — kept open because the admin
+// panel was writing to it DIRECTLY via the anon key with no backend check
+// at all, for ~9 different edit/merge/delete operations). Anyone who copies
+// that anon key straight out of the page source (trivial — it's plain
+// client-side JS) could read/edit/delete every order in the database
+// directly against Supabase's REST API, with zero admin login required.
+// These two routes give the admin panel a real, `requirePerm('orders')`-
+// gated path to do the SAME edits through the service-role key instead —
+// once the panel is switched over to call these, the `orders` RLS policy
+// can finally be tightened to service-role-only, matching every other
+// sensitive table (`admin_users`, `coupons`, etc.) that was never opened up
+// like this in the first place.
+//
+// Deliberately a field ALLOWLIST, not an open passthrough — even behind
+// requirePerm, an arbitrary-field update endpoint is one hasty admin-panel
+// edit away from something writing `status` here and silently skipping the
+// dedicated PATCH /orders/:orderId/status route above (which also fires the
+// customer LINE notification and system-message log that route to status
+// changes should always carry). `status` and `order_id` are excluded on
+// purpose — status changes belong to that other route, order_id is the
+// primary key and should never move.
+const ORDER_EDITABLE_FIELDS = new Set([
+  'customer_name', 'phone', 'address', 'note', 'items', 'total',
+  'discount_amount', 'coupon_code', 'payment_method', 'payment_label',
+  'line_user_id', 'line_name', 'customer_id', 'sales_id', 'ref_code'
+]);
+app.patch('/admin/orders/:orderId/fields', requirePerm('orders'), async (req, res) => {
+  const updates = req.body?.updates;
+  if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+    return res.status(400).json({ error: 'ต้องส่ง updates เป็น object' });
+  }
+  const rejected = Object.keys(updates).filter(k => !ORDER_EDITABLE_FIELDS.has(k));
+  if (rejected.length) {
+    return res.status(400).json({ error: `ฟิลด์นี้แก้ผ่าน endpoint นี้ไม่ได้: ${rejected.join(', ')}` });
+  }
+  if (!Object.keys(updates).length) {
+    return res.status(400).json({ error: 'updates ว่างเปล่า' });
+  }
+
+  const { data, error } = await supabase
+    .from('orders').update(updates).eq('order_id', req.params.orderId)
+    .select().maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'ไม่พบออเดอร์นี้' });
+
+  res.json({ success: true, order: data });
+});
+
+app.delete('/admin/orders/:orderId', requirePerm('orders'), async (req, res) => {
+  const { error } = await supabase.from('orders').delete().eq('order_id', req.params.orderId);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
+// Same story as the orders endpoints above, for `products` — RLS audit found
+// an "allow all anon" policy here too. Only 2 real write call sites exist in
+// the admin panel (editing `sizes`, editing `stock`/`quantity`), both against
+// whichever of 2 known table names is currently in use (`products` or the
+// legacy `menu_items`) — small enough surface for a table-name allowlist
+// (never interpolate a client-given table name into a query unvalidated)
+// plus a field allowlist, same pattern as /admin/orders/:orderId/fields.
+const PRODUCTS_ALLOWED_TABLES = new Set(['products', 'menu_items']);
+const PRODUCTS_EDITABLE_FIELDS = new Set(['sizes', 'stock', 'quantity']);
+app.patch('/admin/products/:id/fields', requirePerm('products'), async (req, res) => {
+  const table = req.body?.table;
+  const updates = req.body?.updates;
+  if (!PRODUCTS_ALLOWED_TABLES.has(table)) {
+    return res.status(400).json({ error: 'table ไม่ถูกต้อง' });
+  }
+  if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+    return res.status(400).json({ error: 'ต้องส่ง updates เป็น object' });
+  }
+  const rejected = Object.keys(updates).filter(k => !PRODUCTS_EDITABLE_FIELDS.has(k));
+  if (rejected.length) {
+    return res.status(400).json({ error: `ฟิลด์นี้แก้ผ่าน endpoint นี้ไม่ได้: ${rejected.join(', ')}` });
+  }
+  if (!Object.keys(updates).length) {
+    return res.status(400).json({ error: 'updates ว่างเปล่า' });
+  }
+
+  const { data, error } = await supabase
+    .from(table).update(updates).eq('id', req.params.id)
+    .select().maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'ไม่พบสินค้านี้' });
+
+  res.json({ success: true, product: data });
+});
+
+// Same story again for `sales_pins` — a sales rep's customer address book
+// (name/phone/address, real PII). Covers all 3 write shapes the admin panel
+// uses: create, edit-by-id, delete-by-id. `sales_id` is included in the
+// allowlist since it's how a pin identifies which sales rep owns it, but
+// note this endpoint doesn't verify the caller actually IS that sales rep —
+// it's gated the same as the other /admin/* routes (any authenticated
+// admin can create/edit/delete any pin), matching how sales_pins access
+// already worked before this fix, just no longer reachable by anonymous
+// callers with nothing but the anon key.
+const SALES_PIN_FIELDS = new Set([
+  'sales_id', 'name', 'phone', 'address', 'province', 'district', 'subdistrict',
+  'type', 'note', 'lat', 'lng', 'photo_url'
+]);
+app.post('/admin/sales-pins', requirePerm('orders'), async (req, res) => {
+  const fields = req.body || {};
+  const rejected = Object.keys(fields).filter(k => !SALES_PIN_FIELDS.has(k));
+  if (rejected.length) return res.status(400).json({ error: `ฟิลด์ไม่ถูกต้อง: ${rejected.join(', ')}` });
+  const { data, error } = await supabase.from('sales_pins').insert([fields]).select().maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true, pin: data });
+});
+app.patch('/admin/sales-pins/:id', requirePerm('orders'), async (req, res) => {
+  const fields = req.body || {};
+  const rejected = Object.keys(fields).filter(k => !SALES_PIN_FIELDS.has(k));
+  if (rejected.length) return res.status(400).json({ error: `ฟิลด์ไม่ถูกต้อง: ${rejected.join(', ')}` });
+  const { error } = await supabase.from('sales_pins').update(fields).eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+app.delete('/admin/sales-pins/:id', requirePerm('orders'), async (req, res) => {
+  const { error } = await supabase.from('sales_pins').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
+// ═══════════════════════════════════════════════════════════
 //  REFERRAL SYSTEM
 // ═══════════════════════════════════════════════════════════
 
