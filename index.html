@@ -1926,6 +1926,26 @@ button,.pcard,.cat-chip,.atab,.hdr-btn{-webkit-tap-highlight-color:transparent}
   </div>
 </div>
 
+<!-- ── POSPOS STOCK SYNC PREVIEW MODAL ── -->
+<div id="posImportOv" onclick="if(event.target===this)closePosImportPreview()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:650;align-items:center;justify-content:center;padding:20px;">
+  <div style="background:#fff;border-radius:18px;max-width:900px;width:100%;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+    <div style="padding:20px 24px;border-bottom:1px solid #e0e0e0;display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <div style="font-family:'Prompt',sans-serif;font-size:18px;font-weight:700;color:#2C3E50;">🔄 ตรวจสอบก่อนอัพเดทจาก POSPOS</div>
+        <div style="font-size:12px;color:#666;margin-top:2px;" id="posImportSummary"></div>
+      </div>
+      <button onclick="closePosImportPreview()" style="background:#f0f0f0;border:none;width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:16px;">×</button>
+    </div>
+    <div style="padding:16px 24px;overflow-y:auto;flex:1;">
+      <div id="posImportContent"></div>
+    </div>
+    <div style="padding:14px 24px;border-top:1px solid #e0e0e0;display:flex;gap:8px;justify-content:flex-end;background:#f8f9fa;border-radius:0 0 18px 18px;">
+      <button onclick="closePosImportPreview()" style="padding:10px 18px;background:#fff;border:1.5px solid #ccc;color:#666;border-radius:8px;font-size:13px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;">ยกเลิก</button>
+      <button id="posImportConfirmBtn" onclick="confirmPosImport()" style="padding:10px 24px;background:#F57C00;border:none;color:#fff;border-radius:8px;font-size:13px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;">✅ ยืนยันอัพเดท</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── CART SIZE CHANGE MODAL ── -->
 <div id="csOv" onclick="if(event.target===this)closeCartSize()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:550;align-items:center;justify-content:center;padding:20px;">
   <div style="background:#fff;border-radius:18px;max-width:420px;width:100%;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
@@ -2682,6 +2702,16 @@ button,.pcard,.cat-chip,.atab,.hdr-btn{-webkit-tap-highlight-color:transparent}
         </button>
         <button onclick="downloadExcelTemplate()" style="padding:8px 14px;background:#fff;border:1.5px solid #888;color:#666;border-radius:8px;font-size:12px;font-family:'Sarabun',sans-serif;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;">
           📋 Template
+        </button>
+      </div>
+
+      <!-- 🔄 POSPOS Stock Sync -->
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;padding:10px;background:linear-gradient(135deg,#fff3e0,#ffe0b2);border-radius:10px;border:1px solid #ffb74d;">
+        <div style="font-size:12px;color:#e65100;font-weight:700;width:100%;margin-bottom:2px;">🔄 อัพเดทสต็อก + ราคา จาก POSPOS</div>
+        <div style="font-size:11px;color:#8d5a1b;width:100%;margin-bottom:4px;">อัพโหลดไฟล์ export จาก POSPOS ตรงๆ ได้เลย (ไม่ต้องแก้ไฟล์) — ระบบจะจับคู่ด้วยรหัส POSPOS ที่ผูกไว้กับแต่ละขนาดสินค้า แล้วอัพเดทสต็อกให้อัตโนมัติ (และราคาด้วย ถ้าไฟล์มีคอลัมน์ราคา)</div>
+        <input type="file" id="posposImportFile" accept=".xlsx,.xls" style="display:none" onchange="handlePosposImport(this)">
+        <button onclick="document.getElementById('posposImportFile').click()" style="padding:8px 14px;background:#F57C00;border:none;color:#fff;border-radius:8px;font-size:12px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:5px;">
+          📤 อัพโหลดไฟล์ POSPOS
         </button>
       </div>
       <!-- QUICK EDIT PANEL -->
@@ -3871,6 +3901,10 @@ function addSzRow(to='szBuilder', existing=null) {
       <input class="sz-stock" placeholder="สต๊อก" type="number" min="0" value="${stock}" style="max-width:80px;" title="เว้นว่าง = ไม่จำกัด">
       <button class="sz-rm" onclick="rmSz(this)">✕</button>
     </div>
+    <div style="margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+      <label style="font-size:11px;color:#e65100;flex-shrink:0;font-weight:700;">🔗 รหัส POSPOS:</label>
+      <input class="sz-pos" placeholder="เช่น 100305090000 (ไม่บังคับ)" value="${existing?.pos_code||''}" style="flex:1;padding:6px 8px;border:1.5px solid #ffcc80;border-radius:6px;font-size:12px;font-family:'Sarabun',sans-serif;outline:none;">
+    </div>
     <div style="margin-bottom:6px;display:flex;align-items:center;gap:8px;">
       <label style="font-size:11px;color:#666;flex-shrink:0;">🖼 รูปขนาดนี้ (ไม่บังคับ):</label>
       <input class="sz-img-file" type="file" accept="image/*" style="font-size:11px;flex:1;" onchange="previewSzImg(this)">
@@ -3966,6 +4000,9 @@ function getSzRows(id) {
     const sizeObj = { n: name, p: price };
     if (stockRaw !== '') sizeObj.stock = parseInt(stockRaw) || 0;
     if (sizeImg) sizeObj.img = sizeImg;
+    // 🔗 pos_code = รหัสสินค้าฝั่ง POSPOS ที่ผูกกับขนาดนี้ — ใช้ตอน sync สต็อกจากไฟล์ POSPOS
+    const posRaw = wrap.querySelector('.sz-pos')?.value.trim();
+    if (posRaw) sizeObj.pos_code = posRaw;
 
     // tiers
     const tiers = [];
@@ -7901,7 +7938,7 @@ function dropEditImg(e){e.preventDefault();unDrag('editImgDrop');const f=e.dataT
 // ═══════════════════════════════════════════
 function renderPMList() {
   const q=(document.getElementById('pmSearch')||{value:''}).value.toLowerCase();
-  let list=[...products].filter(p=>!q||p.name.toLowerCase().includes(q)||p.cat.toLowerCase().includes(q));
+  let list=[...products].filter(p=>!q||p.name.toLowerCase().includes(q)||p.cat.toLowerCase().includes(q)||(p.sizes||[]).some(s=>(s.pos_code||'').toLowerCase().includes(q)));
   list.sort((a,b)=>a.name.localeCompare(b.name,'th'));
   const el=document.getElementById('pmList');
   if (!list.length) { el.innerHTML='<div style="text-align:center;padding:30px;color:var(--sub)">ไม่มีสินค้า</div>'; return; }
@@ -7918,11 +7955,19 @@ function renderPMList() {
          : `<span style="color:#27AE60;">${totalStock}</span>`);
     const hasTiers = p.sizes.some(s => s.tiers?.length);
     const wholesaleBadge = hasTiers ? ' · 💰 มีราคาส่ง' : '';
+    // 🔗 แสดงรหัส POSPOS คู่กับ id ของแต่ละขนาด ให้เช็คง่ายๆ ในหน้าเดียว
+    const posLine = p.sizes.map(s => {
+      const label = s.n ? escapeHtml(s.n) : '(ไม่มีขนาด)';
+      return s.pos_code
+        ? `${label}→<span style="color:#F57C00;">${escapeHtml(s.pos_code)}</span>`
+        : `${label}→<span style="color:#e53935;">ยังไม่ผูก</span>`;
+    }).join(' · ');
     return `<div class="pm-item" id="pmitem-${p.id}">
       <div class="pm-img">${imgH}</div>
       <div class="pm-info">
         <div class="pm-name">${p.name}</div>
         <div class="pm-meta">${p.cat} · ฿${minP.toLocaleString()} · ${p.sizes.length} ขนาด · 📦 ${stockTxt}${wholesaleBadge}${p.isNew?' · 🆕':''}${p.isBestseller?' · 🔥ขายดี':''}</div>
+        <div class="pm-meta" style="font-size:11px;color:#999;margin-top:2px;">id: ${p.id} &nbsp;·&nbsp; 🔗 ${posLine}</div>
       </div>
       <div class="pm-acts">
         <button class="pm-edit" onclick="window._edit(${p.id})">✏️ แก้ไข</button>
@@ -7966,7 +8011,7 @@ function productsToExcelRows() {
       // ไม่มี size → ใส่ row ว่าง
       rows.push({
         id: p.id, name: p.name, cat: p.cat, emoji: p.emoji||'📦',
-        description: p.desc||'', size: '', price: '', stock: '',
+        description: p.desc||'', size: '', price: '', stock: '', pos_code: '',
         tier1_qty:'', tier1_price:'', tier2_qty:'', tier2_price:'',
         tier3_qty:'', tier3_price:''
       });
@@ -7983,6 +8028,8 @@ function productsToExcelRows() {
         size        : s.n,
         price       : s.p,
         stock       : (s.stock !== undefined && s.stock !== null) ? s.stock : '',
+        // 🔗 pos_code = รหัสสินค้าฝั่ง POSPOS ที่ผูกกับขนาดนี้ — ใช้จับคู่ตอน sync สต็อกจาก POSPOS
+        pos_code    : s.pos_code || '',
         tier1_qty   : tiers[0]?.minQty || '',
         tier1_price : tiers[0]?.price || '',
         tier2_qty   : tiers[1]?.minQty || '',
@@ -8004,13 +8051,13 @@ function exportProductsToExcel() {
   rows.forEach(r => { if (r.id !== '' && r.id !== undefined && r.id !== null) r.id = String(r.id); });
 
   const ws = XLSX.utils.json_to_sheet(rows, {
-    header: ['id','name','cat','emoji','description','size','price','stock','tier1_qty','tier1_price','tier2_qty','tier2_price','tier3_qty','tier3_price']
+    header: ['id','name','cat','emoji','description','size','price','stock','pos_code','tier1_qty','tier1_price','tier2_qty','tier2_price','tier3_qty','tier3_price']
   });
 
   // ตั้งความกว้าง column
   ws['!cols'] = [
     {wch:16}, {wch:30}, {wch:15}, {wch:6}, {wch:25},
-    {wch:14}, {wch:10}, {wch:8},
+    {wch:14}, {wch:10}, {wch:8}, {wch:16},
     {wch:10}, {wch:11}, {wch:10}, {wch:11}, {wch:10}, {wch:11}
   ];
 
@@ -8042,6 +8089,7 @@ function exportProductsToExcel() {
     {คำอธิบาย:'   ถ้าใน Excel เห็นเป็น 2E+12 = format ผิด ให้คลิกขวา column → Format Cells → Text'},
     {คำอธิบาย:'6. size = key สำหรับ matching → ห้ามเปลี่ยน (ยกเว้นจะเพิ่มขนาดใหม่)'},
     {คำอธิบาย:'7. ถ้าจะเพิ่มสินค้าใหม่: เว้น id ว่าง ระบบจะสร้างให้อัตโนมัติ'},
+    {คำอธิบาย:'7.5 pos_code = รหัสสินค้าฝั่ง POSPOS ที่ผูกกับขนาดนี้ (ใช้ตอน sync สต็อกจากไฟล์ POSPOS) — ใส่ครั้งเดียว ครั้งต่อไปไม่ต้องแก้อีก'},
     {คำอธิบาย:'8. บันทึกเป็น .xlsx แล้ว Import กลับ'},
     {คำอธิบาย:''},
     {คำอธิบาย:'⚠️ ระบบจะ preview ก่อน import — ตรวจสอบก่อนยืนยันได้'}
@@ -8061,7 +8109,7 @@ function downloadExcelTemplate() {
     {
       id: '', name: 'สินค้าตัวอย่าง 1', cat: 'หมวดหมู่', emoji: '📦',
       description: 'เว้น id ว่าง = สินค้าใหม่ ระบบสร้าง id ให้อัตโนมัติ',
-      size: 'S', price: 25, stock: 100,
+      size: 'S', price: 25, stock: 100, pos_code: '',
       tier1_qty: 10, tier1_price: 22,
       tier2_qty: 50, tier2_price: 20,
       tier3_qty: 100, tier3_price: 18
@@ -8069,15 +8117,15 @@ function downloadExcelTemplate() {
     {
       id: '', name: 'สินค้าตัวอย่าง 1', cat: 'หมวดหมู่', emoji: '📦',
       description: '(เว้น id ว่างต่อจากแถวบน + name/cat เดียวกัน = ขนาดที่ 2 ของสินค้านี้)',
-      size: 'M', price: 35, stock: 80,
+      size: 'M', price: 35, stock: 80, pos_code: '',
       tier1_qty: 10, tier1_price: 32, tier2_qty: '', tier2_price: '',
       tier3_qty: '', tier3_price: ''
     }
   ];
   const ws = XLSX.utils.json_to_sheet(sample, {
-    header: ['id','name','cat','emoji','description','size','price','stock','tier1_qty','tier1_price','tier2_qty','tier2_price','tier3_qty','tier3_price']
+    header: ['id','name','cat','emoji','description','size','price','stock','pos_code','tier1_qty','tier1_price','tier2_qty','tier2_price','tier3_qty','tier3_price']
   });
-  ws['!cols'] = [{wch:16},{wch:30},{wch:15},{wch:6},{wch:25},{wch:14},{wch:10},{wch:8},{wch:10},{wch:11},{wch:10},{wch:11},{wch:10},{wch:11}];
+  ws['!cols'] = [{wch:16},{wch:30},{wch:15},{wch:6},{wch:25},{wch:14},{wch:10},{wch:8},{wch:16},{wch:10},{wch:11},{wch:10},{wch:11},{wch:10},{wch:11}];
 
   // บังคับ id เป็น text format
   const range = XLSX.utils.decode_range(ws['!ref']);
@@ -8193,6 +8241,9 @@ async function handleExcelImport(input) {
         const st = parseInt(stockRaw);
         if (!isNaN(st)) sz.stock = Math.max(0, st);
       }
+      // 🔗 pos_code = รหัสสินค้าฝั่ง POSPOS ที่ผูกกับขนาดนี้ (มาจากคอลัมน์ pos_code ในไฟล์ Excel)
+      const posCodeRaw = String(r.pos_code || '').trim();
+      if (posCodeRaw !== '') sz.pos_code = posCodeRaw;
       if (tiers.length) sz.tiers = tiers;
 
       p.sizes.push(sz);
@@ -8337,6 +8388,11 @@ function compareProductChanges(oldP, newP) {
     if (oldTiers !== newTiers) {
       changes.push(`📊 ${escapeHtml(name)} ราคาส่ง: <b>${(ns.tiers||[]).map(t=>`${t.minQty}+ ฿${t.price}`).join(', ')||'(ไม่มี)'}</b>`);
     }
+    const oldPos = os.pos_code || '(ไม่มี)';
+    const newPos = ns.pos_code || '(ไม่มี)';
+    if (oldPos !== newPos) {
+      changes.push(`🔗 ${escapeHtml(name)} รหัส POSPOS: ${escapeHtml(oldPos)} → <b>${escapeHtml(newPos)}</b>`);
+    }
   }
   for (const [name] of oldByName) {
     if (!newByName.has(name)) changes.push(`🗑️ ลบขนาด "${escapeHtml(name)}"`);
@@ -8404,6 +8460,256 @@ async function confirmExcelImport() {
   } finally {
     btn.disabled = false;
     btn.textContent = '✅ ยืนยัน Import';
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//  POSPOS STOCK + PRICE SYNC — อัพเดทสต็อก (และราคา ถ้าไฟล์มีคอลัมน์ราคา) จากไฟล์ export ของ POSPOS ตรงๆ
+//  จับคู่ด้วย pos_code ที่ผูกไว้กับแต่ละขนาดสินค้า (ดูหน้า "จับคู่รหัส POSPOS"
+//  ที่ทำครั้งแรกผ่านการ Export → กรอก pos_code → Import Excel กลับ)
+//  รองรับทั้งไฟล์ POSPOS แบบเดิม (รหัส/จำนวน/ชื่อ 3 คอลัมน์ ไม่มีราคา) และแบบที่มีคอลัมน์ราคาเพิ่มมา
+//  — หาคอลัมน์จากชื่อ header อัตโนมัติ ไม่ต้องบอกล่วงหน้าว่าไฟล์ไหนมี/ไม่มีราคา
+// ═══════════════════════════════════════════════════════
+let _posImportParsed = null;
+
+function _posFindCol(headerRow, patterns, fallbackIdx) {
+  for (let i = 0; i < headerRow.length; i++) {
+    const h = String(headerRow[i] ?? '').trim();
+    if (h && patterns.test(h)) return i;
+  }
+  return fallbackIdx;
+}
+
+async function handlePosposImport(input) {
+  const file = input.files[0];
+  if (!file) return;
+
+  try {
+    const ab = await file.arrayBuffer();
+    const wb = XLSX.read(ab, { type: 'array' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    if (!raw.length) { toast('ไฟล์ว่างเปล่า', 'error'); input.value = ''; return; }
+
+    const headerRow = raw[0] || [];
+    const dataRows = raw.slice(1);
+
+    // หาตำแหน่งคอลัมน์จากชื่อ header (รองรับ POSPOS เปลี่ยนคำ/สลับลำดับคอลัมน์ได้) — ถ้าหาไม่เจอ fallback ไปตำแหน่งเดิม (A=code, B=qty, C=name)
+    const codeCol  = _posFindCol(headerRow, /code|รหัส/i, 0);
+    const qtyCol   = _posFindCol(headerRow, /quantity|qty|จำนวน|stock|สต็อก|สต๊อก/i, 1);
+    const nameCol  = _posFindCol(headerRow, /name|ชื่อ/i, 2);
+    const priceCol = _posFindCol(headerRow, /price|ราคา/i, -1); // -1 = ไฟล์นี้ไม่มีคอลัมน์ราคา
+
+    // map: pos_code → { qty, name, price }  (กันโค้ดซ้ำในไฟล์ POSPOS เอง โดยใช้แถวหลังสุด)
+    const posMap = new Map();
+    for (const r of dataRows) {
+      const code = String(r[codeCol] ?? '').trim();
+      if (!code) continue;
+      // parseInt ตัวเดียวจะพังถ้าเซลล์เป็น text ที่มี comma คั่นหลักพัน (เช่น "1,234") — ตัด comma ออกก่อนเหมือนที่ทำกับราคา
+      const qty = parseInt(String(r[qtyCol] ?? '').replace(/,/g, ''));
+      const name = String(r[nameCol] ?? '').trim();
+      let price = null;
+      if (priceCol >= 0) {
+        const p = parseFloat(String(r[priceCol] ?? '').replace(/,/g, ''));
+        price = isNaN(p) ? null : p;
+      }
+      posMap.set(code, { qty: isNaN(qty) ? null : qty, name, price });
+    }
+    if (!posMap.size) { toast('อ่านรหัสสินค้าจากไฟล์ไม่ได้ — ตรวจสอบว่าเป็นไฟล์ export ของ POSPOS', 'error'); input.value = ''; return; }
+
+    // จับคู่กับสินค้าในเว็บ ผ่าน sz.pos_code — เช็คทั้งสต็อกและราคา (ถ้าไฟล์มีคอลัมน์ราคา)
+    const matched = [];
+    const usedCodes = new Set();
+    for (const p of products) {
+      for (const s of (p.sizes || [])) {
+        if (!s.pos_code) continue;
+        const hit = posMap.get(String(s.pos_code).trim());
+        if (!hit) continue;
+        usedCodes.add(String(s.pos_code).trim());
+
+        const oldStock = (s.stock !== undefined && s.stock !== null) ? s.stock : null;
+        const newStock = hit.qty;
+        const stockChanged = (newStock !== null) && (oldStock !== newStock);
+
+        const oldPrice = (s.p !== undefined && s.p !== null) ? s.p : null;
+        const newPrice = hit.price;
+        const priceChanged = (newPrice !== null) && (oldPrice !== newPrice);
+
+        if (!stockChanged && !priceChanged) continue;
+        matched.push({
+          product: p, size: s, code: s.pos_code, name: p.name + (s.n ? ' : ' + s.n : ''),
+          stockChanged, oldStock, newStock,
+          priceChanged, oldPrice, newPrice
+        });
+      }
+    }
+
+    // รหัส POSPOS ในไฟล์ที่ยังไม่มีสินค้าไหนผูกไว้เลย (ยังไม่ได้จับคู่)
+    const unmatchedCodes = [];
+    for (const [code, info] of posMap.entries()) {
+      if (!usedCodes.has(code)) unmatchedCodes.push({ code, ...info });
+    }
+
+    _posImportParsed = { matched, unmatchedCodes, totalInFile: posMap.size, hasPrice: priceCol >= 0 };
+    showPosImportPreview();
+  } catch (e) {
+    toast('อ่านไฟล์ไม่ได้: ' + e.message, 'error');
+  } finally {
+    input.value = '';
+  }
+}
+
+function showPosImportPreview() {
+  if (!_posImportParsed) return;
+  const { matched, unmatchedCodes, totalInFile, hasPrice } = _posImportParsed;
+  const nStock = matched.filter(m => m.stockChanged).length;
+  const nPrice = matched.filter(m => m.priceChanged).length;
+
+  document.getElementById('posImportSummary').textContent =
+    `📥 ${totalInFile} รายการในไฟล์ POSPOS` +
+    (hasPrice ? ' (มีคอลัมน์ราคา)' : ' (ไม่มีคอลัมน์ราคา — sync แค่สต็อก)') +
+    ` • 🔄 จะอัพเดท ${matched.length} รายการ (สต็อก ${nStock}${hasPrice ? `, ราคา ${nPrice}` : ''})` +
+    (unmatchedCodes.length ? ` • ⚠️ ${unmatchedCodes.length} รหัสยังไม่ได้จับคู่กับสินค้าไหนเลย` : '');
+
+  let html = '';
+
+  if (matched.length) {
+    html += `<div style="margin-bottom:14px;">
+      <div style="font-weight:700;color:#F57C00;margin-bottom:8px;">🔄 จะอัพเดท ${matched.length} รายการ</div>`;
+    matched.slice(0, 100).forEach(m => {
+      const parts = [];
+      if (m.stockChanged) {
+        const dir = m.newStock > (m.oldStock ?? 0) ? '📈' : '📉';
+        parts.push(`สต็อก: ${m.oldStock ?? '∞'} → <b>${m.newStock}</b> ${dir}`);
+      }
+      if (m.priceChanged) {
+        const dir = m.newPrice > (m.oldPrice ?? 0) ? '📈' : '📉';
+        parts.push(`ราคา: ฿${m.oldPrice ?? '-'} → <b>฿${m.newPrice}</b> ${dir}`);
+      }
+      html += `<div style="background:#fff3e0;border-left:3px solid #F57C00;padding:8px 12px;border-radius:6px;margin-bottom:5px;font-size:12px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+        <span><b>${escapeHtml(m.name)}</b> <span style="color:#999;">(${escapeHtml(m.code)})</span></span>
+        <span style="white-space:nowrap;">${parts.join(' &nbsp;·&nbsp; ')}</span>
+      </div>`;
+    });
+    if (matched.length > 100) html += `<div style="font-size:11px;color:#666;text-align:center;">และอีก ${matched.length - 100} รายการ</div>`;
+    html += `</div>`;
+  } else {
+    html += `<div style="text-align:center;padding:20px;color:#888;">✓ ตรงกับ POSPOS อยู่แล้วทุกรายการที่จับคู่ไว้ — ไม่มีอะไรต้องอัพเดท</div>`;
+  }
+
+  if (unmatchedCodes.length) {
+    html += `<div style="margin-bottom:14px;">
+      <div style="font-weight:700;color:#999;margin-bottom:8px;">⚠️ รหัส POSPOS ${unmatchedCodes.length} รายการ ที่ยังไม่มีสินค้าไหนในเว็บผูกไว้</div>
+      <div style="background:#f5f5f5;padding:10px 12px;border-radius:6px;font-size:12px;color:#666;max-height:220px;overflow-y:auto;">
+        ${unmatchedCodes.slice(0, 200).map(u => `${escapeHtml(u.code)} — ${escapeHtml(u.name)} (จำนวน ${u.qty ?? '-'}${u.price !== null ? `, ฿${u.price}` : ''})`).join('<br>')}
+        ${unmatchedCodes.length > 200 ? `<div style="margin-top:6px;">...และอีก ${unmatchedCodes.length - 200} รายการ</div>` : ''}
+      </div>
+      <div style="font-size:11px;color:#999;margin-top:4px;">รายการเหล่านี้ต้องไปกรอก pos_code ในสินค้าที่ตรงกัน (ผ่าน Export → กรอก pos_code → Import Excel) ก่อน ถึงจะ sync ให้ได้</div>
+    </div>`;
+  }
+
+  document.getElementById('posImportContent').innerHTML = html;
+  const btn = document.getElementById('posImportConfirmBtn');
+  btn.disabled = !matched.length;
+  btn.style.opacity = btn.disabled ? '0.5' : '1';
+  btn.style.cursor = btn.disabled ? 'not-allowed' : 'pointer';
+  document.getElementById('posImportOv').style.display = 'flex';
+}
+
+function closePosImportPreview() {
+  document.getElementById('posImportOv').style.display = 'none';
+  _posImportParsed = null;
+}
+
+async function confirmPosImport() {
+  if (!_posImportParsed || !_posImportParsed.matched.length) return;
+  const { matched } = _posImportParsed;
+
+  const btn = document.getElementById('posImportConfirmBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ กำลังบันทึก...';
+
+  try {
+    // จัดกลุ่ม matched ตาม product id ก่อน (ยังไม่แก้ค่าอะไรใน products จริงๆ)
+    const byProduct = new Map(); // productId -> [matched entries ของ product นี้]
+    for (const m of matched) {
+      if (!byProduct.has(m.product.id)) byProduct.set(m.product.id, []);
+      byProduct.get(m.product.id).push(m);
+    }
+    const productIds = [...byProduct.keys()];
+
+    // บันทึกทีละ batch — mutate เฉพาะ "สำเนา" ก่อนเซฟ แล้วค่อย apply ทับของจริงใน memory
+    // เฉพาะ batch ที่เซฟลง DB สำเร็จแล้วเท่านั้น (ไม่ใช่แค่ mutate ก่อนแล้วค่อยเซฟ เพราะถ้า batch
+    // นั้นเซฟไม่ผ่าน ของจริงใน memory จะเพี้ยนไปแล้วทั้งที่ DB ไม่ตรงด้วย)
+    const batchSize = 50;
+    let savedCount = 0;
+    let firstError = null;
+    for (let i = 0; i < productIds.length; i += batchSize) {
+      const batchIds = productIds.slice(i, i + batchSize);
+      // สร้างสำเนา (deep clone ผ่าน JSON เพราะ product เป็น plain data ล้วน ไม่มี function/Date ข้างใน)
+      // แล้ว mutate stock/price บนสำเนานี้ก่อน — ของจริงใน `products` ยังไม่ถูกแตะเลยตอนนี้
+      const clones = new Map(); // productId -> cloned product (พร้อม stock/price ใหม่)
+      for (const pid of batchIds) {
+        const original = products.find(p => p.id === pid);
+        if (!original) continue; // เผื่อสินค้านี้ถูกลบไปแล้วระหว่างเปิด preview ค้างไว้ — ข้ามอย่างปลอดภัย ไม่ throw
+        const clone = JSON.parse(JSON.stringify(original));
+        for (const m of byProduct.get(pid)) {
+          const cloneSize = clone.sizes.find(s => s.n === m.size.n);
+          if (!cloneSize) continue; // เผื่อ edge case หาไม่เจอ ข้ามไป ไม่ให้ throw กลางทาง
+          if (m.stockChanged) cloneSize.stock = m.newStock;
+          if (m.priceChanged) cloneSize.p = m.newPrice;
+        }
+        clones.set(pid, clone);
+      }
+      const batchRows = batchIds.filter(id => clones.has(id)).map(id => toRow(clones.get(id)));
+
+      let batchOk = false;
+      try {
+        await _adminApi('/admin/products/upsert', { rows: batchRows });
+        batchOk = true;
+      } catch (e) {
+        console.warn('บันทึกผ่าน backend ไม่สำเร็จ → ลองเขียนตรง:', e.message);
+        const sb = getSB();
+        if (!sb) { firstError = e; }
+        else {
+          const { error } = await sb.from('products').upsert(batchRows, { onConflict: 'id' });
+          if (error) firstError = error; else batchOk = true;
+        }
+      }
+
+      if (!batchOk) break; // หยุดทันที — ของจริงใน memory ของ batch นี้ (และที่เหลือ) ยังไม่ถูกแตะเลย
+
+      // batch นี้เซฟผ่านแล้วจริงๆ — ค่อย apply การเปลี่ยนแปลงทับของจริงใน memory
+      for (const pid of batchIds) {
+        if (!clones.has(pid)) continue; // ตัวที่ข้ามไปตอนสร้างสำเนา (หาสินค้าไม่เจอ) ก็ไม่ต้อง apply
+        for (const m of byProduct.get(pid)) {
+          if (m.stockChanged) m.size.stock = m.newStock;
+          if (m.priceChanged) m.size.p = m.newPrice;
+        }
+      }
+      savedCount += batchIds.filter(pid => clones.has(pid)).reduce((n, pid) => n + byProduct.get(pid).length, 0);
+    }
+
+    try { localStorage.setItem('ms_products', JSON.stringify(products)); } catch(e) {}
+    renderGrid();
+    renderPMList();
+
+    if (firstError) {
+      // มีบาง batch เซฟไม่ผ่าน — batch ก่อนหน้าที่สำเร็จแล้วแก้ค่าใน memory+DB ตรงกันแล้ว ปลอดภัย
+      // ส่วนที่เหลือยังไม่ถูกแตะเลย (ทั้ง memory และ DB) เพราะ mutate ทีละ batch พร้อมเซฟ
+      closePosImportPreview();
+      toast(`⚠️ บันทึกได้ ${savedCount}/${matched.length} รายการ แล้วเจอปัญหา: ${firstError.message || firstError} — ลองกดอัพโหลดไฟล์เดิมซ้ำอีกครั้งเพื่อทำส่วนที่เหลือ`, 'error');
+    } else {
+      closePosImportPreview();
+      // ใช้ savedCount ไม่ใช่ matched.length เผื่อกรณีขอบ (สินค้าถูกลบไปพอดีระหว่างเปิด preview ค้างไว้)
+      // ที่ทำให้บาง entry ถูกข้ามอย่างปลอดภัยแม้ไม่มี error เลยก็ตาม — ข้อความจะได้ตรงกับที่บันทึกจริงเป๊ะ
+      toast(`✅ อัพเดทจาก POSPOS สำเร็จ ${savedCount} รายการ`);
+    }
+  } catch (e) {
+    toast('อัพเดทไม่สำเร็จ: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✅ ยืนยันอัพเดท';
   }
 }
 
