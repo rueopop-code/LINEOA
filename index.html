@@ -4050,8 +4050,16 @@ async function saveProduct(isEdit) {
     p.cat   = document.getElementById('eCat').value;
     p.desc  = document.getElementById('eDesc').value.trim();
     p.emoji = document.getElementById('eEmoji').value.trim() || p.emoji;
+    // 🐛 BUG FIX: เดิมติ๊ก "ติด badge NEW" ใหม่อีกครั้งหลังจากที่ครบเวลาไปแล้ว (p.ts เป็นวันที่
+    // สร้างสินค้าเก่ามาก) แต่ไม่เคยรีเซ็ต p.ts เลย — ผลคือ msIsNewVisible() คำนวณ diffDays จาก
+    // ts เก่า เกิน newDays ทันทีตั้งแต่วินาทีที่บันทึก ทำให้ badge ไม่โผล่ขึ้นมาเลยทั้งที่เพิ่งติ๊ก
+    // ให้ใหม่ — เช็คก่อนว่า "ก่อนแก้ไข" badge NEW มองเห็นอยู่จริงไหม (ไม่ใช่แค่เช็ค flag ดิบ) ถ้า
+    // เดิมมองไม่เห็น (หมดเวลาไปแล้ว/ปิดไว้) แล้วตอนนี้ติ๊กเปิดใหม่ → รีเซ็ตนาฬิกานับใหม่ให้เริ่ม
+    // จากตอนนี้ (p.ts = Date.now()) เพื่อให้แสดงผล "เหมือนเดิม" ครบตามจำนวนวันที่ตั้งไว้จริงๆ
+    const wasNewVisibleBeforeEdit = msIsNewVisible(p);
     p.isNew = document.getElementById('eIsNew').checked;
     p.newDays = p.isNew ? (parseInt(document.getElementById('eNewDays')?.value)||0) : 0;
+    if (p.isNew && !wasNewVisibleBeforeEdit) p.ts = Date.now();
     p.isBestseller = document.getElementById('eIsBestseller')?.checked || false;
     if (editImgFile) {
       try {
@@ -4143,7 +4151,11 @@ function applyFilter() {
   const q   = document.getElementById('searchQ').value.toLowerCase();
   const srt = document.getElementById('sortSel').value;
   let list  = [...products];
-  if (activeCat==='สินค้าใหม่') list=list.filter(p=>p.isNew);
+  // 🐛 BUG FIX: เดิมกรองด้วย p.isNew ดิบๆ ทำให้สินค้าที่ครบกำหนด "แสดง NEW นาน N วัน" แล้วยัง
+  // ค้างอยู่ในหมวด "สินค้าใหม่" ต่อไปเรื่อยๆ (แม้ป้าย NEW บนการ์ดจะหายไปแล้วก็ตาม เพราะจุดนั้น
+  // ใช้ msIsNewVisible() ถูกต้องอยู่แล้ว — จุดนี้ลืมใช้ตัวเดียวกัน) เปลี่ยนมาเช็คด้วย
+  // msIsNewVisible(p) ให้ตรงกับป้ายบนการ์ดเป๊ะ — พอครบเวลาสินค้าจะหายจากหมวดนี้ทันทีอัตโนมัติ
+  if (activeCat==='สินค้าใหม่') list=list.filter(p=>msIsNewVisible(p));
   else if (activeCat==='สินค้าขายดี') list=list.filter(p=>p.isBestseller||_autoBestsellerIds.has(String(p.id)));
   else if (activeCat===PROMO_CAT) list=list.filter(p=>(p.sizes||[]).some(s=>getBundle(s)));
   else if (activeCat!=='ทั้งหมด') list=list.filter(p=>p.cat===activeCat);
@@ -7922,11 +7934,17 @@ function openEdit(id) {
   document.getElementById('eName').value=p.name;
   document.getElementById('eDesc').value=p.desc||'';
   document.getElementById('eEmoji').value=p.emoji||'';
-  document.getElementById('eIsNew').checked=p.isNew||false;
+  // 🐛 BUG FIX: เดิมติ๊ก/ไม่ติ๊กช่อง "ติด badge NEW" ตาม p.isNew ดิบๆ — ถ้าครบกำหนด "แสดง NEW
+  // นาน N วัน" ไปแล้ว badge บนการ์ดหน้าร้านหายไปแล้วจริง (msIsNewVisible คำนวณถูก) แต่พอเปิดมา
+  // แก้ไขสินค้ากลับยังเห็นช่องนี้ติ๊กค้างอยู่เหมือนเดิม (เพราะ field p.isNew ในฐานข้อมูลไม่เคย
+  // ถูกล้างจริงๆ) ทำให้ดูเหมือนระบบ "ลืม" ล้างให้ — เปลี่ยนมาเช็คด้วย msIsNewVisible(p) แทน ถ้า
+  // ครบเวลาแล้วช่องนี้จะโชว์ "ไม่ติ๊ก" ให้อัตโนมัติทันทีที่เปิดหน้าแก้ไข ตรงกับสถานะที่ลูกค้าเห็นจริง
+  const isNewNow = msIsNewVisible(p);
+  document.getElementById('eIsNew').checked = isNewNow;
   if(document.getElementById('eNewDays')) document.getElementById('eNewDays').value = p.newDays||7;
   if(document.getElementById('eIsBestseller')) document.getElementById('eIsBestseller').checked = p.isBestseller||false;
   const eWrap = document.getElementById('eNewDaysWrap');
-  if(eWrap) eWrap.style.display = (p.isNew) ? 'flex' : 'none';
+  if(eWrap) eWrap.style.display = isNewNow ? 'flex' : 'none';
   const eCat=document.getElementById('eCat');
   for(let i=0;i<eCat.options.length;i++) if(eCat.options[i].value===p.cat){eCat.selectedIndex=i;break;}
   const sb=document.getElementById('eSzBuilder');
@@ -7973,7 +7991,7 @@ function renderPMList() {
       <div class="pm-img">${imgH}</div>
       <div class="pm-info">
         <div class="pm-name">${p.name}</div>
-        <div class="pm-meta">${p.cat} · ฿${minP.toLocaleString()} · ${p.sizes.length} ขนาด · 📦 ${stockTxt}${wholesaleBadge}${p.isNew?' · 🆕':''}${p.isBestseller?' · 🔥ขายดี':''}</div>
+        <div class="pm-meta">${p.cat} · ฿${minP.toLocaleString()} · ${p.sizes.length} ขนาด · 📦 ${stockTxt}${wholesaleBadge}${msIsNewVisible(p)?' · 🆕':''}${p.isBestseller?' · 🔥ขายดี':''}</div>
         <div class="pm-meta" style="font-size:11px;color:#999;margin-top:2px;">id: ${p.id} &nbsp;·&nbsp; 🔗 ${posLine}</div>
       </div>
       <div class="pm-acts">
