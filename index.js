@@ -3022,6 +3022,27 @@ app.get('/admin/export-orders', requirePerm('backup'), async (req, res) => {
   }
 });
 
+// 🔧 FIX (Gateway Timeout ที่ /admin/products/upsert): เดิมยิง upsert() ทั้งก้อนเดียวไม่ว่า
+// จะมีกี่แถว — หน้าร้าน (save() ใน index.html) ส่งสินค้า "ทั้งร้าน" มาทุกครั้งที่กดบันทึก
+// (ตอนนี้ 200+ รายการ) พอ payload/คำสั่งใหญ่ขึ้นเรื่อยๆ หรือ Supabase เพิ่งตื่นจาก auto-pause
+// (ช้ากว่าปกติชั่วคราว) คำขอเดียวก้อนใหญ่นี้ใช้เวลานานเกินกว่าที่ proxy ของ Supabase/Render
+// จะรอไหว เลยโดนตัดจบด้วย 504 Gateway Timeout กลางทาง (เห็นเป็น error scope "products-upsert")
+// แก้โดยแบ่งเป็นชุดย่อย (chunk) ยิงทีละ 50 แถว + ลองใหม่อัตโนมัติ 1 ครั้งถ้าชุดไหนพลาด
+// (เผื่อเป็นแค่ความช้าชั่วคราวตอน Supabase ตื่น) ไม่แตะโค้ดเดิมอื่นใด เพิ่มฟังก์ชันนี้เข้ามาต่างหาก
+async function _upsertProductsChunked(rows, chunkSize = 50) {
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    const chunk = rows.slice(i, i + chunkSize);
+    let lastErr = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const { error } = await supabase.from('products').upsert(chunk, { onConflict: 'id' });
+      if (!error) { lastErr = null; break; }
+      lastErr = error;
+      if (attempt === 0) await new Promise(r => setTimeout(r, 1500)); // รอสั้นๆ แล้วลองใหม่ 1 ครั้ง
+    }
+    if (lastErr) throw lastErr;
+  }
+}
+
 // ── 📦 จัดการสินค้าผ่าน backend (ทางที่ปลอดภัยกว่าเขียนตรงจากเบราว์เซอร์) ──
 // เมื่อเปิด RLS ให้ตาราง products เป็น read-only สำหรับ anon key แล้ว
 // หน้าร้าน (โหมดตั้งค่า) จะบันทึก/ลบสินค้าผ่าน 2 endpoint นี้แทน — มี admin key คุ้มกัน
@@ -3030,8 +3051,7 @@ app.post('/admin/products/upsert', requirePerm('products'), async (req, res) => 
     const rows = Array.isArray(req.body?.rows) ? req.body.rows : (req.body?.row ? [req.body.row] : []);
     if (!rows.length) return res.status(400).json({ error: 'ไม่มีข้อมูลสินค้า (rows)' });
     if (rows.length > 500) return res.status(400).json({ error: 'จำนวนสินค้าเกิน 500 รายการต่อครั้ง' });
-    const { error } = await supabase.from('products').upsert(rows, { onConflict: 'id' });
-    if (error) throw error;
+    await _upsertProductsChunked(rows); // ⬅️ เดิมเป็น supabase.from('products').upsert(rows,...) ก้อนเดียว
     res.json({ success: true, count: rows.length });
   } catch (e) {
     logError('products-upsert', e);
