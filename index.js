@@ -3037,10 +3037,97 @@ async function _upsertProductsChunked(rows, chunkSize = 50) {
       const { error } = await supabase.from('products').upsert(chunk, { onConflict: 'id' });
       if (!error) { lastErr = null; break; }
       lastErr = error;
+      if (_isPosDbDupError(error)) break;   // 🔗 trigger ในฐานข้อมูลปฏิเสธรหัส POSPOS ซ้ำ — ลองใหม่ก็ไม่ผ่าน ไม่ต้องรอ
       if (attempt === 0) await new Promise(r => setTimeout(r, 1500)); // รอสั้นๆ แล้วลองใหม่ 1 ครั้ง
     }
     if (lastErr) throw lastErr;
   }
+}
+
+
+// 🔗 POS-CODE DUPLICATE GUARD (server-side) — กันรหัส POSPOS ซ้ำที่ชั้น backend ด้วย
+// (ฝั่งหน้าเว็บตรวจให้แล้ว แต่ใครเรียก API ตรง/ข้อมูลหน้าเว็บเก่า ก็ข้ามได้ จึงต้องมีตรงนี้ด้วย)
+// หลักการ: ตรวจเฉพาะรหัสที่ "ใหม่/เปลี่ยน" เทียบกับสินค้าตัวเดียวกันใน DB เท่านั้น — รหัสที่ซ้ำอยู่ก่อนแล้ว
+// (จากข้อมูลเก่า) แต่ไม่ได้ถูกแตะ จะไม่ถูกบล็อก ไม่งั้น save() ที่ส่งสินค้า "ทั้งร้าน" ทุกครั้งจะพังถาวร
+// ตรวจแบบ "สถานะหลังเขียน": ซ้อนแถวที่ส่งมาทับข้อมูล DB แล้วดูว่ารหัสใหม่นั้นมีผู้ถือมากกว่า 1 ไหม
+function _posNorm(v) { return String(v == null ? '' : v).trim().replace(/^'+/, '').replace(/\s+/g, '').toLowerCase(); }
+function _sizesOfRow(row) {
+  let s = row && row.sizes;
+  if (typeof s === 'string') { try { s = JSON.parse(s); } catch (_) { s = []; } }
+  return Array.isArray(s) ? s : [];
+}
+async function _fetchAllProductsForPosCheck() {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase.from('products').select('id,name,sizes').range(from, from + 999);
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
+}
+// rows: แถวสินค้า {id, name, sizes} ที่กำลังจะเขียน — คืน [] ถ้าไม่ซ้ำ
+async function findPosCodeConflicts(rows) {
+  const incoming = (rows || []).filter(r => r && _sizesOfRow(r).some(s => _posNorm(s && s.pos_code)));
+  if (!incoming.length) return [];
+  const existing = await _fetchAllProductsForPosCheck();
+  const oldById = new Map(existing.map(p => [String(p.id), p]));
+  const post = new Map(oldById);
+  (rows || []).forEach(r => { if (r && r.id != null) post.set(String(r.id), r); });
+  const holders = new Map(); // code -> [{id,name,size}]
+  for (const p of post.values()) {
+    _sizesOfRow(p).forEach(s => {
+      const c = _posNorm(s && s.pos_code);
+      if (!c) return;
+      if (!holders.has(c)) holders.set(c, []);
+      holders.get(c).push({ id: p.id, name: p.name, size: s.n });
+    });
+  }
+  const conflicts = [];
+  const seen = new Set();
+  for (const r of incoming) {
+    const oldCodes = new Set(_sizesOfRow(oldById.get(String(r.id))).map(s => _posNorm(s && s.pos_code)).filter(Boolean));
+    for (const s of _sizesOfRow(r)) {
+      const c = _posNorm(s && s.pos_code);
+      if (!c || oldCodes.has(c)) continue;          // รหัสเดิมของสินค้านี้ — ไม่ใช่รหัสใหม่ ข้าม
+      const h = holders.get(c) || [];
+      if (h.length > 1) {
+        const key = String(r.id) + '|' + c + '|' + s.n;
+        if (seen.has(key)) continue; seen.add(key);
+        conflicts.push({
+          code: s.pos_code, id: r.id, name: r.name, size: s.n,
+          heldBy: h.filter(x => !(String(x.id) === String(r.id) && x.size === s.n)).map(x => ({ id: x.id, name: x.name, size: x.size }))
+        });
+      }
+    }
+  }
+  return conflicts;
+}
+// 🔒 คิวเรียงทีละคำขอ (ในโปรเซสนี้) สำหรับ "ตรวจรหัสซ้ำ + เขียน" — กัน 2 คำขอพร้อมกันที่ใช้รหัสใหม่ตัวเดียวกัน
+// ผ่านการตรวจทั้งคู่ก่อนที่ใครจะเขียน (check-then-write race) ได้ครบโดยไม่ต้องแก้ DB
+// ชั้นที่แข็งกว่า (atomic ระดับฐานข้อมูล ครอบคลุมหลายโปรเซส/ทางเขียนอื่น) = sql/pos_code_guard.sql (trigger) — แนะนำให้รันด้วย
+let _posGuardChain = Promise.resolve();
+function withPosGuardLock(fn) {
+  const run = _posGuardChain.then(fn);
+  _posGuardChain = run.catch(() => {});   // error ของคำขอหนึ่งต้องไม่ทำให้คิวค้าง
+  return run;
+}
+// error ที่ trigger ใน DB โยนมา (SQLSTATE 23505 + ข้อความขึ้นต้น POS_CODE_DUPLICATE)
+function _isPosDbDupError(e) { return !!(e && /POS_CODE_DUPLICATE/.test(String(e.message || ''))); }
+function _posDbDupResponse(res, e) {
+  const msg = String(e.message).replace(/^.*?POS_CODE_DUPLICATE:\s*/, '');
+  return res.status(409).json({ error: 'รหัส POSPOS ซ้ำ — ' + msg, code: 'POS_CODE_DUPLICATE', conflicts: [] });
+}
+function _posConflictResponse(res, conflicts) {
+  const first = conflicts.slice(0, 5).map(c => {
+    const o = c.heldBy[0];
+    return `รหัส ${c.code} (${c.name || c.id} / ${c.size})` + (o ? ` ซ้ำกับ ${o.name} / ${o.size}` : ' ซ้ำกันเอง');
+  }).join(' ; ');
+  return res.status(409).json({
+    error: 'รหัส POSPOS ซ้ำ — ' + first + (conflicts.length > 5 ? ` …และอีก ${conflicts.length - 5} รายการ` : ''),
+    code: 'POS_CODE_DUPLICATE',
+    conflicts
+  });
 }
 
 // ── 📦 จัดการสินค้าผ่าน backend (ทางที่ปลอดภัยกว่าเขียนตรงจากเบราว์เซอร์) ──
@@ -3051,9 +3138,16 @@ app.post('/admin/products/upsert', requirePerm('products'), async (req, res) => 
     const rows = Array.isArray(req.body?.rows) ? req.body.rows : (req.body?.row ? [req.body.row] : []);
     if (!rows.length) return res.status(400).json({ error: 'ไม่มีข้อมูลสินค้า (rows)' });
     if (rows.length > 500) return res.status(400).json({ error: 'จำนวนสินค้าเกิน 500 รายการต่อครั้ง' });
-    await _upsertProductsChunked(rows); // ⬅️ เดิมเป็น supabase.from('products').upsert(rows,...) ก้อนเดียว
+    // 🔗 กันรหัส POSPOS ซ้ำ (เฉพาะรหัสใหม่/ที่เปลี่ยน) — ตรวจ+เขียนอยู่ในคิวเดียวกัน กัน race ระหว่างคำขอพร้อมกัน
+    const _posConf = await withPosGuardLock(async () => {
+      const conf = await findPosCodeConflicts(rows);
+      if (!conf.length) await _upsertProductsChunked(rows); // ⬅️ เดิมเป็น supabase.from('products').upsert(rows,...) ก้อนเดียว
+      return conf;
+    });
+    if (_posConf.length) return _posConflictResponse(res, _posConf);
     res.json({ success: true, count: rows.length });
   } catch (e) {
+    if (_isPosDbDupError(e)) return _posDbDupResponse(res, e);
     logError('products-upsert', e);
     res.status(500).json({ error: e.message });
   }
@@ -4780,10 +4874,31 @@ app.patch('/admin/products/:id/fields', requirePerm('products'), async (req, res
     return res.status(400).json({ error: 'updates ว่างเปล่า' });
   }
 
-  const { data, error } = await supabase
-    .from(table).update(updates).eq('id', req.params.id)
-    .select().maybeSingle();
-  if (error) return res.status(500).json({ error: error.message });
+  // 🔗 แก้ sizes ผ่านทางนี้ก็ต้องผ่านตัวกันรหัส POSPOS ซ้ำเหมือนกัน (เฉพาะตาราง products)
+  // ตรวจ+เขียนอยู่ในคิวเดียวกับ /admin/products/upsert (กัน race ระหว่างคำขอพร้อมกัน)
+  const _doUpdate = () => supabase.from(table).update(updates).eq('id', req.params.id).select().maybeSingle();
+  let result;
+  try {
+    if (table === 'products' && updates.sizes !== undefined) {
+      result = await withPosGuardLock(async () => {
+        const { data: cur } = await supabase.from('products').select('id,name').eq('id', req.params.id).maybeSingle();
+        const _pc = await findPosCodeConflicts([{ id: req.params.id, name: cur && cur.name, sizes: updates.sizes }]);
+        if (_pc.length) return { conflicts: _pc };
+        return await _doUpdate();
+      });
+      if (result.conflicts) return _posConflictResponse(res, result.conflicts);
+    } else {
+      result = await _doUpdate();
+    }
+  } catch (e) {
+    logError('products-fields', e);
+    return res.status(500).json({ error: e.message });
+  }
+  const { data, error } = result;
+  if (error) {
+    if (_isPosDbDupError(error)) return _posDbDupResponse(res, error);
+    return res.status(500).json({ error: error.message });
+  }
   if (!data) return res.status(404).json({ error: 'ไม่พบสินค้านี้' });
 
   res.json({ success: true, product: data });

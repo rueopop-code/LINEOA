@@ -3670,9 +3670,15 @@ async function _adminApi(path, body) {
     throw new Error('ไม่มีสิทธิ์ (ต้องใส่ Admin API Key)');
   }
   const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+  if (!r.ok) {
+    const err = new Error(d.error || ('HTTP ' + r.status));
+    if (d.code) err.code = d.code;            // เช่น POS_CODE_DUPLICATE (backend ปฏิเสธเพราะรหัส POSPOS ซ้ำ)
+    if (d.conflicts) err.conflicts = d.conflicts;
+    throw err;
+  }
   return d;
 }
+function _isPosDupErr(e) { return !!(e && e.code === 'POS_CODE_DUPLICATE'); }
 
 // แนบ x-admin-key อัตโนมัติให้ทุก request ที่เป็นงานฝั่งจัดการร้าน
 // (คูปอง/เวลาทำการ/QR/แบนเนอร์/referral/โฆษณา Pop-up) — พร้อมถามคีย์ใหม่ถ้าโดน 401
@@ -3727,6 +3733,8 @@ async function save() {
     await _adminApi('/admin/products/upsert', { rows });
     return;
   } catch(e) {
+    // 🔗 backend ปฏิเสธเพราะรหัส POSPOS ซ้ำ = ไม่ใช่ปัญหาเชื่อมต่อ → ห้ามเขียนตรงเลี่ยง
+    if (_isPosDupErr(e)) { toast('⛔ ' + e.message, 'error'); return; }
     console.warn('บันทึกผ่าน backend ไม่สำเร็จ → ลองเขียนตรง:', e.message);
   }
   const sb = getSB();
@@ -3741,6 +3749,8 @@ async function saveOne(p) {
     await _adminApi('/admin/products/upsert', { row: toRow(p) });
     return;
   } catch(e) {
+    // 🔗 รหัส POSPOS ซ้ำ → แจ้งแล้ว throw ให้ผู้เรียกย้อนข้อมูลเอง (ห้ามเขียนตรงเลี่ยง)
+    if (_isPosDupErr(e)) { toast('⛔ ' + e.message, 'error'); throw e; }
     console.warn('บันทึกผ่าน backend ไม่สำเร็จ → ลองเขียนตรง:', e.message);
   }
   const sb = getSB();
@@ -4040,12 +4050,158 @@ function getSzRows(id) {
 }
 
 // ═══════════════════════════════════════════
+//  🔍 DUPLICATE GUARD — ตรวจรหัส POSPOS ซ้ำ (อันดับแรก) → ชื่อซ้ำ/คล้าย ก่อนเพิ่มสินค้า
+//  รหัส POSPOS ซ้ำ = บล็อกเลย (รหัสเดียวผูกสองรายการ → ซิงก์สต็อก/ราคาจะทับกัน)
+//  ชื่อซ้ำ/คล้าย = เตือน + ให้เลือกยืนยันเพิ่มซ้ำเองได้
+// ═══════════════════════════════════════════
+function _dupNorm(s){ return String(s||'').toLowerCase().replace(/[\s​\-_.,()\[\]\/\\'"“”‘’]+/g,''); }
+function _dupPos(s){ return String(s||'').trim().replace(/^'+/,'').replace(/\s+/g,'').toLowerCase(); }
+function _dupSim(a,b){
+  if (a.length<2 || b.length<2) return a===b?1:0;
+  const bg=s=>{const m=new Map();for(let i=0;i<s.length-1;i++){const k=s.slice(i,i+2);m.set(k,(m.get(k)||0)+1);}return m;};
+  const A=bg(a),B=bg(b);let inter=0;
+  A.forEach((v,k)=>{ if(B.has(k)) inter+=Math.min(v,B.get(k)); });
+  return 2*inter/((a.length-1)+(b.length-1));
+}
+
+// opts: { name, names[] (bulk), sizes[], excludeId, onlyChangedPos }
+function findProductDuplicates(opts) {
+  const res = { posConflicts:[], posInForm:[], exact:[], similar:[], custom:[] };
+  const sizes = opts.sizes || [];
+  const exId = opts.excludeId!=null ? String(opts.excludeId) : null;
+  const others = (products||[]).filter(p => exId===null || String(p.id)!==exId);
+
+  // codes ที่สินค้าตัวนี้ถือเดิมอยู่แล้ว (โหมดแก้ไข: ตรวจเฉพาะรหัสที่เพิ่งเปลี่ยน/เพิ่มใหม่)
+  const ownOld = new Set();
+  if (opts.onlyChangedPos && exId!==null) {
+    const self = (products||[]).find(p=>String(p.id)===exId);
+    (self?.sizes||[]).forEach(s=>{ const c=_dupPos(s.pos_code); if(c) ownOld.add(c); });
+  }
+
+  // 1) รหัส POSPOS — ซ้ำกับสินค้าที่มีอยู่ + ซ้ำกันเองในฟอร์ม
+  const seen = new Map();
+  sizes.forEach(s=>{
+    const c=_dupPos(s.pos_code); if(!c) return;
+    if (seen.has(c)) { if(!res.posInForm.some(x=>x.code===c)) res.posInForm.push({code:s.pos_code, size1:seen.get(c), size2:s.n}); }
+    else seen.set(c, s.n);
+    if (ownOld.has(c)) return;
+    others.forEach(p=>(p.sizes||[]).forEach(ps=>{
+      if (_dupPos(ps.pos_code)===c) res.posConflicts.push({ code:s.pos_code, newSize:s.n, product:p, size:ps.n });
+    }));
+  });
+
+  // 2) ชื่อซ้ำ / คล้าย
+  const names = (opts.names && opts.names.length) ? opts.names : (opts.name?[opts.name]:[]);
+  names.forEach(nm=>{
+    const n=_dupNorm(nm); if(!n) return;
+    others.forEach(p=>{
+      const pn=_dupNorm(p.name); if(!pn) return;
+      if (pn===n) { res.exact.push({ newName:nm, product:p }); return; }
+      const contains = Math.min(pn.length,n.length)>=4 && (pn.includes(n)||n.includes(pn));
+      if (contains || _dupSim(pn,n)>=0.85) res.similar.push({ newName:nm, product:p });
+    });
+  });
+  // bulk: ชื่อซ้ำกันเองในคิว
+  if (names.length>1) {
+    const m=new Map();
+    names.forEach(nm=>{ const n=_dupNorm(nm); if(!n) return; if(m.has(n)) res.exact.push({newName:nm, product:{id:'-',name:m.get(n)+' (ในคิวเดียวกัน)'}}); else m.set(n,nm); });
+  }
+  return res;
+}
+
+// แสดงผลตรวจ — คืน true = ไปต่อได้ / false = หยุด
+function showDupDialog(r) {
+  const E = escapeHtml;
+  const blockers=[], warns=[];
+  r.posConflicts.forEach(x=>blockers.push(`รหัส POSPOS <b>${E(x.code)}</b> (ขนาด "${E(x.newSize)}") มีอยู่แล้วที่สินค้า <b>${E(x.product.name)}</b> ขนาด "${E(x.size)}" <span style="color:#999">[id ${E(x.product.id)}]</span>`));
+  (r.custom||[]).forEach(m=>blockers.push(m));
+  r.posInForm.forEach(x=>blockers.push(`รหัส POSPOS <b>${E(x.code)}</b> ถูกใส่ซ้ำในฟอร์มเดียวกัน (ขนาด "${E(x.size1)}" และ "${E(x.size2)}")`));
+  r.exact.forEach(x=>warns.push(`ชื่อ "<b>${E(x.newName)}</b>" ซ้ำกับ <b>${E(x.product.name)}</b> <span style="color:#999">[id ${E(x.product.id)}]</span>`));
+  const exIds=new Set(r.exact.map(x=>String(x.product.id)+x.newName));
+  r.similar.forEach(x=>{ if(!exIds.has(String(x.product.id)+x.newName)) warns.push(`ชื่อ "${E(x.newName)}" <b>คล้าย</b> กับ <b>${E(x.product.name)}</b> <span style="color:#999">[id ${E(x.product.id)}]</span>`); });
+  if (!blockers.length && !warns.length) return Promise.resolve(true);
+  if (window._dupDlgOpen) return Promise.resolve(false);
+  window._dupDlgOpen = true;
+
+  return new Promise(resolve=>{
+    const ov=document.createElement('div');
+    ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:700;display:flex;align-items:center;justify-content:center;padding:20px;';
+    const list=(arr,color)=>`<ul style="margin:6px 0 0;padding-left:18px;font-size:13px;line-height:1.7;color:${color};">${arr.slice(0,8).map(a=>`<li>${a}</li>`).join('')}${arr.length>8?`<li>…และอีก ${arr.length-8} รายการ</li>`:''}</ul>`;
+    const blocked = blockers.length>0;
+    ov.innerHTML=`<div style="background:#fff;border-radius:18px;max-width:520px;width:100%;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+      <div style="padding:18px 22px;border-bottom:1px solid #e0e0e0;font-family:'Prompt',sans-serif;font-size:17px;font-weight:700;color:${blocked?'#C62828':'#E65100'};">${blocked?'⛔ พบรหัส POSPOS ซ้ำ — เพิ่มสินค้าไม่ได้':'⚠️ พบสินค้าชื่อซ้ำ/คล้ายกัน'}</div>
+      <div style="padding:16px 22px;overflow-y:auto;flex:1;">
+        ${blockers.length?`<div style="font-weight:700;font-size:13px;color:#C62828;">🔗 รหัส POSPOS ซ้ำ (ตรวจก่อนเป็นอันดับแรก)</div>${list(blockers,'#444')}<div style="font-size:12px;color:#888;margin-top:8px;">รหัสเดียวผูกได้แค่ 1 ขนาดสินค้า ไม่งั้นการซิงก์สต็อก/ราคาจาก POSPOS จะทับกัน — แก้รหัส หรือเปิดสินค้าเดิมมาแก้ไขแทนครับ</div>`:''}
+        ${warns.length?`<div style="font-weight:700;font-size:13px;color:#E65100;margin-top:${blockers.length?'14px':'0'};">📛 ชื่อซ้ำ / คล้าย</div>${list(warns,'#444')}${blocked?'':'<div style="font-size:12px;color:#888;margin-top:8px;">ถ้าเป็นสินค้าตัวเดิม ควรไปแก้ไขสินค้าเดิม (เพิ่มขนาดใหม่) แทนการสร้างซ้ำ — หรือกดเพิ่มต่อได้ถ้าเป็นคนละรุ่นจริง ๆ</div>'}`:''}
+      </div>
+      <div style="padding:12px 22px;border-top:1px solid #e0e0e0;display:flex;gap:8px;justify-content:flex-end;background:#f8f9fa;border-radius:0 0 18px 18px;">
+        <button data-r="0" style="padding:10px 18px;background:#fff;border:1.5px solid #ccc;color:#666;border-radius:8px;font-size:13px;font-family:'Sarabun',sans-serif;font-weight:700;cursor:pointer;">${blocked?'ปิด แล้วไปแก้ไข':'ยกเลิก กลับไปแก้'}</button>
+        ${blocked?'':'<button data-r="1" style="padding:10px 18px;background:#E65100;border:none;color:#fff;border-radius:8px;font-size:13px;font-family:\'Sarabun\',sans-serif;font-weight:700;cursor:pointer;">เพิ่มซ้ำอยู่ดี</button>'}
+      </div></div>`;
+    ov.addEventListener('click',e=>{
+      const b=e.target.closest('button[data-r]');
+      if (!b && e.target!==ov) return;
+      ov.remove(); window._dupDlgOpen=false; resolve(b?b.dataset.r==='1':false);
+    });
+    document.body.appendChild(ov);
+  });
+}
+
+// 🔔 เตือนสดระหว่างพิมพ์ — รหัส POSPOS (ช่องในแต่ละขนาด) และชื่อสินค้าตอนเพิ่มใหม่
+(function(){
+  const hint=(host,html,color)=>{
+    let h=host.querySelector(':scope > .dup-hint');
+    if(!h){ h=document.createElement('div'); h.className='dup-hint'; h.style.cssText='font-size:11px;font-weight:700;margin:2px 0 6px;line-height:1.5;'; host.appendChild(h); }
+    h.style.color=color||'#C62828'; h.innerHTML=html;
+  };
+  const timers=new WeakMap();
+  document.addEventListener('input',e=>{
+    const el=e.target;
+    if(!el.classList || !(el.classList.contains('sz-pos')||el.id==='fName')) return;
+    clearTimeout(timers.get(el));
+    timers.set(el,setTimeout(()=>{
+      try{
+        if (el.classList.contains('sz-pos')) {
+          const wrap=el.closest('.sz-row-wrap'); const builder=el.closest('#szBuilder,#eSzBuilder'); if(!wrap||!builder) return;
+          const isEdit=builder.id==='eSzBuilder';
+          const code=el.value.trim();
+          const host=el.parentElement;
+          if(!code){ host.nextElementSibling?.classList.contains('dup-host') && host.nextElementSibling.remove(); return; }
+          const r=findProductDuplicates({ sizes:[{n:wrap.querySelector('.sz-name')?.value||'-', pos_code:code}], excludeId:isEdit?editingId:null, onlyChangedPos:isEdit });
+          // ซ้ำกับแถวอื่นในฟอร์ม?
+          let inForm=false;
+          builder.querySelectorAll('.sz-pos').forEach(o=>{ if(o!==el && _dupPos(o.value)===_dupPos(code)) inForm=true; });
+          const ph=(function(){let d=host.nextElementSibling;if(!d||!d.classList.contains('dup-host')){d=document.createElement('div');d.className='dup-host';host.after(d);}return d;})();
+          if(r.posConflicts.length){ const x=r.posConflicts[0]; hint(ph, `⛔ รหัสนี้มีแล้ว: ${escapeHtml(x.product.name)} (${escapeHtml(x.size)}) [id ${escapeHtml(x.product.id)}]`); }
+          else if(inForm) hint(ph, '⛔ ใส่รหัสนี้ซ้ำกับอีกขนาดในฟอร์ม');
+          else hint(ph, '✓ รหัสนี้ยังไม่มีในระบบ','#2E7D32');
+        } else if (el.id==='fName') {
+          const v=el.value.trim();
+          const host=el.parentElement;
+          if(v.length<2){ host.querySelector(':scope > .dup-hint')?.remove(); return; }
+          const r=findProductDuplicates({name:v});
+          if(r.exact.length) hint(host,`⚠️ มีสินค้าชื่อนี้อยู่แล้ว: ${escapeHtml(r.exact[0].product.name)} [id ${escapeHtml(r.exact[0].product.id)}]`,'#E65100');
+          else if(r.similar.length) hint(host,`⚠️ ชื่อคล้ายกับ: ${escapeHtml(r.similar[0].product.name)} [id ${escapeHtml(r.similar[0].product.id)}]`,'#E65100');
+          else host.querySelector(':scope > .dup-hint')?.remove();
+        }
+      }catch(_){}
+    },250));
+  });
+})();
+
+// ═══════════════════════════════════════════
 //  SAVE PRODUCT (add or edit)
 // ═══════════════════════════════════════════
 async function saveProduct(isEdit) {
   if (isEdit) {
     const p = products.find(x=>x.id===editingId);
     if (!p) return;
+    // 🔍 ตรวจรหัส POSPOS ที่เพิ่งเปลี่ยน/เพิ่มใหม่ ก่อนแก้ข้อมูลใดๆ (ซ้ำ = บล็อก)
+    {
+      const _r = findProductDuplicates({ sizes:getSzRows('eSzBuilder'), excludeId:editingId, onlyChangedPos:true });
+      if (_r.posConflicts.length || _r.posInForm.length) { await showDupDialog({posConflicts:_r.posConflicts,posInForm:_r.posInForm,exact:[],similar:[]}); return; }
+    }
+    const _snap = JSON.parse(JSON.stringify(p)); // เผื่อ backend ปฏิเสธ → ย้อนกลับได้
     p.name  = document.getElementById('eName').value.trim() || p.name;
     p.cat   = document.getElementById('eCat').value;
     p.desc  = document.getElementById('eDesc').value.trim();
@@ -4069,7 +4225,16 @@ async function saveProduct(isEdit) {
     }
     const sizes = getSzRows('eSzBuilder');
     if (sizes.length) p.sizes = sizes;
-    await saveOne(p); renderGrid(); renderPMList(); closeEdit();
+    try { await saveOne(p); }
+    catch (e) {
+      if (_isPosDupErr(e)) {   // backend ปฏิเสธ (รหัส POSPOS ซ้ำ) → ย้อนค่าในหน้าเว็บ ไม่ให้เพี้ยนจาก DB
+        Object.keys(p).forEach(k => delete p[k]); Object.assign(p, _snap);
+        try { localStorage.setItem('ms_products', JSON.stringify(products)); } catch(_) {}
+        renderGrid(); renderPMList(); return;
+      }
+      throw e;
+    }
+    renderGrid(); renderPMList(); closeEdit();
     toast('แก้ไขสินค้าแล้ว ✓');
     return;
   }
@@ -4080,6 +4245,16 @@ async function saveProduct(isEdit) {
     const sizes = getSzRows('szBuilder');
     const isNew = document.getElementById('fIsNew').checked;
     const isBest = document.getElementById('fIsBestseller')?.checked || false;
+    // 🔍 ตรวจซ้ำก่อนอัปโหลด: รหัส POSPOS (บล็อก) → ชื่อซ้ำ/คล้าย (เตือน)
+    {
+      const _r = findProductDuplicates({ names:bulkQueue.map(b=>b.name), sizes });
+      // เพิ่มหลายรายการพร้อมกันแต่ใส่รหัส POSPOS = รหัสเดียวถูกผูกกับทุกรายการ → บล็อก
+      if (sizes.some(s=>s.pos_code)) {
+        const c=sizes.find(s=>s.pos_code);
+        _r.custom.push(`รหัส POSPOS <b>${escapeHtml(c.pos_code)}</b> จะถูกผูกกับสินค้าทั้ง ${bulkQueue.length} รายการในคิวพร้อมกัน — รหัสเดียวผูกได้แค่ 1 ขนาด ให้เพิ่มทีละรายการแทน`);
+      }
+      if (!(await showDupDialog(_r))) return;
+    }
     toast(`⏳ กำลังอัปโหลด ${bulkQueue.length} รูป...`);
     for (const b of bulkQueue) {
       let imgUrl = '';
@@ -4094,7 +4269,11 @@ async function saveProduct(isEdit) {
         isNew, isBestseller: isBest, ts: Date.now()
       };
       products.unshift(newP);
-      await saveOne(newP);
+      try { await saveOne(newP); }
+      catch (e) {
+        if (_isPosDupErr(e)) { products.splice(products.indexOf(newP), 1); continue; }
+        throw e;
+      }
     }
     bulkQueue = []; renderBulkThumbs();
     renderGrid(); renderPMList();
@@ -4107,6 +4286,9 @@ async function saveProduct(isEdit) {
   const sizes = getSzRows('szBuilder');
   if (!name) { toast('กรุณากรอกชื่อสินค้า'); return; }
   if (!sizes.length) { toast('กรุณาเพิ่มขนาดและราคา'); return; }
+
+  // 🔍 ตรวจซ้ำก่อนเพิ่ม: รหัส POSPOS ก่อนเป็นอันดับแรก (ซ้ำ = บล็อก) → แล้วค่อยตรวจชื่อซ้ำ/คล้าย (เตือน)
+  if (!(await showDupDialog(findProductDuplicates({ name, sizes })))) return;
 
   let imgUrl = '';
   if (bulkQueue.length===1 && bulkQueue[0]._file) {
@@ -4130,6 +4312,16 @@ async function saveProduct(isEdit) {
     ts: Date.now()
   };
   products.unshift(newP);
+  // 💾 บันทึกก่อนล้างฟอร์ม — ถ้า backend ปฏิเสธ (รหัส POSPOS ซ้ำ) จะได้ไม่เสียข้อมูลที่กรอก
+  try { await saveOne(newP); }
+  catch (e) {
+    if (_isPosDupErr(e)) {
+      products.splice(products.indexOf(newP), 1);
+      try { localStorage.setItem('ms_products', JSON.stringify(products)); } catch(_) {}
+      return;
+    }
+    throw e;
+  }
   bulkQueue=[]; renderBulkThumbs();
   ['fName','fDesc','fEmoji'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('fIsNew').checked=false;
@@ -4138,7 +4330,7 @@ async function saveProduct(isEdit) {
   // reset size builder → 1 แถวว่าง
   document.getElementById('szBuilder').innerHTML='';
   addSzRow('szBuilder');
-  await saveOne(newP); renderGrid(); renderPMList();
+  renderGrid(); renderPMList();
   toast('บันทึกสินค้าแล้ว ✓');
 }
 
@@ -8170,6 +8362,34 @@ function downloadExcelTemplate() {
 let _importParsed = null;
 
 // Handle file upload
+// 🔗 Excel import — ตรวจรหัส POSPOS ซ้ำแบบ "สถานะหลังนำเข้า" (ตรงกับตรรกะฝั่ง backend)
+// นับเฉพาะรหัสที่ใหม่/เปลี่ยนเทียบกับสินค้า id เดียวกันที่มีอยู่ — รหัสซ้ำเดิมที่ไม่ได้แตะจะไม่ถูกนับ
+function findExcelPosConflicts(incoming) {
+  const oldById = new Map(products.map(p => [String(p.id), p]));
+  const post = new Map(oldById);
+  incoming.forEach(p => post.set(String(p.id), p));
+  const holders = new Map();
+  for (const p of post.values()) {
+    (p.sizes || []).forEach(s => {
+      const c = _dupPos(s.pos_code); if (!c) return;
+      if (!holders.has(c)) holders.set(c, []);
+      holders.get(c).push({ id: p.id, name: p.name, size: s.n });
+    });
+  }
+  const out = [];
+  for (const np of incoming) {
+    const oldCodes = new Set(((oldById.get(String(np.id))?.sizes) || []).map(s => _dupPos(s.pos_code)).filter(Boolean));
+    for (const s of (np.sizes || [])) {
+      const c = _dupPos(s.pos_code);
+      if (!c || oldCodes.has(c)) continue;
+      const h = holders.get(c) || [];
+      if (h.length > 1) out.push({ code: s.pos_code, id: np.id, name: np.name, size: s.n,
+        heldBy: h.filter(x => !(String(x.id) === String(np.id) && x.size === s.n)) });
+    }
+  }
+  return out;
+}
+
 async function handleExcelImport(input) {
   const file = input.files[0];
   if (!file) return;
@@ -8302,7 +8522,15 @@ async function handleExcelImport(input) {
       if (!incomingIds.has(op.id)) diff.missing.push(op);
     }
 
-    _importParsed = { incoming, diff, errors };
+    // 🔍 ตรวจซ้ำก่อนแสดง preview: รหัส POSPOS ซ้ำ (บล็อกทั้งไฟล์) + ชื่อซ้ำ/คล้ายของสินค้าใหม่ (เตือน)
+    const posConflicts = findExcelPosConflicts(incoming);
+    const nameWarns = [];
+    diff.new.forEach(np => {
+      const r = findProductDuplicates({ name: np.name });
+      const hit = r.exact[0] || r.similar[0];
+      if (hit) nameWarns.push({ name: np.name, other: hit.product, exact: !!r.exact.length });
+    });
+    _importParsed = { incoming, diff, errors, posConflicts, nameWarns };
     showImportPreview();
   } catch (e) {
     toast('อ่านไฟล์ไม่ได้: ' + e.message, 'error');
@@ -8313,7 +8541,7 @@ async function handleExcelImport(input) {
 
 function showImportPreview() {
   if (!_importParsed) return;
-  const { incoming, diff, errors } = _importParsed;
+  const { incoming, diff, errors, posConflicts = [], nameWarns = [] } = _importParsed;
 
   const sum = `📥 ${incoming.length} สินค้า • ` +
               `🆕 ${diff.new.length} ใหม่ • ` +
@@ -8329,6 +8557,23 @@ function showImportPreview() {
       <b>⚠️ มี ${errors.length} ข้อผิดพลาด — ระบบจะข้ามบรรทัดเหล่านี้:</b>
       <ul style="margin:6px 0 0 18px;padding:0;line-height:1.6;">${errors.slice(0,10).map(e => `<li>${e}</li>`).join('')}</ul>
       ${errors.length > 10 ? `<div style="margin-top:6px;">...และอีก ${errors.length - 10} ข้อ</div>` : ''}
+    </div>`;
+  }
+
+  // 🔗 รหัส POSPOS ซ้ำ — บล็อกการนำเข้า
+  if (posConflicts.length) {
+    html += `<div style="background:#ffebee;border-left:4px solid #c62828;padding:12px;border-radius:8px;margin-bottom:14px;font-size:13px;color:#b71c1c;">
+      <b>⛔ พบรหัส POSPOS ซ้ำ ${posConflicts.length} จุด — นำเข้าไม่ได้ ต้องแก้ไฟล์ก่อน</b>
+      <ul style="margin:6px 0 0 18px;padding:0;line-height:1.6;max-height:260px;overflow-y:auto;">${posConflicts.slice(0,40).map(c => `<li>รหัส <b>${escapeHtml(c.code)}</b> (#${escapeHtml(c.id)} ${escapeHtml(c.name)} / ${escapeHtml(c.size)}) ซ้ำกับ ${c.heldBy.length ? c.heldBy.map(x => `${escapeHtml(x.name)} / ${escapeHtml(x.size)} [id ${escapeHtml(x.id)}]`).join(', ') : 'ขนาดอื่นในสินค้าเดียวกัน'}</li>`).join('')}</ul>
+      ${posConflicts.length > 40 ? `<div style="margin-top:6px;">...และอีก ${posConflicts.length - 40} จุด</div>` : ''}
+    </div>`;
+  }
+  // 📛 ชื่อสินค้าใหม่ซ้ำ/คล้ายของเดิม — เตือน (นำเข้าต่อได้)
+  if (nameWarns.length) {
+    html += `<div style="background:#fff3e0;border-left:4px solid #E65100;padding:12px;border-radius:8px;margin-bottom:14px;font-size:13px;color:#BF360C;">
+      <b>⚠️ สินค้าใหม่ ${nameWarns.length} รายการ ชื่อซ้ำ/คล้ายกับของเดิม (ตรวจดูก่อนว่าไม่ได้สร้างซ้ำ)</b>
+      <ul style="margin:6px 0 0 18px;padding:0;line-height:1.6;">${nameWarns.slice(0,12).map(w => `<li>"${escapeHtml(w.name)}" ${w.exact ? 'ซ้ำกับ' : 'คล้ายกับ'} ${escapeHtml(w.other.name)} [id ${escapeHtml(w.other.id)}]</li>`).join('')}</ul>
+      ${nameWarns.length > 12 ? `<div style="margin-top:6px;">...และอีก ${nameWarns.length - 12} รายการ</div>` : ''}
     </div>`;
   }
 
@@ -8375,7 +8620,7 @@ function showImportPreview() {
 
   document.getElementById('excelPreviewContent').innerHTML = html;
   const btn = document.getElementById('excelConfirmBtn');
-  btn.disabled = (!diff.modified.length && !diff.new.length);
+  btn.disabled = (!diff.modified.length && !diff.new.length) || posConflicts.length > 0;
   btn.style.opacity = btn.disabled ? '0.5' : '1';
   btn.style.cursor = btn.disabled ? 'not-allowed' : 'pointer';
   document.getElementById('excelOv').style.display = 'flex';
@@ -8434,6 +8679,7 @@ function closeExcelPreview() {
 async function confirmExcelImport() {
   if (!_importParsed) return;
   const { incoming } = _importParsed;
+  if (_importParsed.posConflicts && _importParsed.posConflicts.length) { toast('⛔ มีรหัส POSPOS ซ้ำ — นำเข้าไม่ได้', 'error'); return; }
 
   const sb = getSB();
   if (!sb) { toast('ไม่มี Supabase connection', 'error'); return; }
@@ -8452,8 +8698,15 @@ async function confirmExcelImport() {
         // เก็บ img เก่าไว้ (Excel ไม่มี image)
         img: products.find(op => op.id === p.id)?.img || ''
       }));
-      const { error } = await sb.from('products').upsert(rows, { onConflict: 'id' });
-      if (error) throw error;
+      // ผ่าน backend ก่อน (มี admin key + ตรวจรหัส POSPOS ซ้ำ) → ล่ม (ไม่ใช่เพราะรหัสซ้ำ) ค่อยเขียนตรง
+      try {
+        await _adminApi('/admin/products/upsert', { rows });
+      } catch (e) {
+        if (_isPosDupErr(e)) throw e;
+        console.warn('บันทึกผ่าน backend ไม่สำเร็จ → ลองเขียนตรง:', e.message);
+        const { error } = await sb.from('products').upsert(rows, { onConflict: 'id' });
+        if (error) throw error;
+      }
     }
 
     // อัปเดต products array ใน memory
@@ -8695,7 +8948,8 @@ async function confirmPosImport() {
       } catch (e) {
         console.warn('บันทึกผ่าน backend ไม่สำเร็จ → ลองเขียนตรง:', e.message);
         const sb = getSB();
-        if (!sb) { firstError = e; }
+        if (_isPosDupErr(e)) { firstError = e; }   // 🔗 รหัสซ้ำ = ไม่ใช่ปัญหาเชื่อมต่อ ห้ามเขียนตรงเลี่ยง
+        else if (!sb) { firstError = e; }
         else {
           const { error } = await sb.from('products').upsert(batchRows, { onConflict: 'id' });
           if (error) firstError = error; else batchOk = true;
