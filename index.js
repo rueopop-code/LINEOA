@@ -5181,7 +5181,21 @@ async function runThunderVerify(base64, matchAmount) {
   try {
     const FormData = require('form-data');
     const form = new FormData();
-    const buf  = Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+    let buf = Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+    // 🎯 เดิมส่งทุกรูปเป็น contentType 'image/jpeg' ตายตัว (แม้เป็น PNG/WebP) และส่งรูปใหญ่ไปเต็มๆ
+    // ทำให้บางครั้ง Thunder ตอบ IMAGE_SIZE_TOO_LARGE / อ่านรูปไม่ได้ แล้วตกไปใช้ OCR ที่แม่นน้อยกว่า
+    // แก้: แปลงเป็น JPEG จริง + หมุนตาม EXIF + ย่อไม่เกิน 1600px เฉพาะรูปที่ไม่ใช่ JPEG หรือใหญ่เกิน 2MB
+    try {
+      const sharpLib = require('sharp');
+      const meta = await sharpLib(buf).metadata();
+      if (meta.format !== 'jpeg' || buf.length > 2 * 1024 * 1024) {
+        buf = await sharpLib(buf).rotate()
+          .resize({ width: 1600, withoutEnlargement: true })
+          .jpeg({ quality: 92 }).toBuffer();
+      }
+    } catch (convErr) {
+      console.warn('Thunder image normalize skipped:', convErr.message);
+    }
     form.append('image', buf, { filename: 'slip.jpg', contentType: 'image/jpeg' });
     if (matchAmount != null) form.append('matchAmount', String(matchAmount));
     form.append('checkDuplicate', 'true');
@@ -5205,6 +5219,7 @@ async function runThunderVerify(base64, matchAmount) {
       ref           : d.rawSlip?.transRef || null,
       isDuplicate   : !!d.isDuplicate,
       isAmountMatched: d.isAmountMatched ?? null,
+      hasTime       : true, // วันที่จากธนาคารเป็น timestamp เต็มเสมอ — ใช้เทียบกับเวลาสร้างออเดอร์ได้
       senderName    : d.rawSlip?.sender?.account?.name?.th || d.rawSlip?.sender?.account?.name?.en || null,
       receiverName  : d.rawSlip?.receiver?.account?.name?.th || d.rawSlip?.receiver?.account?.name?.en || null
     };
@@ -5212,6 +5227,97 @@ async function runThunderVerify(base64, matchAmount) {
     console.warn('Thunder verify error (fallback ไป OCR):', e.message);
     return null;
   }
+}
+
+// ── ★ ใหม่: อ่าน "QR ตรวจสอบสลิป" (mini-QR มุมสลิป) ในเครื่องเอง — ฟรี ไม่ต้องใช้ API ──
+// สลิปโอนเงินจากแอปธนาคารไทยทุกเจ้ามี QR มาตรฐานเดียวกัน (Bank of Thailand slip verification,
+// รูปแบบ EMVCo TLV) ซึ่งเก็บ "รหัสธนาคารผู้โอน + เลขอ้างอิงรายการ (transRef)" ที่ธนาคารออกให้จริง
+// เลขนี้แม่นยำ 100% (ไม่ต้องเดาจาก OCR) และไม่ซ้ำกันต่อ 1 รายการโอน จึงใช้กันสลิปซ้ำได้แม่นกว่า
+// hash ของรูปมาก (แคปหน้าจอใหม่/ครอป/บีบอัดรูปแล้ว hash เปลี่ยน แต่ QR ยังเหมือนเดิม)
+// ตัวอย่าง payload: 0041 [00 06 000001][01 03 004][02 20 014242082547BPM04988] 5102TH 9104xxxx
+const THAI_BANK_CODES = {
+  '002': 'กรุงเทพ', '004': 'กสิกรไทย', '006': 'กรุงไทย', '011': 'ทหารไทยธนชาต', '014': 'ไทยพาณิชย์',
+  '022': 'ซีไอเอ็มบี', '024': 'ยูโอบี', '025': 'กรุงศรีอยุธยา', '030': 'ออมสิน', '033': 'อาคารสงเคราะห์',
+  '034': 'ธ.ก.ส.', '067': 'ทิสโก้', '069': 'เกียรตินาคินภัทร', '070': 'ไอซีบีซี', '071': 'ไทยเครดิต',
+  '073': 'แลนด์ แอนด์ เฮ้าส์', '098': 'SME D Bank'
+};
+
+function parseTLV(str) {
+  const out = {};
+  let i = 0;
+  while (i + 4 <= str.length) {
+    const tag = str.slice(i, i + 2);
+    const len = parseInt(str.slice(i + 2, i + 4), 10);
+    if (!/^\d{2}$/.test(tag) || isNaN(len) || i + 4 + len > str.length) return null;
+    out[tag] = str.slice(i + 4, i + 4 + len);
+    i += 4 + len;
+  }
+  return i === str.length ? out : null;
+}
+
+function crc16ccitt(str) {
+  let crc = 0xFFFF;
+  for (let i = 0; i < str.length; i++) {
+    crc ^= str.charCodeAt(i) << 8;
+    for (let b = 0; b < 8; b++) crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) & 0xFFFF : (crc << 1) & 0xFFFF;
+  }
+  return crc.toString(16).toUpperCase().padStart(4, '0');
+}
+
+// คืนค่า null ถ้าไม่ใช่ QR สลิปธนาคาร (เช่น QR PromptPay รับเงิน, QR โฆษณา, ลิงก์เว็บ)
+function parseSlipQRPayload(payload) {
+  if (!payload || typeof payload !== 'string') return null;
+  const s = payload.trim();
+  const top = parseTLV(s);
+  if (!top || !top['00']) return null;
+  const inner = parseTLV(top['00']);
+  if (!inner || !inner['02']) return null;
+  // QR รับเงิน PromptPay (tag 00 = "01" payload format) ไม่ใช่สลิป — กันเข้าใจผิด
+  if (!inner['00'] || inner['00'].length !== 6) return null;
+  const transRef = inner['02'].trim();
+  if (!/^[A-Za-z0-9]{8,35}$/.test(transRef)) return null;
+  let crcValid = null;
+  if (top['91']) {
+    const idx = s.lastIndexOf('9104');
+    crcValid = idx >= 0 && crc16ccitt(s.slice(0, idx + 4)) === top['91'].toUpperCase();
+  }
+  const bankCode = inner['01'] || null;
+  return {
+    apiId: inner['00'], bankCode, bankName: THAI_BANK_CODES[bankCode] || null,
+    transRef: transRef.toUpperCase(), country: top['51'] || null, crcValid, payload: s
+  };
+}
+
+// ลองหา QR หลายขนาด/หลายแบบ เพราะ QR บนสลิปเล็ก และรูปจากลูกค้ามีทั้งแคปหน้าจอ/ถ่ายจากจอ
+async function decodeSlipQR(base64) {
+  let jsQR;
+  try { jsQR = require('jsqr'); } catch (_) { return null; } // ยังไม่ได้ npm install — ข้ามไปเงียบๆ
+  const sharpLib = require('sharp');
+  const buf = Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+  const attempts = [
+    { width: 1200, gray: false },
+    { width: 800,  gray: true },
+    { width: 1800, gray: true },
+    { width: 2600, gray: true } // รูปถ่ายความละเอียดสูงที่ QR เล็กมาก
+  ];
+  for (const a of attempts) {
+    try {
+      let p = sharpLib(buf).rotate().resize({ width: a.width, withoutEnlargement: a.width <= 1200 });
+      // grayscale() ให้ภาพ 1 ช่อง — ต้องแปลงกลับเป็น sRGB 3 ช่อง + alpha = RGBA 4 ช่อง ที่ jsQR ต้องการ
+      if (a.gray) p = p.grayscale().normalise().toColourspace('srgb');
+      const { data, info } = await p.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      if (info.channels !== 4) continue;
+      const code = jsQR(new Uint8ClampedArray(data.buffer, data.byteOffset, data.length), info.width, info.height,
+        { inversionAttempts: 'attemptBoth' });
+      if (code?.data) {
+        const parsed = parseSlipQRPayload(code.data);
+        if (parsed) return parsed;
+      }
+    } catch (e) {
+      console.warn('slip QR decode attempt failed:', e.message);
+    }
+  }
+  return null;
 }
 
 // ── shared: รัน OCR สลิป (preprocess ด้วย sharp + tesseract) แล้วดึงยอดเงิน/วันที่-เวลา/
@@ -5240,30 +5346,46 @@ async function runSlipOCR(base64) {
     { name: 'threshold128', resizeWidth: 1600, threshold: 128 }, // แบบเดิม แต่รูปใหญ่ขึ้น (1200→1600) ให้ตัวเลขคมชัดกว่า
     { name: 'soft',         resizeWidth: 1800, threshold: null } // ไม่ binarize แข็งๆ เก็บรายละเอียด grayscale ไว้ให้ tesseract จัดการเอง — ช่วยกรณีพื้นหลังเข้ม/สีสัน
   ];
+  // 🎯 variant ที่ 3 "ตัวตัดสิน" — รันเฉพาะเมื่อ 2 แบบแรกอ่านยอดไม่ตรงกัน/อ่านไม่ได้ (ไม่เปลือง CPU ในเคสปกติ)
+  // ใช้ psm 4 (อ่านเป็นคอลัมน์เดียว ขนาดตัวอักษรหลากหลาย) ซึ่งเหมาะกับเลย์เอาต์สลิปที่ยอดเงินตัวใหญ่กว่าข้อความอื่น
+  // + พื้นหลังสีเข้ม (เช่นสลิป MAKE/TTB บางธีม) ถูกกลับสีให้เป็นตัวหนังสือดำบนพื้นขาวก่อน
+  const tieBreakVariant = { name: 'column_psm4', resizeWidth: 2000, threshold: null, psm: 4, autoInvert: true };
 
   const results = [];
+  const runVariant = async (v) => {
+    const tmpProc = path.join(os.tmpdir(), `slip_${v.name}_${Date.now()}_${rnd}.png`);
+    try {
+      // 🩹 .rotate() = หมุนตาม EXIF — รูปที่ถ่ายจากกล้องมือถือมักถูกบันทึกแบบตะแคง ทำให้ OCR อ่านไม่ออกเลย
+      let pipeline = sharpLib(tmpOrig)
+        .rotate()
+        .resize({ width: v.resizeWidth, withoutEnlargement: false })
+        .grayscale()
+        .normalise()
+        .sharpen();
+      if (v.autoInvert) {
+        const { channels } = await sharpLib(tmpOrig).grayscale().stats();
+        if (channels[0]?.mean < 110) pipeline = pipeline.negate({ alpha: false });
+      }
+      if (v.threshold != null) pipeline = pipeline.threshold(v.threshold);
+      await pipeline.png().toFile(tmpProc);
+
+      const rawText = await tesseract.recognize(tmpProc, { ...config, psm: v.psm || config.psm });
+      results.push({ variant: v.name, rawText: rawText || '' });
+    } catch (variantErr) {
+      console.warn(`OCR variant "${v.name}" failed:`, variantErr.message);
+    } finally {
+      fs.unlink(tmpProc, () => {});
+    }
+  };
+
   try {
     fs.writeFileSync(tmpOrig, Buffer.from(b64Raw, 'base64'));
 
-    for (const v of variants) {
-      const tmpProc = path.join(os.tmpdir(), `slip_${v.name}_${Date.now()}_${rnd}.png`);
-      try {
-        let pipeline = sharpLib(tmpOrig)
-          .resize({ width: v.resizeWidth, withoutEnlargement: false })
-          .grayscale()
-          .normalise()
-          .sharpen();
-        if (v.threshold != null) pipeline = pipeline.threshold(v.threshold);
-        await pipeline.png().toFile(tmpProc);
+    for (const v of variants) await runVariant(v);
 
-        const rawText = await tesseract.recognize(tmpProc, config);
-        results.push({ variant: v.name, rawText: rawText || '' });
-      } catch (variantErr) {
-        console.warn(`OCR variant "${v.name}" failed:`, variantErr.message);
-      } finally {
-        fs.unlink(tmpProc, () => {});
-      }
-    }
+    const firstReads = results.map(r => extractAmountFromSlip(r.rawText));
+    const agreed = firstReads.length >= 2 && firstReads[0] != null && firstReads.every(a => a === firstReads[0]);
+    if (!agreed) await runVariant(tieBreakVariant);
 
     // 🩹 BUG FIX (พบระหว่างตรวจสอบ): เดิมสูตรก่อนหน้ามี fallback ไปอ่าน OCR จากรูปดิบ (ไม่ preprocess)
     // เวลา sharp เองพังทั้งคู่ (เช่น รูปเสีย/ฟอร์แมตแปลก/สภาพแวดล้อม deploy บางที่ไม่มี native lib
@@ -5284,18 +5406,33 @@ async function runSlipOCR(base64) {
       return { rawText: '', amount: null, datetime: null, dateRaw: null, ref: null, imageHash };
     }
 
-    // ── โหวตยอดเงิน: ถ้าทั้งสอง variant อ่านได้ยอดตรงกัน → มั่นใจสุด
-    // ถ้าไม่ตรงกัน → ใช้ผลจาก variant แรกที่อ่านได้ (threshold128 ซึ่งเป็นสูตรเดิมที่ผ่านการใช้งานจริงมาก่อน)
-    const amountsPerVariant = results.map(r => ({ variant: r.variant, amount: extractAmountFromSlip(r.rawText), rawText: r.rawText }));
+    // ── โหวตยอดเงิน (เสียงข้างมาก): แต่ละ variant เสนอยอดที่คะแนนบริบทสูงสุดของตัวเอง แล้วเลือกยอด
+    // ที่ได้ "จำนวนโหวต" มากสุด เสมอกันค่อยดู "คะแนนบริบทรวม" (มีคำว่า จำนวนเงิน/บาท/ทศนิยม ฯลฯ)
+    // เดิมเชื่อ variant แรกเสมอแม้อีกตัวอ่านต่าง — ตอนนี้มี variant ที่ 3 ช่วยตัดสินเมื่อไม่ตรงกัน
+    const amountsPerVariant = results.map(r => {
+      const top = extractAmountCandidates(r.rawText)[0] || null;
+      return { variant: r.variant, amount: top?.value ?? null, score: top?.score ?? 0, rawText: r.rawText };
+    });
     const validAmounts = amountsPerVariant.filter(a => a.amount != null);
     let amount = null;
     let trustedVariant = null;
+    let amountVotes = 0;
     if (validAmounts.length) {
-      trustedVariant = validAmounts[0]; // เชื่อ variant แรก (threshold128 สูตรเดิมที่ผ่านการใช้งานจริงมาก่อน) เป็นหลัก
-      amount = trustedVariant.amount;
-      const disagree = validAmounts.length > 1 && new Set(validAmounts.map(a => a.amount)).size > 1;
-      if (disagree) console.warn('OCR variants อ่านยอดไม่ตรงกัน:', JSON.stringify(amountsPerVariant.map(a => ({ variant: a.variant, amount: a.amount }))));
+      const groups = new Map();
+      for (const a of validAmounts) {
+        const g = groups.get(a.amount) || { amount: a.amount, votes: 0, score: 0, first: a };
+        g.votes += 1; g.score += a.score;
+        groups.set(a.amount, g);
+      }
+      const best = [...groups.values()].sort((x, y) => (y.votes - x.votes) || (y.score - x.score))[0];
+      amount = best.amount;
+      amountVotes = best.votes;
+      trustedVariant = best.first;
+      if (groups.size > 1) console.warn('OCR variants อ่านยอดไม่ตรงกัน:', JSON.stringify(amountsPerVariant.map(a => ({ variant: a.variant, amount: a.amount, score: a.score }))));
     }
+    // high = อ่านได้ตรงกันอย่างน้อย 2 แบบ / low = มีแบบเดียวที่อ่านได้ หรือแต่ละแบบอ่านต่างกันหมด
+    const amountConfidence = amount == null ? null : (amountVotes >= 2 ? 'high' : 'low');
+    const amountReadings = amountsPerVariant.map(a => ({ variant: a.variant, amount: a.amount }));
 
     // 🩹 BUG FIX (พบจากการรันทดสอบจริง ไม่ใช่แค่อ่านโค้ด): เดิมเลือก bestText จาก "rawText ที่ยาวที่สุด"
     // โดยคิดว่ายาวกว่า = ข้อมูลครบกว่า — แต่ทดสอบจริงพบว่า variant ที่อ่านพลาด (เช่น "soft" ที่ไม่ทำ
@@ -5307,10 +5444,15 @@ async function runSlipOCR(base64) {
     const bestText = trustedVariant
       ? trustedVariant.rawText
       : results.reduce((a, b) => (b.rawText.length > a.rawText.length ? b : a)).rawText;
-    const dateInfo  = extractSlipDateTime(bestText);
-    const ref       = extractSlipRef(bestText);
+    // วันที่/เลขอ้างอิงใช้ข้อความจาก variant ที่เชื่อถือก่อน ถ้าในนั้นหาไม่เจอค่อยลอง variant อื่น
+    const textsByTrust = [bestText, ...results.map(r => r.rawText).filter(t => t !== bestText)];
+    const dateInfo  = textsByTrust.map(extractSlipDateTime).find(d => d.iso) || { iso: null, raw: null, hasTime: false };
+    const ref       = textsByTrust.map(extractSlipRef).find(Boolean) || null;
 
-    return { rawText: bestText, amount, datetime: dateInfo.iso, dateRaw: dateInfo.raw, ref, imageHash };
+    return {
+      rawText: bestText, amount, amountConfidence, amountReadings,
+      datetime: dateInfo.iso, dateRaw: dateInfo.raw, hasTime: !!dateInfo.hasTime, ref, imageHash
+    };
   } catch (e) {
     try { fs.unlinkSync(tmpOrig); } catch (_) {}
     throw e;
@@ -5331,6 +5473,16 @@ async function runSlipOCR(base64) {
 // ตรวจสลิปของธนาคาร) ซึ่งมีค่าใช้จ่ายต่อครั้ง
 const SLIP_MAX_AGE_HOURS   = 24; // สลิปที่วันที่/เวลาเก่ากว่านี้ → ไม่ auto-confirm ให้ ต้องแอดมินตรวจเอง
 const SLIP_MAX_FUTURE_MIN  = 15; // เวลาในสลิปล้ำหน้าเวลาปัจจุบันเกินนี้ → น่าสงสัย (นาฬิกาเพี้ยน/สลิปปลอม)
+const SLIP_BEFORE_ORDER_GRACE_MIN = 30; // เผื่อลูกค้าโอนก่อนกดสั่ง/นาฬิกาเครื่องคลาดเคลื่อน — โอนก่อนสร้างออเดอร์เกินนี้ → ให้แอดมินตรวจ
+
+// แสดงวันเวลาแบบไทย (เวลาไทย) ในข้อความแจ้งเตือน เช่น "22/10/2025 14:30 น."
+function formatThaiDateTime(iso) {
+  const d = new Date(iso);
+  if (!iso || isNaN(d.getTime())) return '-';
+  const t = new Date(d.getTime() + 7 * 3600000);
+  const p = n => String(n).padStart(2, '0');
+  return `${p(t.getUTCDate())}/${p(t.getUTCMonth() + 1)}/${t.getUTCFullYear()} ${p(t.getUTCHours())}:${p(t.getUTCMinutes())} น.`;
+}
 
 app.post('/submit-slip', rateLimit(20), async (req, res) => {
   const { order_id, customer_id, slip_url, slip_amount, slip_ref_manual } = req.body;
@@ -5353,7 +5505,11 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
   if (!order)
     return res.status(404).json({ error: `ไม่พบออเดอร์ #${order_id} — กรุณารีเฟรชแล้วลองใหม่` });
   // อนุญาต customer_id ที่ลงท้ายด้วย prefix เดียวกัน (กรณี session ต่างกันเล็กน้อย)
-  if (order.customer_id !== customer_id && !order.customer_id?.startsWith(customer_id?.slice(0, 8)))
+  // 🔒 ต้องส่ง customer_id อย่างน้อย 8 ตัวอักษรถึงจะใช้ prefix เทียบได้ — เดิม customer_id สั้นๆ เช่น "U" จะ
+  // startsWith ตรงกับออเดอร์ของลูกค้า LINE ทุกคน ทำให้ส่งสลิปเข้าออเดอร์ของคนอื่นได้
+  const cidOk = order.customer_id === customer_id ||
+    (String(customer_id).length >= 8 && order.customer_id?.startsWith(String(customer_id).slice(0, 8)));
+  if (!cidOk)
     return res.status(403).json({ error: 'ไม่ใช่ออเดอร์ของคุณ' });
 
   const expectedTotal = Number(order.total) || 0;
@@ -5365,18 +5521,26 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
   let ocr = null;
   let verifySource = 'none'; // 'thunder' | 'ocr' | 'none'
   let thunderDupFlag = false;
+  let thunderAmountMismatch = false;
+  let slipQR = null; // ผลอ่าน QR บนสลิปในเครื่อง (ไม่ขึ้นกับ Thunder)
   if (slip_url) {
     try {
       const base64    = await fetchImageAsBase64(slip_url);
       const imageHash = computeImageHash(base64);
-      const thunder    = await runThunderVerify(base64, expectedTotal);
+      // อ่าน QR ในเครื่องคู่ขนานกับ Thunder — ใช้เลขอ้างอิงจริงจาก QR กันสลิปซ้ำได้แม้ Thunder ใช้ไม่ได้
+      const [qr, thunder] = await Promise.all([
+        decodeSlipQR(base64).catch(e => { console.warn('slip QR decode failed:', e.message); return null; }),
+        runThunderVerify(base64, expectedTotal)
+      ]);
+      slipQR = qr;
       if (thunder && thunder.amount != null) {
         ocr = {
-          rawText: '', amount: thunder.amount, datetime: thunder.datetime,
-          dateRaw: thunder.datetime, ref: thunder.ref, imageHash,
-          receiverName: thunder.receiverName
+          rawText: '', amount: Number(thunder.amount), amountConfidence: 'bank', datetime: thunder.datetime,
+          dateRaw: thunder.datetime ? formatThaiDateTime(thunder.datetime) : null, hasTime: !!thunder.datetime,
+          ref: thunder.ref, imageHash, receiverName: thunder.receiverName
         };
         thunderDupFlag = thunder.isDuplicate;
+        thunderAmountMismatch = thunder.isAmountMatched === false;
         verifySource = 'thunder';
       } else {
         ocr = await runSlipOCR(base64); // fallback ฟรี ไม่จำกัดจำนวน
@@ -5387,6 +5551,10 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
       console.warn('submit-slip server verify failed:', e.message);
     }
   }
+  // เลขอ้างอิงที่ใช้บันทึก/กันซ้ำ เรียงตามความน่าเชื่อถือ: ธนาคาร(Thunder) > QR บนสลิป > OCR > ลูกค้ากรอกเอง
+  const slipRefs = [...new Set([ocr?.ref && verifySource === 'thunder' ? ocr.ref : null,
+    slipQR?.transRef, ocr?.ref, manualRef].filter(Boolean).map(r => String(r).trim()))];
+  const bestRef = slipRefs[0] || null;
 
   // 🐛 BUG FIX (พบจากเคสจริง): ลูกค้าส่งสลิป "รูปเดียวกันเป๊ะ" ซ้ำเข้ามาให้ออเดอร์เดิม (เช่น
   // แอปค้าง/ตอบช้าเลยกดส่งซ้ำ, หรือฝั่งเว็บมี auto-retry เมื่อ server ตื่นช้าแล้วตอบไม่ทัน — ดู
@@ -5408,11 +5576,12 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
         .limit(1).maybeSingle();
       if (dupByHash) dupReason = `รูปสลิปนี้เคยถูกใช้ยืนยันออเดอร์ #${dupByHash.order_id} ไปแล้ว`;
     }
-    const refForDupCheck = ocr?.ref || manualRef; // ใช้ค่าที่ลูกค้ากรอกเองเป็น fallback ถ้า OCR อ่านไม่ออก
-    if (!dupReason && refForDupCheck) {
+    // เช็คทุกเลขอ้างอิงที่อ่านได้ (QR/Thunder/OCR/ลูกค้ากรอก) ไม่ใช่แค่ตัวเดียว — กันกรณี OCR อ่านเลขเพี้ยน
+    // แต่ QR อ่านได้ถูก หรือออเดอร์เก่าบันทึกเลขจาก OCR ไว้ แต่รอบนี้อ่านได้จาก QR
+    if (!dupReason && slipRefs.length) {
       const { data: dupByRef } = await supabase
         .from('orders').select('order_id')
-        .eq('slip_ref', refForDupCheck)
+        .in('slip_ref', [...new Set(slipRefs.flatMap(r => [r, r.toUpperCase(), r.toLowerCase()]))])
         .neq('order_id', order_id)
         .limit(1).maybeSingle();
       if (dupByRef) dupReason = `เลขอ้างอิงรายการนี้เคยถูกใช้ยืนยันออเดอร์ #${dupByRef.order_id} ไปแล้ว`;
@@ -5429,7 +5598,10 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
   // ═══ 👤 เทียบชื่อผู้รับเงินกับชื่อบัญชีร้านที่ลงทะเบียนไว้ (advisory เท่านั้น — ไม่บล็อกการยืนยันอัตโนมัติ) ═══
   // ความมั่นใจของการอ่านชื่อ (โดยเฉพาะจาก OCR ในเครื่อง) ต่ำกว่าการอ่านยอดเงินมาก จึงใช้แค่เตือน
   // แอดมินเพิ่มเติมในข้อความแจ้งเตือน ไม่ใช้ตัดสินใจเปลี่ยนสถานะออเดอร์
+  // 🎯 ยกเว้นกรณีชื่อมาจาก Thunder (ข้อมูลจากธนาคารจริง ไม่ใช่การเดาจาก OCR) — ถ้าไม่ตรงกับชื่อบัญชีร้าน
+  // ชัดเจน = ลูกค้าโอนเข้าบัญชีอื่น (โอนผิดบัญชี/เอาสลิปที่โอนให้คนอื่นมาใช้) → ไม่ยืนยันอัตโนมัติ ให้แอดมินตรวจ
   let nameMismatchNote = '';
+  let receiverMismatch = false;
   if (ocr?.receiverName) {
     try {
       const { data: qrCfg } = await supabase
@@ -5437,19 +5609,43 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
       const shopAccountName = qrCfg?.value?.account_name || '';
       const match = namesLikelyMatch(ocr.receiverName, shopAccountName);
       if (match === false) {
-        nameMismatchNote = `\n⚠️ ชื่อผู้รับในสลิป ("${ocr.receiverName}") ดูไม่ตรงกับชื่อบัญชีร้านที่ลงทะเบียนไว้ (${verifySource === 'ocr' ? 'อ่านด้วย OCR ความมั่นใจต่ำกว่าปกติ' : 'ตรวจจาก Thunder'}) — กรุณาตรวจสอบเพิ่มเติม`;
+        // บล็อกอัตโนมัติเฉพาะเมื่อเปิด STRICT_RECEIVER_CHECK=1 — ค่าเริ่มต้นเป็นแค่เตือนแอดมิน เพราะชื่อใน
+        // qr_config ที่ร้านกรอกอาจเป็นชื่อร้าน ไม่ใช่ชื่อเจ้าของบัญชีธนาคาร ถ้าบล็อกเลยจะทำให้ทุกสลิปค้างรอแอดมิน
+        receiverMismatch = verifySource === 'thunder' && process.env.STRICT_RECEIVER_CHECK === '1';
+        nameMismatchNote = `\n⚠️ ชื่อผู้รับในสลิป ("${ocr.receiverName}") ดูไม่ตรงกับชื่อบัญชีร้านที่ลงทะเบียนไว้ "${shopAccountName}" (${verifySource === 'ocr' ? 'อ่านด้วย OCR ความมั่นใจต่ำกว่าปกติ' : 'ตรวจจาก Thunder'}) — กรุณาตรวจสอบเพิ่มเติม`;
       }
     } catch (e) {
       console.warn('name-match check skipped:', e.message);
     }
   }
 
+  // ═══ 🔎 หมายเหตุประกอบการตรวจ (advisory — แจ้งแอดมินเท่านั้น ไม่เปลี่ยนผลตัดสิน) ═══
+  const verifyNotes = [];
+  if (slipQR) {
+    verifyNotes.push(`🔳 QR บนสลิป: เลขอ้างอิง ${slipQR.transRef}${slipQR.bankName ? ` (ธ.${slipQR.bankName})` : ''}`);
+    if (slipQR.crcValid === false) verifyNotes.push('⚠️ QR บนสลิปมีค่าตรวจสอบ (CRC) ไม่ถูกต้อง — อาจเป็น QR ที่ถูกสร้าง/ตัดต่อขึ้นเอง');
+    if (verifySource === 'thunder' && ocr?.ref && ocr.ref.toUpperCase() !== slipQR.transRef)
+      verifyNotes.push(`⚠️ เลขอ้างอิงใน QR (${slipQR.transRef}) ไม่ตรงกับที่ธนาคารตอบกลับ (${ocr.ref})`);
+  } else if (slip_url && verifySource === 'ocr') {
+    verifyNotes.push('ℹ️ ไม่พบ QR ตรวจสอบบนสลิป (รูปอาจถูกครอป/ถ่ายไม่ชัด หรือไม่ใช่สลิปจากแอปธนาคาร)');
+  }
+  if (verifySource === 'ocr' && ocr?.amountConfidence === 'low' && ocr.amountReadings?.length) {
+    const reads = ocr.amountReadings.map(r => r.amount == null ? '-' : `฿${r.amount.toLocaleString()}`).join(' / ');
+    verifyNotes.push(`ℹ️ OCR อ่านยอดได้ไม่ตรงกันทุกรอบ (${reads}) — ความมั่นใจต่ำ`);
+  }
+
   // ═══ 📅 ตรวจความสดใหม่ของวันที่/เวลาในสลิป ═══
-  let dateFlag = null; // 'stale' | 'future' | null
+  // + ★ ใหม่: สลิปต้องไม่ได้โอน "ก่อน" สร้างออเดอร์ (เกินเผื่อเวลา) — กันเอาสลิปเก่าที่ยังไม่เกิน 24 ชม.
+  //   (เช่น สลิปที่โอนให้ร้านอื่น/ออเดอร์อื่นเมื่อเช้า) มาใช้ยืนยันออเดอร์ใหม่ เช็คเฉพาะเมื่ออ่านเวลาได้จริง
+  //   (ถ้าอ่านได้แค่วันที่ ระบบจะใส่เวลาเที่ยงวันเป็นค่ากลาง ซึ่งเทียบเวลาละเอียดแบบนี้ไม่ได้)
+  let dateFlag = null; // 'stale' | 'future' | 'before_order' | null
   if (ocr?.datetime) {
-    const ageHr = (Date.now() - new Date(ocr.datetime).getTime()) / 3600000;
+    const slipTs = new Date(ocr.datetime).getTime();
+    const ageHr = (Date.now() - slipTs) / 3600000;
+    const orderTs = order.created_at ? new Date(order.created_at).getTime() : NaN;
     if (ageHr > SLIP_MAX_AGE_HOURS) dateFlag = 'stale';
     else if (ageHr < -(SLIP_MAX_FUTURE_MIN / 60)) dateFlag = 'future';
+    else if (ocr.hasTime && !isNaN(orderTs) && slipTs < orderTs - SLIP_BEFORE_ORDER_GRACE_MIN * 60000) dateFlag = 'before_order';
   }
 
   // ═══ ✅ ตัดสินผล — verifiedAmount คือยอดที่ server อ่านได้เองจากรูปจริง (ใช้ตัวนี้ตัดสิน) ═══
@@ -5466,13 +5662,22 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
     blockReason = 'stale_date';
   } else if (dateFlag === 'future') {
     blockReason = 'future_date';
+  } else if (dateFlag === 'before_order') {
+    blockReason = 'before_order';
+  } else if (receiverMismatch) {
+    blockReason = 'wrong_receiver';
+  } else if (verifySource === 'ocr' && slip_url && !slipQR && process.env.REQUIRE_SLIP_QR === '1') {
+    // เปิดใช้เมื่อต้องการเข้มสุด: ถ้าตรวจด้วย OCR ล้วน (ไม่ผ่านธนาคาร) ต้องเห็น QR สลิปจริงบนรูปด้วย
+    blockReason = 'no_qr';
   } else if (!slip_url) {
     blockReason = 'no_image';
   } else if (verifiedAmount == null) {
     // มีรูป แต่ server อ่านยอดจากรูปเองไม่ได้ (ลายมือ/มุมกล้อง/OCR พลาด ฯลฯ) → ไม่เชื่อยอดที่ client พิมพ์เพียงอย่างเดียว
     blockReason = 'ocr_failed';
   } else {
-    isMatch = Math.abs(expectedTotal - verifiedAmount) < 1;
+    // 🎯 เดิมยอมให้ต่างกันได้ไม่ถึง ฿1 (เช่น ออเดอร์ ฿500 โอนมา ฿499.50 ก็ผ่าน) — ตอนนี้ต้องตรงทุกสตางค์
+    // และถ้า Thunder (ธนาคาร) บอกเองว่ายอดไม่ตรง ให้เชื่อธนาคาร
+    isMatch = Math.round(expectedTotal * 100) === Math.round(verifiedAmount * 100) && !thunderAmountMismatch;
   }
 
   const now = new Date().toISOString();
@@ -5483,9 +5688,9 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
     slip_amount     : typedAmount || null,
     slip_ocr_amount : verifiedAmount,
     slip_image_hash : ocr?.imageHash || null,
-    slip_ref        : ocr?.ref || manualRef || null,
+    slip_ref        : bestRef,
     slip_datetime   : ocr?.datetime || null,
-    payment_flag    : blockReason,   // null | 'duplicate' | 'stale_date' | 'future_date' | 'no_image' | 'ocr_failed' — ให้แอดมินพาเนลแยกเคสสงสัยฉ้อโกงจากยอดไม่ตรงธรรมดา
+    payment_flag    : blockReason,   // null | 'duplicate' | 'stale_date' | 'future_date' | 'before_order' | 'wrong_receiver' | 'no_qr' | 'no_image' | 'ocr_failed' — ให้แอดมินพาเนลแยกเคสสงสัยฉ้อโกงจากยอดไม่ตรงธรรมดา
     payment_status  : newPayStatus,
     ...(isMatch ? { status: 'confirmed' } : {})
   };
@@ -5518,6 +5723,15 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
   } else if (blockReason === 'future_date') {
     chatMsg  = `⚠️ วันที่/เวลาในสลิปยังไม่ถึง ระบบจึงขอให้ร้านตรวจสอบก่อนค่ะ`;
     adminMsg = `🚨 สลิปวันที่ล่วงหน้าผิดปกติ #${order_id}\n\nชื่อ: ${order.customer_name}\nวันที่ในสลิป: ${ocr?.dateRaw || '-'}\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\n⚠️ อาจเป็นสลิปตกแต่ง — กรุณาตรวจสอบก่อนกด "ยืนยันชำระแล้ว"`;
+  } else if (blockReason === 'before_order') {
+    chatMsg  = `⚠️ เวลาในสลิปเป็นเวลาก่อนที่จะสั่งออเดอร์นี้ ระบบจึงขอให้ร้านตรวจสอบก่อนค่ะ\n\nหากโอนสำหรับออเดอร์นี้จริง ทางร้านจะยืนยันให้เร็วๆ นี้นะคะ`;
+    adminMsg = `🚨 สลิปโอนก่อนสร้างออเดอร์ #${order_id}\n\nชื่อ: ${order.customer_name}\nเวลาในสลิป: ${ocr?.dateRaw || '-'}\nสร้างออเดอร์เมื่อ: ${formatThaiDateTime(order.created_at)}\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n⚠️ อาจเป็นสลิปของรายการอื่นที่นำมาใช้ซ้ำ — กรุณาตรวจสอบก่อนกด "ยืนยันชำระแล้ว"`;
+  } else if (blockReason === 'no_qr') {
+    chatMsg  = `⚠️ ไม่พบ QR ตรวจสอบบนสลิป กรุณาแนบสลิปทั้งใบ (ไม่ครอป) หรือรอร้านตรวจสอบค่ะ`;
+    adminMsg = `🚨 สลิปไม่มี QR ตรวจสอบ #${order_id}\n\nชื่อ: ${order.customer_name}\nยอดที่อ่านได้ (OCR): ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n⚠️ รูปอาจถูกครอป/ตัดต่อ — กรุณาตรวจรูปด้วยตาก่อนกด "ยืนยันชำระแล้ว"`;
+  } else if (blockReason === 'wrong_receiver') {
+    chatMsg  = `⚠️ ชื่อบัญชีผู้รับในสลิปไม่ตรงกับบัญชีของร้าน ระบบจึงขอให้ร้านตรวจสอบก่อนค่ะ\n\nกรุณาตรวจสอบว่าโอนเข้าบัญชีร้านถูกต้อง หรือติดต่อร้านค้าค่ะ`;
+    adminMsg = `🚨 โอนเข้าบัญชีผู้รับไม่ตรง #${order_id}\n\nชื่อ: ${order.customer_name}\nผู้รับในสลิป (ตรวจกับธนาคารผ่าน Thunder): ${ocr?.receiverName || '-'}\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n⚠️ ห้ามกดยืนยันจนกว่าจะเช็คบัญชีร้านว่าได้รับเงินจริง`;
   } else if (blockReason === 'no_image' || blockReason === 'ocr_failed') {
     chatMsg = diff > 0
       ? `⚠️ ยอดที่แจ้งไม่ครบ\n\nยอดที่แจ้ง: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\nขาดอีก: ฿${diff.toFixed(2)}\n\nกรุณาโอนเพิ่มแล้วส่งสลิปใหม่ หรือติดต่อร้านค้าเพื่อยืนยันค่ะ`
@@ -5533,7 +5747,8 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
       adminMsg = `💳 สลิปโอนเกิน #${order_id}\n\nชื่อ: ${order.customer_name}\nยอดที่โอน (${verifyLabel}): ฿${verifiedAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n\n📲 กด "ยืนยันชำระแล้ว" ใน Admin Panel`;
     }
   }
-  if (nameMismatchNote) adminMsg += nameMismatchNote;
+  if (nameMismatchNote && blockReason !== 'wrong_receiver') adminMsg += nameMismatchNote;
+  if (verifyNotes.length) adminMsg += '\n\n' + verifyNotes.join('\n');
   // รูปเดียวกันเป๊ะที่เพิ่งประมวลผลให้ออเดอร์นี้ไปแล้ว — บอกลูกค้าตรงๆ กันสับสนว่าทำไม "เหมือนไม่มีอะไรเกิดขึ้น"
   if (isSameSlipResubmit && !isMatch) {
     chatMsg = `🔁 ระบบได้รับสลิปรูปนี้ไปแล้วก่อนหน้านี้สำหรับออเดอร์นี้ (ผลตรวจเหมือนเดิม)\n\n${chatMsg}`;
@@ -5577,7 +5792,7 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
 
   res.json({
     success: true, status: newPayStatus, isMatch, diff,
-    reason: blockReason,           // null | 'duplicate' | 'stale_date' | 'future_date' | 'no_image' | 'ocr_failed'
+    reason: blockReason,           // null | 'duplicate' | 'stale_date' | 'future_date' | 'before_order' | 'wrong_receiver' | 'no_qr' | 'no_image' | 'ocr_failed'
     verifiedAmount,                // ยอดที่ server อ่านได้เองจากรูป (null ถ้าอ่านไม่ได้/ไม่มีรูป)
     slipDate: ocr?.dateRaw || null
   });
@@ -5598,6 +5813,8 @@ app.post('/read-slip', rateLimit(10), async (req, res) => {
 
   try {
     const result = await runSlipOCR(image_base64);
+    // อ่าน QR บนสลิปไปด้วย เพื่อบอกลูกค้าทันทีว่ารูปนี้เป็นสลิปจริงหรือไม่ (ไม่กระทบการตัดสินที่ /submit-slip)
+    const qr = await decodeSlipQR(image_base64).catch(() => null);
     if (!result.rawText) {
       return res.json({ success: false, amount: null, message: 'อ่านตัวอักษรไม่ได้ — กรุณากรอกยอดที่โอนด้วยนะคะ' });
     }
@@ -5606,7 +5823,8 @@ app.post('/read-slip', rateLimit(10), async (req, res) => {
     }
     res.json({
       success: true, amount: result.amount, raw: result.rawText,
-      slipDate: result.dateRaw, slipRef: result.ref
+      slipDate: result.dateRaw, slipRef: qr?.transRef || result.ref,
+      confidence: result.amountConfidence, hasSlipQR: !!qr
     });
   } catch (e) {
     const msg = e.message?.includes('tesseract') || e.message?.includes('spawn')
@@ -5617,81 +5835,89 @@ app.post('/read-slip', rateLimit(10), async (req, res) => {
 });
 
 // ── helper: แยกยอดเงินจากข้อความ OCR สลิปโอนเงิน ──────────
-// 🩹 BUG FIX (พบจากเคสจริง): เดิม "Pattern 1" (ตัวเลขเดี่ยวบนบรรทัดของตัวเอง) ถูกเช็คก่อน
-// "Pattern 2" (ตัวเลขที่อยู่ติดคำว่า "จำนวน"/"ยอดโอน" ฯลฯ ซึ่งแม่นยำกว่ามาก) — และ regex ของ
-// Pattern 1 เดิมมีส่วนทศนิยมเป็น optional จึงจับเลขหลักเดียวลอยๆ เช่น "1" (ซึ่งอาจเป็นขยะที่ OCR
-// อ่านผิดจากไอคอน/เครื่องหมายถูก/เลขบัญชีที่ถูกมาส์กบางส่วน) แล้ว return ยอดผิดทันที ก่อนจะได้ไป
-// เจอบรรทัด "จำนวน 438.00 บาท" ที่ถูกต้องจริงๆ เลย ทำให้ระบบแจ้ง "ยอดไม่ตรง" ทั้งที่ลูกค้าโอนถูกต้อง
-// แก้โดย: (1) สลับให้ Pattern คำสำคัญ (แม่นยำกว่า) ทำงานก่อนเสมอ (2) บังคับให้ Pattern เลขเดี่ยว
-// ต้องมีทศนิยม 2 ตำแหน่ง (สลิปโอนเงินจริงมีทศนิยมเสมอ) กันไม่ให้ตัวเลขหลักเดียวลอยๆ ที่ไม่มีจุด
-// ถูกเข้าใจผิดว่าเป็นยอดเงิน
-function extractAmountFromSlip(text) {
-  const lines = text.split(/\n/).map(l => l.trim()).filter(Boolean);
+// 🎯 เขียนใหม่ทั้งหมดเป็นระบบ "ให้คะแนนผู้สมัคร" (candidate scoring) แทนการ return ตัวเลขแรกที่เจอ
+// ปัญหาของสูตรเดิมที่พบ:
+//   • keyword "เงิน" กว้างเกินไป — ไปติดบรรทัดหัวสลิป "โอนเงินสำเร็จ" แล้วเอาเลขบรรทัดถัดไป (วันที่
+//     "22 ต.ค. 68") มาเป็นยอดเงิน = ฿22
+//   • ไม่กันบรรทัด "ค่าธรรมเนียม 0.00 บาท" / "ยอดคงเหลือ" / เลขบัญชี / เลขอ้างอิง
+//   • fallback "เอาเลขที่ใหญ่ที่สุด" มักได้เลขบัญชี/เบอร์โทร/เลขอ้างอิงแทนยอดเงิน
+//   • OCR สับสนตัวอักษรกับตัวเลข (O↔0, l/I↔1, S↔5) และอ่านจุดเป็นจุลภาค ("1.500.00", "500,00")
+// วิธีใหม่: ดึงตัวเลขที่ "หน้าตาเป็นจำนวนเงิน" ทั้งหมด แล้วให้คะแนนจากบริบท เลือกตัวที่คะแนนสูงสุด
+// ถ้าไม่มีตัวไหนน่าเชื่อพอ → return null (ให้แอดมินตรวจ) ดีกว่าเดายอดผิด
+const AMOUNT_KEYWORDS  = /จำนวนเงิน|จำนวน|ยอดเงิน|ยอดโอน|ยอดชำระ|ยอดรวม|amount|total/i;
+const CURRENCY_HINT    = /บาท|thb|baht|฿/i;
+const FEE_KEYWORDS     = /ค่าธรรมเนียม|ธรรมเนียม|\bfee\b/i;
+const BALANCE_KEYWORDS = /คงเหลือ|balance|วงเงิน/i;
+const NON_AMOUNT_CTX   = /เลขที่|บัญชี|account|acc\b|ref|รหัส|อ้างอิง|วันที่|เวลา|date|time|โทร|tel|x{2,}|พร้อมเพย์|promptpay/i;
 
-  // Pattern 1 (เดิมคือ Pattern 2): keyword ที่มักอยู่ก่อนยอดเงิน (ไทย + Krungthai + KBank + SCB)
-  // เช็คก่อนเสมอเพราะแม่นยำกว่าการเดาจากตัวเลขลอยๆ มาก
-  const amountKeywords = /จำนวนเงิน|ยอดโอน|ยอดเงิน|จำนวน|amount|total|โอนเงิน|เงิน|จํานวนเงิน|จํานวน|รายการโอนเงิน|การโอนเงิน/i;
-  for (let i = 0; i < lines.length; i++) {
-    if (amountKeywords.test(lines[i])) {
-      const sameLineNum = parseThaiNumber(lines[i]);
-      if (sameLineNum) return sameLineNum;
-      if (lines[i + 1]) {
-        const nextLineNum = parseThaiNumber(lines[i + 1]);
-        if (nextLineNum) return nextLineNum;
-      }
-      if (lines[i + 2]) {
-        const next2LineNum = parseThaiNumber(lines[i + 2]);
-        if (next2LineNum) return next2LineNum;
-      }
-    }
-  }
-
-  // Pattern 2 (เดิมคือ Pattern 1): ตัวเลขที่อยู่บรรทัดของตัวเอง — บังคับต้องมีทศนิยม 2 ตำแหน่ง
-  // (เช่น "2,000.00" หรือ "58.00") เพื่อกันเลขหลักเดียว/เลขจำนวนเต็มลอยๆ ที่ไม่มีจุดทศนิยม
-  // (เช่น "1" จาก OCR อ่านผิด) ถูกเข้าใจผิดว่าเป็นยอดเงิน — สลิปโอนเงินจริงมีทศนิยมเสมอ
-  for (const line of lines) {
-    const stripped = line.replace(/\s/g, '');
-    const soloNum = stripped.match(/^(\d{1,3}(,\d{3})*\.\d{2})$|^(\d+\.\d{2})$/);
-    if (soloNum) {
-      const val = parseFloat(stripped.replace(/,/g, ''));
-      if (val >= 1 && val <= 999999) return val;
-    }
-  }
-
-  // Pattern 3: หาตัวเลขที่มี .00 (มักเป็นยอดเงิน เช่น 2,000.00 หรือ 58.00)
-  for (const line of lines) {
-    const dotZero = line.match(/(\d[\d,]*\.00)/g);
-    if (dotZero) {
-      for (const n of dotZero) {
-        const val = parseFloat(n.replace(/,/g, ''));
-        if (val >= 1 && val <= 999999) return val;
-      }
-    }
-  }
-
-  // Pattern 4: fallback — ตัวเลขที่ใหญ่ที่สุดที่สมเหตุ
-  const allNumbers = [];
-  for (const line of lines) {
-    const nums = line.match(/\d[\d,]*\.?\d*/g) || [];
-    for (const n of nums) {
-      const val = parseFloat(n.replace(/,/g, ''));
-      if (val >= 1 && val <= 999999) allNumbers.push(val);
-    }
-  }
-
-  if (!allNumbers.length) return null;
-  const wholeNumbers = allNumbers.filter(n => n === Math.floor(n) || (n * 100) % 1 === 0);
-  if (wholeNumbers.length) return Math.max(...wholeNumbers);
-  return Math.max(...allNumbers);
+function normalizeOcrText(text) {
+  return String(text || '')
+    .replace(/[๐-๙]/g, d => String(d.charCodeAt(0) - 3664))   // เลขไทย → อารบิก
+    .replace(/\u0E4D\u0E32/g, '\u0E33')                        // "ํา" (นิคหิต+สระอา) → "ำ" ที่ OCR ชอบแยก
+    .replace(/[\u200B-\u200D\uFEFF]/g, '');
 }
 
-function parseThaiNumber(str) {
-  // แปลงตัวเลขไทย ๐-๙ → 0-9
-  const normalized = str.replace(/[๐-๙]/g, d => d.charCodeAt(0) - 3664);
-  const match = normalized.match(/(\d[\d,]*\.?\d*)/);
-  if (!match) return null;
-  const val = parseFloat(match[1].replace(/,/g, ''));
-  return (val >= 1 && val <= 999999) ? val : null;
+// แก้ตัวอักษรที่ OCR อ่านสลับกับตัวเลข — เฉพาะใน token ที่ส่วนใหญ่เป็นตัวเลขอยู่แล้ว (ไม่แตะคำปกติ)
+function fixOcrDigitToken(tok) {
+  const digitish = (tok.match(/[\d.,]/g) || []).length;
+  if (!/\d/.test(tok) || digitish / tok.length < 0.6) return tok;
+  return tok.replace(/[Oo]/g, '0').replace(/[lI|]/g, '1').replace(/S/g, '5').replace(/B/g, '8');
+}
+
+// แปลง token ตัวเลขเป็นจำนวนเงิน — ตัวคั่นตัวสุดท้ายที่ตามด้วยตัวเลข 2 หลักพอดีคือทศนิยม
+// ตัวคั่นที่เหลือต้องแบ่งกลุ่มละ 3 หลักถูกต้อง ไม่งั้นไม่ใช่จำนวนเงิน (เช่นวันที่ 12.10.68)
+function parseMoneyToken(tok) {
+  const m = tok.match(/^(\d[\d.,]*?)(?:[.,](\d{2}))?$/);
+  if (!m) return null;
+  const intPart = m[1];
+  const hasDecimals = m[2] != null;
+  let intDigits;
+  if (/[.,]/.test(intPart)) {
+    if (!/^\d{1,3}([.,]\d{3})+$/.test(intPart)) return null;
+    intDigits = intPart.replace(/[.,]/g, '');
+  } else {
+    if (intPart.length > 7) return null; // เลขยาว ไม่มีตัวคั่น = เลขบัญชี/เบอร์โทร/เลขอ้างอิง
+    intDigits = intPart;
+  }
+  const value = parseFloat(intDigits + (hasDecimals ? '.' + m[2] : ''));
+  if (!(value > 0) || value > 9999999) return null;
+  return { value: Math.round(value * 100) / 100, hasDecimals };
+}
+
+function extractAmountCandidates(text) {
+  const lines = normalizeOcrText(text).split(/\n/).map(l => l.trim()).filter(Boolean);
+  const out = [];
+  lines.forEach((rawLine, i) => {
+    // รวมช่องว่างที่ OCR แทรกกลางตัวเลข เช่น "1, 500 .00" → "1,500.00"
+    const line = rawLine.split(/\s+/).map(fixOcrDigitToken).join(' ')
+      .replace(/(\d)\s*([.,])\s*(\d)/g, '$1$2$3');
+    if (FEE_KEYWORDS.test(line) || BALANCE_KEYWORDS.test(line)) return;
+    const prev1 = lines[i - 1] || '', prev2 = lines[i - 2] || '';
+    const tokens = line.match(/(?<![\d:/\-])\d[\d.,]*\d(?![\d:/\-])|(?<![\d.,:/\-])\d(?![\d.,:/\-])/g) || [];
+    for (const tok of tokens) {
+      const money = parseMoneyToken(tok);
+      if (!money) continue;
+      // ตัวเลขที่ตามด้วย "น." คือเวลา (เช่น 14.30 น.) ไม่ใช่ยอดเงิน
+      if (new RegExp(tok.replace(/[.,]/g, '\\$&') + '\\s*น\\.').test(line)) continue;
+      let score = 0;
+      if (money.hasDecimals) score += 3; else score -= 2;
+      if (AMOUNT_KEYWORDS.test(line)) score += 4;
+      else if (AMOUNT_KEYWORDS.test(prev1) && !FEE_KEYWORDS.test(prev1)) score += 3;
+      else if (AMOUNT_KEYWORDS.test(prev2) && !FEE_KEYWORDS.test(prev2)) score += 1;
+      if (CURRENCY_HINT.test(line)) score += 2;
+      if (NON_AMOUNT_CTX.test(line) && !AMOUNT_KEYWORDS.test(line)) score -= 5;
+      // บรรทัดที่มีแต่ตัวเลขยอดเงินโดดๆ (สลิปส่วนใหญ่แสดงยอดตัวใหญ่บรรทัดเดียว)
+      if (money.hasDecimals && line.replace(/[\s฿]|บาท|THB/gi, '') === tok) score += 1;
+      out.push({ value: money.value, score, line: rawLine });
+    }
+  });
+  // เรียงคะแนนมาก→น้อย ถ้าเท่ากันเอาบรรทัดที่มาก่อน (ยอดเงินมักอยู่ส่วนบนของสลิป)
+  return out.filter(c => c.score >= 4).sort((a, b) => b.score - a.score);
+}
+
+function extractAmountFromSlip(text) {
+  const best = extractAmountCandidates(text)[0];
+  return best ? best.value : null;
 }
 
 // ── ★ ใหม่: ดึง "ชื่อผู้รับเงิน" จากข้อความ OCR สลิป (best-effort, advisory เท่านั้น) ──
@@ -5699,8 +5925,8 @@ function parseThaiNumber(str) {
 // ไม่เคยใช้ตัดสินบล็อกการยืนยันอัตโนมัติ เพราะความมั่นใจต่ำกว่าการอ่านยอดเงินมาก
 function extractReceiverName(text) {
   if (!text) return null;
-  const lines = text.split(/\n/).map(l => l.trim()).filter(Boolean);
-  const receiverKeywords = /ไปยัง|ผู้รับ|received|credit\s*to|เข้าบัญชี/i;
+  const lines = normalizeOcrText(text).split(/\n/).map(l => l.trim()).filter(Boolean);
+  const receiverKeywords = /ไปยัง|ผู้รับ|received|credit\s*to|เข้าบัญชี|^ไป$|^to\b/i;
   const skipWords = /ธนาคาร|bank|เลขที่บัญชี|account|xxx|x-\d|วันที่|เวลา/i;
   for (let i = 0; i < lines.length; i++) {
     if (receiverKeywords.test(lines[i])) {
@@ -5713,100 +5939,117 @@ function extractReceiverName(text) {
   return null;
 }
 
-// เทียบชื่อบัญชีแบบหยาบๆ (ตัดคำนำหน้า/ช่องว่าง/ตัวพิมพ์เล็ก-ใหญ่ออกก่อน แล้วเช็คว่าชื่อหนึ่ง
-// เป็นส่วนหนึ่งของอีกชื่อไหม) เผื่อ OCR อ่านไม่ครบทุกตัวอักษร — ยังคง "ไม่แม่นยำ 100%" อยู่ดี
+// เทียบชื่อบัญชีแบบหยาบๆ (ตัดคำนำหน้า/จุด/ช่องว่าง/ตัวพิมพ์ออกก่อน) — ธนาคารมักแสดงนามสกุลแค่
+// ตัวแรก (เช่น "นาย สมชาย ใ.") จึงเช็คทั้งแบบเป็นส่วนหนึ่งของกันและกัน และแบบชื่อต้นตรงกัน
+// ถ้าชื่อหนึ่งเป็นภาษาไทย อีกชื่อเป็นอังกฤษ → เทียบไม่ได้ (null) ไม่ใช่ "ไม่ตรง"
 function namesLikelyMatch(nameA, nameB) {
-  const norm = s => (s || '')
-    .replace(/^(นาย|นาง|นางสาว|น\.ส\.|บริษัท|ห้างหุ้นส่วนจำกัด|หจก\.|บจก\.)\s*/i, '')
-    .replace(/\s+/g, '')
-    .toLowerCase();
+  const stripTitle = s => (s || '').trim()
+    .replace(/^(นางสาว|นาย|นาง|น\.ส\.|ด\.ช\.|ด\.ญ\.|บริษัท|ห้างหุ้นส่วนจำกัด|หจก\.|บจก\.|mr\.?|mrs\.?|ms\.?|miss)\s*/i, '')
+    .replace(/\s*(จำกัด|\(มหาชน\)|co\.?,?\s*ltd\.?|ltd\.?)\s*$/i, '');
+  const norm = s => stripTitle(s).replace(/[.\s]+/g, '').toLowerCase();
   const a = norm(nameA), b = norm(nameB);
   if (!a || !b) return null; // ไม่มีข้อมูลพอจะเทียบ — ไม่ใช่ mismatch ไม่ใช่ match
-  return a.includes(b) || b.includes(a);
+  const isThai = s => /[ก-๙]/.test(s);
+  if (isThai(a) !== isThai(b)) return null;
+  if (a.includes(b) || b.includes(a)) return true;
+  const firstA = stripTitle(nameA).split(/\s+/)[0].replace(/\./g, '').toLowerCase();
+  const firstB = stripTitle(nameB).split(/\s+/)[0].replace(/\./g, '').toLowerCase();
+  if (firstA.length >= 3 && firstA === firstB) return true;
+  return false;
 }
 
 // ── ★ ใหม่: helper แยก "วันที่/เวลา" จากข้อความ OCR สลิป ──────────
 // รองรับปี พ.ศ. (2 หรือ 4 หลัก, แปลงเป็น ค.ศ. อัตโนมัติ), เดือนไทยแบบย่อ/เต็ม, เวลา HH:MM(:SS)
 // ใช้ตรวจว่าสลิปนี้ "สด" พอจะเชื่อได้ไหม (กันเอาสลิปเก่ามาใช้ยืนยันซ้ำ)
 const TH_MONTHS = {
-  'ม.ค.':1, 'มค':1, 'มกราคม':1,
-  'ก.พ.':2, 'กพ':2, 'กุมภาพันธ์':2,
-  'มี.ค.':3, 'มีค':3, 'มีนาคม':3,
-  'เม.ย.':4, 'เมย':4, 'เมษายน':4,
-  'พ.ค.':5, 'พค':5, 'พฤษภาคม':5,
-  'มิ.ย.':6, 'มิย':6, 'มิถุนายน':6,
-  'ก.ค.':7, 'กค':7, 'กรกฎาคม':7,
-  'ส.ค.':8, 'สค':8, 'สิงหาคม':8,
-  'ก.ย.':9, 'กย':9, 'กันยายน':9,
-  'ต.ค.':10, 'ตค':10, 'ตุลาคม':10,
-  'พ.ย.':11, 'พย':11, 'พฤศจิกายน':11,
-  'ธ.ค.':12, 'ธค':12, 'ธันวาคม':12
+  'ม.ค.':1, 'มค':1, 'มกราคม':1, 'jan':1,
+  'ก.พ.':2, 'กพ':2, 'กุมภาพันธ์':2, 'feb':2,
+  'มี.ค.':3, 'มีค':3, 'มีนาคม':3, 'mar':3,
+  'เม.ย.':4, 'เมย':4, 'เมษายน':4, 'apr':4,
+  'พ.ค.':5, 'พค':5, 'พฤษภาคม':5, 'may':5,
+  'มิ.ย.':6, 'มิย':6, 'มิถุนายน':6, 'jun':6,
+  'ก.ค.':7, 'กค':7, 'กรกฎาคม':7, 'jul':7,
+  'ส.ค.':8, 'สค':8, 'สิงหาคม':8, 'aug':8,
+  'ก.ย.':9, 'กย':9, 'กันยายน':9, 'sep':9,
+  'ต.ค.':10, 'ตค':10, 'ตุลาคม':10, 'oct':10,
+  'พ.ย.':11, 'พย':11, 'พฤศจิกายน':11, 'nov':11,
+  'ธ.ค.':12, 'ธค':12, 'ธันวาคม':12, 'dec':12
 };
+// 🎯 OCR มักอ่านจุดในชื่อเดือนย่อหาย/เกิน/มีช่องว่างแทรก ("ต.ค 68", "ต .ค. 68", "ตค. 68")
+// จึงสร้าง regex ที่จุด+ช่องว่างระหว่างตัวอักษรเป็น optional ทั้งหมด แล้ว map กลับด้วยการตัดจุดออก
+const TH_MONTH_LOOKUP = {};
+for (const [k, v] of Object.entries(TH_MONTHS)) TH_MONTH_LOOKUP[k.replace(/\./g, '').toLowerCase()] = v;
+const TH_MONTH_RE_SRC = Object.keys(TH_MONTH_LOOKUP).sort((a, b) => b.length - a.length)
+  .map(k => k.length <= 3 ? [...k].join('\\s*\\.?\\s*') + '\\.?' : k).join('|');
 
 function extractSlipDateTime(text) {
-  const norm = String(text).replace(/[๐-๙]/g, d => d.charCodeAt(0) - 3664); // เลขไทย → เลขอารบิก
+  const norm = normalizeOcrText(text);
 
   let day = null, month = null, year = null, hour = null, minute = null;
 
   // รูปแบบตัวเลขล้วน: 12/01/2568, 12-01-25, 12.01.2025
-  const numDate = norm.match(/(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);
-  if (numDate) {
+  const numDate = norm.match(/(?<![\d.,])(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4}|\d{2})(?![\d.,])/);
+  // รูปแบบวันที่ไทย: "12 ม.ค. 68" หรือ "12 มกราคม 2568"
+  const thDate = new RegExp(`(\\d{1,2})\\s*(${TH_MONTH_RE_SRC})\\s*(\\d{4}|\\d{2})(?!\\d)`, 'i').exec(norm);
+  if (thDate) {
+    day = parseInt(thDate[1], 10);
+    month = TH_MONTH_LOOKUP[thDate[2].replace(/[.\s]/g, '').toLowerCase()] || null;
+    year = parseInt(thDate[3], 10);
+  } else if (numDate) {
     day = parseInt(numDate[1], 10);
     month = parseInt(numDate[2], 10);
     year = parseInt(numDate[3], 10);
-  } else {
-    // รูปแบบวันที่ไทย: "12 ม.ค. 68" หรือ "12 มกราคม 2568"
-    const monthNames = Object.keys(TH_MONTHS).sort((a, b) => b.length - a.length)
-      .map(k => k.replace(/\./g, '\\.'));
-    const thDateRe = new RegExp(`(\\d{1,2})\\s*(${monthNames.join('|')})\\s*(\\d{2,4})`, 'i');
-    const thDate = thDateRe.exec(norm);
-    if (thDate) {
-      day = parseInt(thDate[1], 10);
-      const mKey = Object.keys(TH_MONTHS).find(k => k.toLowerCase() === thDate[2].toLowerCase());
-      month = mKey ? TH_MONTHS[mKey] : null;
-      year = parseInt(thDate[3], 10);
-    }
   }
 
   // แปลงปี พ.ศ. → ค.ศ.
   if (year != null) {
-    if (year < 100) year += 2500;   // เช่น "68" → 2568
+    if (year < 100) year += (year >= 50 ? 2500 : 2000); // "68" → 2568 (พ.ศ.), "25" → 2025 (ค.ศ. แบบย่อ)
     if (year > 2400) year -= 543;   // พ.ศ. → ค.ศ. (สลิปไทยเกือบทั้งหมดเป็น พ.ศ.)
   }
 
-  // เวลา HH:MM(:SS)
-  const timeMatch = norm.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  // เวลา HH:MM(:SS) — รับ "." แทน ":" ด้วยเฉพาะเมื่อตามด้วย "น." (เช่น "14.30 น.") กันชนกับยอดเงิน
+  const timeMatch = norm.match(/(?<!\d)([01]?\d|2[0-3])\s*:\s*([0-5]\d)(?::([0-5]\d))?(?!\d)/)
+    || norm.match(/(?<![\d.,])([01]?\d|2[0-3])\.([0-5]\d)\s*น\./);
   if (timeMatch) {
     hour   = parseInt(timeMatch[1], 10);
     minute = parseInt(timeMatch[2], 10);
   }
 
-  if (day == null || month == null || year == null) return { iso: null, raw: null };
-  if (month < 1 || month > 12 || day < 1 || day > 31) return { iso: null, raw: null };
-  if (year < 2000 || year > 2100) return { iso: null, raw: null }; // กันเลขมั่วจาก OCR
+  if (day == null || month == null || year == null) return { iso: null, raw: null, hasTime: false };
+  if (month < 1 || month > 12 || day < 1 || day > 31) return { iso: null, raw: null, hasTime: false };
+  if (year < 2000 || year > 2100) return { iso: null, raw: null, hasTime: false }; // กันเลขมั่วจาก OCR
 
   // สลิปไทยเป็นเวลาไทย (UTC+7) — ถ้าไม่เจอเวลา ใช้เที่ยงวันเป็นค่ากลาง กัน freshness check พลาดเพราะ timezone
   const h = hour ?? 12, m = minute ?? 0;
   const d = new Date(Date.UTC(year, month - 1, day, h - 7, m, 0));
-  if (isNaN(d.getTime())) return { iso: null, raw: null };
+  // กันวันที่ที่ไม่มีจริง (เช่น 31/02 จาก OCR อ่านผิด) ซึ่ง Date จะเลื่อนไปเดือนถัดไปเงียบๆ
+  if (isNaN(d.getTime()) || new Date(Date.UTC(year, month - 1, day)).getUTCMonth() !== month - 1)
+    return { iso: null, raw: null, hasTime: false };
 
   const raw = `${String(day).padStart(2,'0')}/${String(month).padStart(2,'0')}/${year}` +
     (hour != null ? ` ${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')} น.` : '');
-  return { iso: d.toISOString(), raw };
+  return { iso: d.toISOString(), raw, hasTime: hour != null };
 }
 
 // ── ★ ใหม่: helper แยก "เลขที่รายการ/เลขอ้างอิง" จากสลิป ──────────
 // ใช้กันสลิปเดิมถูกเอามาใช้ซ้ำยืนยันหลายออเดอร์ (ธนาคารแต่ละเจ้าออกเลขนี้ไม่ซ้ำกันต่อ 1 รายการโอนจริง)
+// (ถ้าอ่าน QR บนสลิปได้ จะใช้ transRef จาก QR แทน ซึ่งแม่นยำกว่ามาก — ดู decodeSlipQR)
 function extractSlipRef(text) {
-  const lines = text.split(/\n/).map(l => l.trim()).filter(Boolean);
+  const lines = normalizeOcrText(text).split(/\n/).map(l => l.trim()).filter(Boolean);
   const refKeywords = /เลขที่รายการ|รหัสอ้างอิง|เลขอ้างอิง|หมายเลขอ้างอิง|เลขที่อ้างอิง|ref(?:erence)?\s*(?:no\.?|number|id)?\b|transaction\s*id/i;
+  const pick = s => {
+    // OCR ชอบแทรกช่องว่างกลางเลขอ้างอิงยาวๆ — ลองต่อกันก่อน; ต้องมีตัวเลขอย่างน้อย 4 ตัว (กันจับคำธรรมดา)
+    const m = s.replace(/[:：]/g, ' ').replace(/(?<=\d)[ \t](?=\d)/g, '').match(/[A-Za-z0-9]{8,35}/g) || [];
+    const hit = m.find(t => (t.match(/\d/g) || []).length >= 4);
+    return hit ? hit.toUpperCase() : null;
+  };
   for (let i = 0; i < lines.length; i++) {
     if (!refKeywords.test(lines[i])) continue;
-    const sameLine = lines[i].replace(refKeywords, '').match(/[A-Za-z0-9]{8,25}/);
-    if (sameLine) return sameLine[0];
+    const sameLine = pick(lines[i].replace(refKeywords, ''));
+    if (sameLine) return sameLine;
     if (lines[i + 1]) {
-      const nextLine = lines[i + 1].match(/[A-Za-z0-9]{8,25}/);
-      if (nextLine) return nextLine[0];
+      const nextLine = pick(lines[i + 1]);
+      if (nextLine) return nextLine;
     }
   }
   return null;
