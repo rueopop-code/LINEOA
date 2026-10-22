@@ -5297,13 +5297,16 @@ async function decodeSlipQR(base64) {
   const attempts = [
     { width: 1200, gray: false },
     { width: 800,  gray: true },
-    { width: 1800, gray: true }
+    { width: 1800, gray: true },
+    { width: 2600, gray: true } // รูปถ่ายความละเอียดสูงที่ QR เล็กมาก
   ];
   for (const a of attempts) {
     try {
       let p = sharpLib(buf).rotate().resize({ width: a.width, withoutEnlargement: a.width <= 1200 });
-      if (a.gray) p = p.grayscale().normalise();
+      // grayscale() ให้ภาพ 1 ช่อง — ต้องแปลงกลับเป็น sRGB 3 ช่อง + alpha = RGBA 4 ช่อง ที่ jsQR ต้องการ
+      if (a.gray) p = p.grayscale().normalise().toColourspace('srgb');
       const { data, info } = await p.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      if (info.channels !== 4) continue;
       const code = jsQR(new Uint8ClampedArray(data.buffer, data.byteOffset, data.length), info.width, info.height,
         { inversionAttempts: 'attemptBoth' });
       if (code?.data) {
@@ -5502,7 +5505,11 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
   if (!order)
     return res.status(404).json({ error: `ไม่พบออเดอร์ #${order_id} — กรุณารีเฟรชแล้วลองใหม่` });
   // อนุญาต customer_id ที่ลงท้ายด้วย prefix เดียวกัน (กรณี session ต่างกันเล็กน้อย)
-  if (order.customer_id !== customer_id && !order.customer_id?.startsWith(customer_id?.slice(0, 8)))
+  // 🔒 ต้องส่ง customer_id อย่างน้อย 8 ตัวอักษรถึงจะใช้ prefix เทียบได้ — เดิม customer_id สั้นๆ เช่น "U" จะ
+  // startsWith ตรงกับออเดอร์ของลูกค้า LINE ทุกคน ทำให้ส่งสลิปเข้าออเดอร์ของคนอื่นได้
+  const cidOk = order.customer_id === customer_id ||
+    (String(customer_id).length >= 8 && order.customer_id?.startsWith(String(customer_id).slice(0, 8)));
+  if (!cidOk)
     return res.status(403).json({ error: 'ไม่ใช่ออเดอร์ของคุณ' });
 
   const expectedTotal = Number(order.total) || 0;
@@ -5574,7 +5581,7 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
     if (!dupReason && slipRefs.length) {
       const { data: dupByRef } = await supabase
         .from('orders').select('order_id')
-        .in('slip_ref', slipRefs)
+        .in('slip_ref', [...new Set(slipRefs.flatMap(r => [r, r.toUpperCase(), r.toLowerCase()]))])
         .neq('order_id', order_id)
         .limit(1).maybeSingle();
       if (dupByRef) dupReason = `เลขอ้างอิงรายการนี้เคยถูกใช้ยืนยันออเดอร์ #${dupByRef.order_id} ไปแล้ว`;
@@ -5602,7 +5609,9 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
       const shopAccountName = qrCfg?.value?.account_name || '';
       const match = namesLikelyMatch(ocr.receiverName, shopAccountName);
       if (match === false) {
-        receiverMismatch = verifySource === 'thunder';
+        // บล็อกอัตโนมัติเฉพาะเมื่อเปิด STRICT_RECEIVER_CHECK=1 — ค่าเริ่มต้นเป็นแค่เตือนแอดมิน เพราะชื่อใน
+        // qr_config ที่ร้านกรอกอาจเป็นชื่อร้าน ไม่ใช่ชื่อเจ้าของบัญชีธนาคาร ถ้าบล็อกเลยจะทำให้ทุกสลิปค้างรอแอดมิน
+        receiverMismatch = verifySource === 'thunder' && process.env.STRICT_RECEIVER_CHECK === '1';
         nameMismatchNote = `\n⚠️ ชื่อผู้รับในสลิป ("${ocr.receiverName}") ดูไม่ตรงกับชื่อบัญชีร้านที่ลงทะเบียนไว้ "${shopAccountName}" (${verifySource === 'ocr' ? 'อ่านด้วย OCR ความมั่นใจต่ำกว่าปกติ' : 'ตรวจจาก Thunder'}) — กรุณาตรวจสอบเพิ่มเติม`;
       }
     } catch (e) {
@@ -5657,6 +5666,9 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
     blockReason = 'before_order';
   } else if (receiverMismatch) {
     blockReason = 'wrong_receiver';
+  } else if (verifySource === 'ocr' && slip_url && !slipQR && process.env.REQUIRE_SLIP_QR === '1') {
+    // เปิดใช้เมื่อต้องการเข้มสุด: ถ้าตรวจด้วย OCR ล้วน (ไม่ผ่านธนาคาร) ต้องเห็น QR สลิปจริงบนรูปด้วย
+    blockReason = 'no_qr';
   } else if (!slip_url) {
     blockReason = 'no_image';
   } else if (verifiedAmount == null) {
@@ -5678,7 +5690,7 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
     slip_image_hash : ocr?.imageHash || null,
     slip_ref        : bestRef,
     slip_datetime   : ocr?.datetime || null,
-    payment_flag    : blockReason,   // null | 'duplicate' | 'stale_date' | 'future_date' | 'before_order' | 'wrong_receiver' | 'no_image' | 'ocr_failed' — ให้แอดมินพาเนลแยกเคสสงสัยฉ้อโกงจากยอดไม่ตรงธรรมดา
+    payment_flag    : blockReason,   // null | 'duplicate' | 'stale_date' | 'future_date' | 'before_order' | 'wrong_receiver' | 'no_qr' | 'no_image' | 'ocr_failed' — ให้แอดมินพาเนลแยกเคสสงสัยฉ้อโกงจากยอดไม่ตรงธรรมดา
     payment_status  : newPayStatus,
     ...(isMatch ? { status: 'confirmed' } : {})
   };
@@ -5714,6 +5726,9 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
   } else if (blockReason === 'before_order') {
     chatMsg  = `⚠️ เวลาในสลิปเป็นเวลาก่อนที่จะสั่งออเดอร์นี้ ระบบจึงขอให้ร้านตรวจสอบก่อนค่ะ\n\nหากโอนสำหรับออเดอร์นี้จริง ทางร้านจะยืนยันให้เร็วๆ นี้นะคะ`;
     adminMsg = `🚨 สลิปโอนก่อนสร้างออเดอร์ #${order_id}\n\nชื่อ: ${order.customer_name}\nเวลาในสลิป: ${ocr?.dateRaw || '-'}\nสร้างออเดอร์เมื่อ: ${formatThaiDateTime(order.created_at)}\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n⚠️ อาจเป็นสลิปของรายการอื่นที่นำมาใช้ซ้ำ — กรุณาตรวจสอบก่อนกด "ยืนยันชำระแล้ว"`;
+  } else if (blockReason === 'no_qr') {
+    chatMsg  = `⚠️ ไม่พบ QR ตรวจสอบบนสลิป กรุณาแนบสลิปทั้งใบ (ไม่ครอป) หรือรอร้านตรวจสอบค่ะ`;
+    adminMsg = `🚨 สลิปไม่มี QR ตรวจสอบ #${order_id}\n\nชื่อ: ${order.customer_name}\nยอดที่อ่านได้ (OCR): ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n⚠️ รูปอาจถูกครอป/ตัดต่อ — กรุณาตรวจรูปด้วยตาก่อนกด "ยืนยันชำระแล้ว"`;
   } else if (blockReason === 'wrong_receiver') {
     chatMsg  = `⚠️ ชื่อบัญชีผู้รับในสลิปไม่ตรงกับบัญชีของร้าน ระบบจึงขอให้ร้านตรวจสอบก่อนค่ะ\n\nกรุณาตรวจสอบว่าโอนเข้าบัญชีร้านถูกต้อง หรือติดต่อร้านค้าค่ะ`;
     adminMsg = `🚨 โอนเข้าบัญชีผู้รับไม่ตรง #${order_id}\n\nชื่อ: ${order.customer_name}\nผู้รับในสลิป (ตรวจกับธนาคารผ่าน Thunder): ${ocr?.receiverName || '-'}\nยอดที่โอน: ฿${paidAmount.toLocaleString()}\nยอดออเดอร์: ฿${expectedTotal.toLocaleString()}\n⚠️ ห้ามกดยืนยันจนกว่าจะเช็คบัญชีร้านว่าได้รับเงินจริง`;
@@ -5777,7 +5792,7 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
 
   res.json({
     success: true, status: newPayStatus, isMatch, diff,
-    reason: blockReason,           // null | 'duplicate' | 'stale_date' | 'future_date' | 'before_order' | 'wrong_receiver' | 'no_image' | 'ocr_failed'
+    reason: blockReason,           // null | 'duplicate' | 'stale_date' | 'future_date' | 'before_order' | 'wrong_receiver' | 'no_qr' | 'no_image' | 'ocr_failed'
     verifiedAmount,                // ยอดที่ server อ่านได้เองจากรูป (null ถ้าอ่านไม่ได้/ไม่มีรูป)
     slipDate: ocr?.dateRaw || null
   });
@@ -5882,8 +5897,10 @@ function extractAmountCandidates(text) {
     for (const tok of tokens) {
       const money = parseMoneyToken(tok);
       if (!money) continue;
+      // ตัวเลขที่ตามด้วย "น." คือเวลา (เช่น 14.30 น.) ไม่ใช่ยอดเงิน
+      if (new RegExp(tok.replace(/[.,]/g, '\\$&') + '\\s*น\\.').test(line)) continue;
       let score = 0;
-      if (money.hasDecimals) score += 3; else score -= 3;
+      if (money.hasDecimals) score += 3; else score -= 2;
       if (AMOUNT_KEYWORDS.test(line)) score += 4;
       else if (AMOUNT_KEYWORDS.test(prev1) && !FEE_KEYWORDS.test(prev1)) score += 3;
       else if (AMOUNT_KEYWORDS.test(prev2) && !FEE_KEYWORDS.test(prev2)) score += 1;
@@ -5895,7 +5912,7 @@ function extractAmountCandidates(text) {
     }
   });
   // เรียงคะแนนมาก→น้อย ถ้าเท่ากันเอาบรรทัดที่มาก่อน (ยอดเงินมักอยู่ส่วนบนของสลิป)
-  return out.filter(c => c.score >= 3).sort((a, b) => b.score - a.score);
+  return out.filter(c => c.score >= 4).sort((a, b) => b.score - a.score);
 }
 
 function extractAmountFromSlip(text) {
@@ -6022,7 +6039,7 @@ function extractSlipRef(text) {
   const refKeywords = /เลขที่รายการ|รหัสอ้างอิง|เลขอ้างอิง|หมายเลขอ้างอิง|เลขที่อ้างอิง|ref(?:erence)?\s*(?:no\.?|number|id)?\b|transaction\s*id/i;
   const pick = s => {
     // OCR ชอบแทรกช่องว่างกลางเลขอ้างอิงยาวๆ — ลองต่อกันก่อน; ต้องมีตัวเลขอย่างน้อย 4 ตัว (กันจับคำธรรมดา)
-    const m = s.replace(/[:：]/g, ' ').replace(/(?<=[A-Za-z0-9])\s(?=[A-Za-z0-9]{3,})/g, '').match(/[A-Za-z0-9]{8,35}/g) || [];
+    const m = s.replace(/[:：]/g, ' ').replace(/(?<=\d)[ \t](?=\d)/g, '').match(/[A-Za-z0-9]{8,35}/g) || [];
     const hit = m.find(t => (t.match(/\d/g) || []).length >= 4);
     return hit ? hit.toUpperCase() : null;
   };
