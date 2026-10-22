@@ -7124,7 +7124,11 @@ async function submitSlip(orderId) {
       if (!res.ok) throw new Error(d.error || 'ส่งไม่ได้');
 
       // แสดงผลลัพธ์
-      if (d.reason === 'duplicate') {
+      if (d.reason === 'before_order' || d.reason === 'wrong_receiver' || d.reason === 'stale_date' || d.reason === 'future_date') {
+        const m = d.reason === 'wrong_receiver' ? 'ชื่อบัญชีผู้รับไม่ตรงกับร้าน' : 'เวลาในสลิปไม่ตรงกับออเดอร์นี้';
+        toast('⚠️ ' + m + ' — ร้านจะตรวจสอบ');
+        if (statusEl) { statusEl.textContent = '⚠️ ' + m + ' — รอร้านตรวจสอบ'; statusEl.style.color = '#e67e22'; }
+      } else if (d.reason === 'duplicate') {
         toast('⚠️ สลิปนี้เคยถูกใช้ยืนยันออเดอร์อื่นไปแล้ว');
         if (statusEl) { statusEl.textContent = '⚠️ สลิปนี้เคยถูกใช้ยืนยันออเดอร์อื่นไปแล้ว — ติดต่อร้านค้า'; statusEl.style.color = '#e74c3c'; }
       } else if (d.isMatch) {
@@ -7312,7 +7316,12 @@ async function _successSlipSubmit() {
       }
       if (!res.ok && !d?.success) throw new Error(d?.error || 'ส่งไม่ได้');
 
-      if (d.reason === 'duplicate') {
+      if (d.reason === 'before_order' || d.reason === 'wrong_receiver' || d.reason === 'stale_date' || d.reason === 'future_date') {
+        const m = d.reason === 'wrong_receiver' ? 'ชื่อบัญชีผู้รับไม่ตรงกับร้าน' : 'เวลาในสลิปไม่ตรงกับออเดอร์นี้';
+        if (statusEl) { statusEl.textContent = '⚠️ ' + m + ' — รอร้านตรวจสอบ'; statusEl.style.color = '#e67e22'; }
+        toast('⚠️ ' + m + ' — ร้านจะตรวจสอบ');
+        btn.textContent = '✅ ส่งแล้ว';
+      } else if (d.reason === 'duplicate') {
         if (statusEl) { statusEl.textContent = '⚠️ สลิปนี้เคยถูกใช้ยืนยันออเดอร์อื่นไปแล้ว — ติดต่อร้านค้า'; statusEl.style.color = '#e74c3c'; }
         toast('⚠️ สลิปนี้เคยถูกใช้ยืนยันออเดอร์อื่นไปแล้ว');
         btn.disabled = false; btn.textContent = '📤 ส่งสลิป';
