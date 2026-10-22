@@ -5484,7 +5484,16 @@ function formatThaiDateTime(iso) {
   return `${p(t.getUTCDate())}/${p(t.getUTCMonth() + 1)}/${t.getUTCFullYear()} ${p(t.getUTCHours())}:${p(t.getUTCMinutes())} น.`;
 }
 
+// 🔒 กัน race condition: ส่งสลิปใบเดียวกันเข้าหลายออเดอร์พร้อมกัน (ยิงขนานกัน) — ทั้งสองคำขอจะเช็คสลิปซ้ำ
+// ผ่านก่อนที่ใครจะบันทึก hash/ref ลง DB ทำให้ใช้สลิปใบเดียวยืนยันได้หลายออเดอร์ ล็อกในหน่วยความจำนี้
+// ครอบคลุมกรณี server ตัวเดียว (ถ้าขยายหลายเครื่องควรเพิ่ม UNIQUE index บน slip_image_hash/slip_ref ใน DB)
+const _slipInFlight = new Map(); // key (hash หรือ ref) -> order_id ที่กำลังประมวลผลอยู่
+
 app.post('/submit-slip', rateLimit(20), async (req, res) => {
+  const lockedKeys = [];
+  const origJson = res.json.bind(res);
+  res.json = (b) => { lockedKeys.forEach(k => _slipInFlight.delete(k)); return origJson(b); };
+  res.on('close', () => lockedKeys.forEach(k => _slipInFlight.delete(k)));
   const { order_id, customer_id, slip_url, slip_amount, slip_ref_manual } = req.body;
   if (!order_id || !customer_id)
     return res.status(400).json({ error: 'order_id/customer_id required' });
@@ -5511,6 +5520,16 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
     (String(customer_id).length >= 8 && order.customer_id?.startsWith(String(customer_id).slice(0, 8)));
   if (!cidOk)
     return res.status(403).json({ error: 'ไม่ใช่ออเดอร์ของคุณ' });
+
+  // 🔒 ออเดอร์ที่จ่ายแล้ว/ยืนยันแล้ว: ตอบกลับแบบ idempotent ไม่ประมวลผลซ้ำ — เดิมส่งสลิปใหม่ที่ยอดผิดเข้ามา
+  // จะย้อนสถานะ payment_status จาก paid/confirmed กลับเป็น slip_mismatch ได้ (และกินแรง OCR โดยเปล่าประโยชน์)
+  if (['paid', 'confirmed'].includes(order.payment_status)) {
+    return res.json({ success: true, status: order.payment_status, isMatch: true, diff: 0,
+      reason: null, verifiedAmount: Number(order.slip_ocr_amount) || null, slipDate: null, alreadyPaid: true });
+  }
+  // 🔒 ออเดอร์ที่ยกเลิกแล้ว ห้ามรับสลิป — เดิมถ้ายอดตรงจะเปลี่ยน status กลับเป็น 'confirmed' (ชุบชีวิตออเดอร์ที่ยกเลิก)
+  if (order.status === 'cancelled')
+    return res.status(409).json({ error: 'ออเดอร์นี้ถูกยกเลิกแล้ว กรุณาติดต่อร้านค้า' });
 
   const expectedTotal = Number(order.total) || 0;
   const typedAmount   = parseFloat(slip_amount) || 0;
@@ -5567,6 +5586,13 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
 
   // ═══ 🚫 กันสลิปซ้ำ — รูปเดิม/เลขอ้างอิงเดิมถูกใช้ยืนยันออเดอร์อื่นไปแล้วหรือไม่ ═══
   let dupReason = null;
+  for (const key of [ocr?.imageHash, ...slipRefs].filter(Boolean)) {
+    const holder = _slipInFlight.get(key);
+    if (holder && holder !== order_id) { dupReason = `สลิปนี้กำลังถูกใช้ยืนยันออเดอร์ #${holder} อยู่`; break; }
+  }
+  if (!dupReason) for (const key of [ocr?.imageHash, ...slipRefs].filter(Boolean)) {
+    if (!_slipInFlight.has(key)) { _slipInFlight.set(key, order_id); lockedKeys.push(key); }
+  }
   try {
     if (ocr?.imageHash) {
       const { data: dupByHash } = await supabase
@@ -5692,7 +5718,7 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
     slip_datetime   : ocr?.datetime || null,
     payment_flag    : blockReason,   // null | 'duplicate' | 'stale_date' | 'future_date' | 'before_order' | 'wrong_receiver' | 'no_qr' | 'no_image' | 'ocr_failed' — ให้แอดมินพาเนลแยกเคสสงสัยฉ้อโกงจากยอดไม่ตรงธรรมดา
     payment_status  : newPayStatus,
-    ...(isMatch ? { status: 'confirmed' } : {})
+    ...(isMatch && order.status === 'pending' ? { status: 'confirmed' } : {})
   };
   const { error: updErr } = await supabase.from('orders').update(updatePayload).eq('order_id', order_id);
   if (updErr) {
@@ -5702,7 +5728,7 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
       slip_url: slip_url || null,
       slip_amount: typedAmount || null,
       payment_status: newPayStatus,
-      ...(isMatch ? { status: 'confirmed' } : {})
+      ...(isMatch && order.status === 'pending' ? { status: 'confirmed' } : {})
     }).eq('order_id', order_id);
   }
 
