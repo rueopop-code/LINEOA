@@ -5721,6 +5721,26 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
     ...(isMatch && order.status === 'pending' ? { status: 'confirmed' } : {})
   };
   const { error: updErr } = await supabase.from('orders').update(updatePayload).eq('order_id', order_id);
+  if (updErr && updErr.code === '23505') {
+    // 🔒 UNIQUE index ใน DB (ดู sql/slip_unique_indexes.sql) ปฏิเสธเพราะรูป/เลขอ้างอิงนี้ถูกบันทึกกับออเดอร์อื่นไปแล้ว
+    // — ด่านสุดท้ายที่กันได้แม้คำขอ 2 ตัวมาพร้อมกันบนหลาย server (ล็อกในหน่วยความจำกันได้แค่เครื่องเดียว)
+    await supabase.from('orders').update({
+      slip_url: slip_url || null, slip_amount: typedAmount || null,
+      payment_status: 'slip_mismatch', payment_flag: 'duplicate'
+    }).eq('order_id', order_id).then(() => {}, () => {});
+    const dupChat = '⚠️ ระบบตรวจพบว่าสลิปนี้เคยถูกใช้ยืนยันการชำระไปแล้ว กรุณาแนบสลิปที่ถูกต้องของรายการนี้ หรือติดต่อร้านค้าค่ะ';
+    const dupAdmin = `🚨 สลิปซ้ำ! #${order_id}\n\nชื่อ: ${order.customer_name}\nฐานข้อมูลปฏิเสธเพราะรูป/เลขอ้างอิงนี้ถูกใช้กับออเดอร์อื่นแล้ว\n⚠️ อาจเป็นการฉ้อโกง — ห้ามกดยืนยันจนกว่าจะตรวจสอบ`;
+    try {
+      await supabase.from('messages').insert([
+        { order_id, customer_id, sender: 'system', text: dupChat, created_at: now },
+        { order_id, customer_id, sender: 'admin_note', text: dupAdmin, created_at: now }
+      ]);
+    } catch (e) { console.warn('insert dup msg:', e.message); }
+    if (process.env.LINE_TOKEN) notifyAllAdmins([{ type: 'text', text: dupAdmin }]).catch(() => {});
+    console.log('[slip]', JSON.stringify({ order_id, src: verifySource, reason: 'duplicate', via: 'db_unique' }));
+    return res.json({ success: true, status: 'slip_mismatch', isMatch: false, diff: expectedTotal - paidAmount,
+      reason: 'duplicate', verifiedAmount, slipDate: ocr?.dateRaw || null });
+  }
   if (updErr) {
     // เผื่อยังไม่ได้รัน SQL migration เพิ่มคอลัมน์ใหม่ — fallback อัปเดตเฉพาะฟิลด์เดิมกันออเดอร์ค้าง
     console.warn('submit-slip update with new columns failed (รัน SQL migration แล้วหรือยัง?):', updErr.message);
@@ -5816,6 +5836,14 @@ app.post('/submit-slip', rateLimit(20), async (req, res) => {
     }
   }
 
+  // 📊 บันทึกสรุปผลการตรวจ 1 บรรทัดต่อสลิป (ไม่มีข้อมูลส่วนตัว) — ใช้ดูใน log ของ Render ว่า OCR/Thunder/QR
+  // แม่นแค่ไหน ปรับจูนได้จากข้อมูลจริง: grep "\[slip\]"
+  console.log('[slip]', JSON.stringify({
+    order_id, src: verifySource, match: isMatch, reason: blockReason,
+    expected: expectedTotal, read: verifiedAmount, typed: typedAmount || null,
+    conf: ocr?.amountConfidence || null, qr: slipQR ? (slipQR.crcValid === false ? 'bad_crc' : 'ok') : 'none',
+    ref: bestRef ? 'yes' : 'no', date: ocr?.datetime ? (ocr.hasTime ? 'dt' : 'd') : 'none'
+  }));
   res.json({
     success: true, status: newPayStatus, isMatch, diff,
     reason: blockReason,           // null | 'duplicate' | 'stale_date' | 'future_date' | 'before_order' | 'wrong_receiver' | 'no_qr' | 'no_image' | 'ocr_failed'
