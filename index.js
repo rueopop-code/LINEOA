@@ -509,6 +509,27 @@ async function computeVerifiedItemPricing(items) {
     }
   }
 
+  // 🐛 BUG FIX: เดิม backend ตัดสต็อกหลังบันทึกออเดอร์โดยไม่เคยเช็คก่อนว่าของพอไหม (หน้าเว็บกันไว้ชั้นเดียว)
+  // → ถ้าลูกค้า 2 คนสั่งของชิ้นสุดท้ายพร้อมกัน หรือหน้าเว็บค้างสต็อกเก่าไว้ จะขายเกินสต็อกได้
+  // เช็คจำนวนรวมต่อ (สินค้า+ไซซ์) เทียบสต็อกจริงใน DB ก่อนรับออเดอร์ (ไซซ์ที่ไม่ได้ตั้งสต็อก = ไม่จำกัด)
+  const qtyBySize = new Map();
+  for (const { it, qty, size } of resolved) {
+    const k = `${it.productId}::${size.n}`;
+    const prev = qtyBySize.get(k);
+    qtyBySize.set(k, { qty: (prev ? prev.qty : 0) + qty, size, it });
+  }
+  for (const { qty, size, it } of qtyBySize.values()) {
+    if (size.stock === undefined || size.stock === null || size.stock === '') continue;
+    const stock = Number(size.stock);
+    if (!Number.isFinite(stock)) continue;
+    if (qty > stock) {
+      const pName = productMap.get(String(it.productId))?.name || it.name || it.productId;
+      return { ok: false, reason: stock <= 0
+        ? `ขออภัย "${pName}" (${size.n}) สินค้าหมดแล้ว — กรุณาลบออกจากตะกร้า`
+        : `ขออภัย "${pName}" (${size.n}) เหลือเพียง ${stock} ชิ้น — กรุณาปรับจำนวนในตะกร้า` };
+    }
+  }
+
   let verifiedTotal = 0;
   const verifiedItems = [];
   for (const { it, qty, size } of resolved) {
@@ -2211,8 +2232,14 @@ app.post('/send-order', rateLimit(15), async (req, res) => {
   let finalDiscount     = 0;
 
   if (couponId && discountAmount > 0) {
+    // 🐛 BUG FIX: เดิมจุดยืนยันจริงไม่เช็ควันเริ่ม/หมดอายุเลย (เช็คแค่ตอน validate) — ถ้าคูปอง
+    // หมดอายุระหว่างที่ลูกค้าค้างหน้าตะกร้าไว้ หรือยิง API ตรงๆ ก็ยังได้ส่วนลด ใส่เงื่อนไขเดียวกับ /validate-coupon
+    const nowCoupon = new Date().toISOString();
     const { data: coup } = await supabase
-      .from('coupons').select('*').eq('id', couponId).eq('is_active', true).maybeSingle();
+      .from('coupons').select('*').eq('id', couponId).eq('is_active', true)
+      .or(`start_date.is.null,start_date.lte.${nowCoupon}`)
+      .or(`end_date.is.null,end_date.gte.${nowCoupon}`)
+      .maybeSingle();
     if (coup) {
       if (!coup.usage_limit || coup.used_count < coup.usage_limit) {
 
@@ -3154,9 +3181,14 @@ app.post('/admin/products/upsert', requirePerm('products'), async (req, res) => 
 });
 app.post('/admin/products/delete', requirePerm('products'), async (req, res) => {
   try {
+    // รองรับลบหลายรายการ (ids: [...]) สำหรับปุ่ม "ลบสินค้าทั้งหมด" — เดิมรับแค่ id เดียว
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(x => x !== null && x !== undefined && x !== '') : null;
     const id = req.body?.id;
-    if (!id) return res.status(400).json({ error: 'ต้องระบุ id' });
-    const { error } = await supabase.from('products').delete().eq('id', id);
+    if (ids && !ids.length) return res.status(400).json({ error: 'ต้องระบุ id' });
+    if (!ids && !id) return res.status(400).json({ error: 'ต้องระบุ id' });
+    const { error } = ids
+      ? await supabase.from('products').delete().in('id', ids)
+      : await supabase.from('products').delete().eq('id', id);
     if (error) throw error;
     res.json({ success: true });
   } catch (e) {
@@ -4584,6 +4616,17 @@ app.get('/coupons', requirePerm('coupons'), async (req, res) => {
   res.json({ coupons: data || [] });
 });
 
+// 🐛 BUG FIX (คูปองหาไม่เจอ): ถ้าแอดมินพิมพ์ปีเป็น พ.ศ. (เช่น 2569) ในช่องวันที่เริ่ม/สิ้นสุด
+// ระบบจะเก็บเป็นปี ค.ศ. 2569 จริงๆ → คูปอง "ยังไม่เริ่ม" อีก 543 ปี ลูกค้ากรอกโค้ดแล้วเจอ
+// "ไม่พบคูปองนี้ หรือคูปองหมดอายุแล้ว" ทั้งที่หน้าแอดมินดูปกติ — แปลงปี > 2400 กลับเป็น ค.ศ.
+function normCouponDate(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return null;
+  if (d.getUTCFullYear() > 2400) d.setUTCFullYear(d.getUTCFullYear() - 543);
+  return d.toISOString();
+}
+
 // ── POST /coupons (admin) ─────────────────────────────────
 app.post('/coupons', requirePerm('coupons'), async (req, res) => {
   const {
@@ -4630,8 +4673,8 @@ app.post('/coupons', requirePerm('coupons'), async (req, res) => {
     min_order: Number(min_order || 0),
     apply_type: apply_type || 'auto',
     condition_type: condition_type || null,
-    start_date: start_date || null,
-    end_date: end_date || null,
+    start_date: normCouponDate(start_date),
+    end_date: normCouponDate(end_date),
     usage_limit: usage_limit ? Number(usage_limit) : null,
     is_active: is_active !== false,
     is_secret: isSecretFlag,
@@ -4655,6 +4698,8 @@ app.patch('/coupons/:id', requirePerm('coupons'), async (req, res) => {
     'is_secret','secret_code'
   ];
   fields.forEach(f => { if (req.body[f] !== undefined) updates[f] = req.body[f]; });
+  if (updates.start_date !== undefined) updates.start_date = normCouponDate(updates.start_date);
+  if (updates.end_date   !== undefined) updates.end_date   = normCouponDate(updates.end_date);
 
   // ถ้าส่ง secret_code มา normalize ให้เป็นตัวพิมพ์ใหญ่เหมือนตอนสร้างใหม่ (กันเคส mismatch ตอนค้นหา)
   if (updates.secret_code) updates.secret_code = String(updates.secret_code).trim().toUpperCase();
@@ -5026,6 +5071,36 @@ app.post('/shop-hours', requirePerm('shop_settings'), async (req, res) => {
     .upsert({ key: 'shop_hours', value: cfg }, { onConflict: 'key' });
   if (error) return res.status(500).json({ error: error.message });
   res.json({ success: true, config: cfg });
+});
+
+// ── GET /categories ──────────────────────────────────────────
+// 🐛 BUG FIX: เดิมรายการหมวดหมู่เก็บแค่ใน localStorage ของเครื่องที่สร้าง — หมวดที่ยังไม่มี
+// สินค้าไม่โผล่ในเครื่องอื่น/ลูกค้า และลำดับหมวดไม่ตรงกันในแต่ละเครื่อง เก็บลง settings แทน
+app.get('/categories', async (req, res) => {
+  const { data, error } = await supabase
+    .from('settings').select('value').eq('key', 'categories').maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  const list = Array.isArray(data?.value) ? data.value : (Array.isArray(data?.value?.list) ? data.value.list : null);
+  res.json({ categories: list });
+});
+
+// ── POST /categories (แอดมิน) ────────────────────────────────
+app.post('/categories', requirePerm('products'), async (req, res) => {
+  const raw = Array.isArray(req.body?.categories) ? req.body.categories : null;
+  if (!raw) return res.status(400).json({ error: 'ต้องส่ง categories เป็น array' });
+  const seen = new Set();
+  const list = [];
+  for (const c of raw) {
+    const s = String(c || '').trim().slice(0, 60);
+    if (!s || seen.has(s)) continue;
+    seen.add(s); list.push(s);
+  }
+  if (list.length > 200) return res.status(400).json({ error: 'หมวดหมู่เกิน 200 รายการ' });
+  const { error } = await supabase
+    .from('settings')
+    .upsert({ key: 'categories', value: list }, { onConflict: 'key' });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true, categories: list });
 });
 
 // ── GET /qr-config ───────────────────────────────────────────

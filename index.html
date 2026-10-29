@@ -3464,8 +3464,14 @@ async function loadStore() {
       }
     }
 
-    // ✅ seed demo เฉพาะกรณีที่โหลด DB สำเร็จ และ DB ว่างจริงๆ
-    if (!products.length && dbLoaded) await seedDemo();
+    // 🐛 BUG FIX: เดิมถ้า DB ว่าง (เช่น หลังกด "ลบสินค้าทั้งหมด") ทุกเครื่องที่เปิดเว็บจะสร้างสินค้าตัวอย่าง
+    // "ถุงพลาสติกใส S"/"ขวดน้ำ PET 500ml" ขึ้นมาเองและพยายามบันทึกลงร้านจริง — เลิกสร้างอัตโนมัติแล้ว
+    // (ฟังก์ชัน seedDemo() ยังอยู่ ถ้าต้องการเรียกใช้เองจาก console)
+
+    // 📂 หมวดหมู่จากเซิร์ฟเวอร์ (ให้ทุกเครื่องเห็นหมวดและลำดับเดียวกัน) — ไม่บล็อกการแสดงสินค้า
+    loadCatsRemote().then(ok => {
+      if (ok) { try { renderCatBar(); renderCatTags?.(); renderPMCats?.(); fillEditCats?.(); } catch(e){} }
+    });
   } catch(e) { console.error('loadStore:', e); }
 }
 
@@ -3562,10 +3568,10 @@ function ssRenderResults(list) {
   const box = document.getElementById('ssResults');
   if (!list.length) { box.innerHTML = '<div style="text-align:center;color:var(--sub);font-size:12px;padding:14px;">ไม่พบสินค้า</div>'; return; }
   box.innerHTML = list.slice(0, 8).map(p => {
-    const price = Math.min(...p.sizes.map(s => s.p));
+    const price = _mnMinPrice(p);
     return `<div class="ss-result-row" onclick="ssPick(${p.id})">
       <div class="ss-result-thumb">${p.emoji || '📦'}</div>
-      <div class="ss-result-info"><b>${p.name}</b><span>#${p.id} · ${p.cat} · ฿${price.toLocaleString()}</span></div>
+      <div class="ss-result-info"><b>${_mnEsc(p.name)}</b><span>#${p.id} · ${_mnEsc(p.cat)} · ${_mnPriceTxt(price)}</span></div>
     </div>`;
   }).join('');
 }
@@ -3688,7 +3694,7 @@ function _isPosDupErr(e) { return !!(e && e.code === 'POS_CODE_DUPLICATE'); }
   // request บันทึก/เปิด-ปิด/ลบโฆษณา Pop-up ทุกครั้งจะไม่มี x-admin-key แนบไปเลย ทำให้ backend
   // ปฏิเสธด้วย 401 unauthorized เสมอ (ต่อให้ backend อื่นๆ เช่น QR/hero-banner ทำงานปกติดี
   // เพราะ endpoint พวกนั้นอยู่ใน whitelist อยู่แล้ว) เพิ่ม /popup-ads เข้าไปให้ครบ
-  const ADMIN_RE = [/\/coupons(\/|$)/, /\/shop-hours$/, /\/qr-config$/, /\/hero-banner$/, /\/popup-ads$/, /\/referral-config$/, /\/admin\//];
+  const ADMIN_RE = [/\/coupons(\/|$)/, /\/shop-hours$/, /\/qr-config$/, /\/hero-banner$/, /\/popup-ads$/, /\/referral-config$/, /\/categories$/, /\/admin\//];
   // 🐛 BUG FIX: เดิม GET request ทุกตัวถูกยกเว้นไม่แนบ x-admin-key เลย (ตอนเขียนครั้งแรก
   // GET /coupons ยังเป็น public ไม่ต้อง auth) — ตอนหลังมีการแก้ security ให้ GET /coupons
   // ต้องมี auth ด้วย (กันคนอื่นดึงโค้ดคูปองลับออกไปได้) แต่ลืมอัปเดตจุดนี้ให้ตรงกัน ทำให้
@@ -3739,7 +3745,10 @@ async function save() {
   }
   const sb = getSB();
   if (!sb) return;
-  await sb.from('products').upsert(rows, { onConflict: 'id' });
+  // 🐛 BUG FIX: เดิมไม่เช็ค error ของการเขียนตรง (Supabase ไม่ throw แต่คืน {error}) — ถ้า backend ล่ม
+  // และ RLS บล็อกการเขียนจาก anon key หน้าเว็บจะขึ้น "บันทึกแล้ว" ทั้งที่ข้อมูลไม่ได้ลง DB เลย
+  const { error: _wErr } = await sb.from('products').upsert(rows, { onConflict: 'id' });
+  if (_wErr) { toast('❌ บันทึกสินค้าไม่สำเร็จ: ' + _wErr.message); throw new Error(_wErr.message); }
 }
 
 // บันทึกสินค้าเดี่ยว (เร็วกว่า save ทั้งหมด)
@@ -3755,7 +3764,9 @@ async function saveOne(p) {
   }
   const sb = getSB();
   if (!sb) return;
-  await sb.from('products').upsert([toRow(p)], { onConflict: 'id' });
+  // 🐛 BUG FIX: เช็ค error ของการเขียนตรง (ดู save() ด้านบน) — เดิมล้มเหลวเงียบแต่ขึ้นว่าบันทึกแล้ว
+  const { error: _wErr } = await sb.from('products').upsert([toRow(p)], { onConflict: 'id' });
+  if (_wErr) { toast('❌ บันทึกสินค้าไม่สำเร็จ: ' + _wErr.message); throw new Error(_wErr.message); }
 }
 
 // ลบสินค้าเดี่ยวจาก DB
@@ -3769,7 +3780,9 @@ async function deleteOne(id) {
   }
   const sb = getSB();
   if (!sb) return;
-  await sb.from('products').delete().eq('id', id);
+  // 🐛 BUG FIX: เช็ค error ของการลบตรง — เดิมลบไม่สำเร็จแต่ขึ้นว่าลบแล้ว สินค้ากลับมาเองหลังรีโหลด
+  const { error: _dErr } = await sb.from('products').delete().eq('id', id);
+  if (_dErr) throw new Error(_dErr.message);
 }
 
 // ═══════════════════════════════════════════
@@ -3793,14 +3806,14 @@ function mnCatIcon(name) {
 }
 function renderCatBar() {
   let catHtml = cats.map(c =>
-    `<div class="cat-chip${c===activeCat?' active':''}" onclick="setACat('${c}')"><span class="cat-ic">${mnCatIcon(c)}</span>${c}</div>`
+    `<div class="cat-chip${c===activeCat?' active':''}" onclick="setACat('${_mnEscJs(c)}')"><span class="cat-ic">${mnCatIcon(c)}</span>${_mnEsc(c)}</div>`
   ).join('');
   if (hasAnyPromo()) {
     const promoChip = `<div class="cat-chip${PROMO_CAT===activeCat?' active':''}" onclick="setACat('${PROMO_CAT}')">${PROMO_CAT}</div>`;
     const idx = cats.indexOf('ทั้งหมด');
     if (idx > -1) {
       const parts = cats.map(c =>
-        `<div class="cat-chip${c===activeCat?' active':''}" onclick="setACat('${c}')"><span class="cat-ic">${mnCatIcon(c)}</span>${c}</div>`
+        `<div class="cat-chip${c===activeCat?' active':''}" onclick="setACat('${_mnEscJs(c)}')"><span class="cat-ic">${mnCatIcon(c)}</span>${_mnEsc(c)}</div>`
       );
       parts.splice(idx + 1, 0, promoChip);
       catHtml = parts.join('');
@@ -3816,17 +3829,54 @@ function setACat(c) { activeCat = c; renderCatBar(); applyFilter(); document.get
 
 function renderCatTags() {
   document.getElementById('catTags').innerHTML = cats.filter(c=>c!=='ทั้งหมด'&&c!=='สินค้าใหม่'&&c!=='สินค้าขายดี').map(c =>
-    `<div class="cat-tag"><span class="cat-ic">${mnCatIcon(c)}</span>${c}<button onclick="delCat('${c}')">✕</button></div>`
+    `<div class="cat-tag"><span class="cat-ic">${mnCatIcon(c)}</span>${_mnEsc(c)}<button onclick="delCat('${_mnEscJs(c)}')">✕</button></div>`
   ).join('');
+}
+// 🐛 BUG FIX: เดิมเพิ่ม/ลบหมวดแล้วเรียก save() ซึ่งอัปโหลดสินค้าทั้งร้านใหม่หมดทุกครั้ง แต่ตัวรายการหมวด
+// เองเก็บแค่ใน localStorage ของเครื่องนี้ — หมวดที่ยังไม่มีสินค้าจึงไม่โผล่ที่เครื่องอื่น/ลูกค้า
+// ตอนนี้บันทึกรายการหมวดลงฐานข้อมูล (settings.categories ผ่าน backend) แทน
+const _MN_VIRTUAL_CATS = ['ทั้งหมด','สินค้าใหม่','สินค้าขายดี'];
+async function saveCats() {
+  try { localStorage.setItem('ms_cats', JSON.stringify(cats)); } catch(e) {}
+  try {
+    const r = await fetch(BACKEND_URL + '/categories', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ categories: cats.filter(c => !_MN_VIRTUAL_CATS.includes(c)) })
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+  } catch (e) {
+    toast('⚠️ บันทึกหมวดหมู่ลงเซิร์ฟเวอร์ไม่สำเร็จ: ' + e.message);
+  }
+}
+// โหลดรายการหมวดจากเซิร์ฟเวอร์ (ลำดับตามที่แอดมินตั้ง) + เติมหมวดที่มีสินค้าแต่ยังไม่อยู่ในรายการ
+async function loadCatsRemote() {
+  try {
+    const r = await fetch(BACKEND_URL + '/categories', { signal: AbortSignal.timeout(6000) });
+    if (!r.ok) return false;
+    const d = await r.json();
+    if (!Array.isArray(d.categories)) return false;
+    const next = _MN_VIRTUAL_CATS.slice();
+    d.categories.forEach(c => { if (c && !next.includes(c)) next.push(c); });
+    products.forEach(p => { if (p.cat && !next.includes(p.cat)) next.push(p.cat); });
+    cats = next;
+    try { localStorage.setItem('ms_cats', JSON.stringify(cats)); } catch(e) {}
+    return true;
+  } catch (e) { return false; }
 }
 function addCat() {
   const v = document.getElementById('newCatIn').value.trim();
   if (!v||cats.includes(v)) return;
-  cats.push(v); save();
+  cats.push(v); saveCats();
   document.getElementById('newCatIn').value = '';
   renderCatBar(); renderCatTags(); renderPMCats(); fillEditCats();
 }
-function delCat(c) { cats = cats.filter(x=>x!==c); save(); renderCatBar(); renderCatTags(); renderPMCats(); fillEditCats(); }
+function delCat(c) {
+  // 🐛 BUG FIX: เดิมลบหมวดที่ยังมีสินค้าได้ แต่หมวดจะเด้งกลับมาเองหลังรีโหลด (หมวดถูกสร้างจากสินค้าใน DB)
+  const n = products.filter(p => p.cat === c).length;
+  if (n) { toast(`หมวด "${c}" ยังมีสินค้า ${n} รายการ — ย้ายสินค้าไปหมวดอื่นก่อนจึงลบได้`); return; }
+  cats = cats.filter(x=>x!==c); saveCats(); renderCatBar(); renderCatTags(); renderPMCats(); fillEditCats();
+}
 function renderPMCats() {
   const sel = document.getElementById('fCat');
   sel.innerHTML = cats.filter(c=>c!=='ทั้งหมด'&&c!=='สินค้าใหม่'&&c!=='สินค้าขายดี').map(c=>`<option>${c}</option>`).join('');
@@ -3851,7 +3901,7 @@ function autoCat(name) {
   ];
   for (const [cat,kws] of rules) {
     if (kws.some(k => n.includes(k))) {
-      if (!cats.includes(cat)) { cats.push(cat); save(); renderCatBar(); renderCatTags(); renderPMCats(); fillEditCats(); }
+      if (!cats.includes(cat)) { cats.push(cat); saveCats(); renderCatBar(); renderCatTags(); renderPMCats(); fillEditCats(); }
       return cat;
     }
   }
@@ -4351,7 +4401,7 @@ function applyFilter() {
   else if (activeCat==='สินค้าขายดี') list=list.filter(p=>p.isBestseller||_autoBestsellerIds.has(String(p.id)));
   else if (activeCat===PROMO_CAT) list=list.filter(p=>(p.sizes||[]).some(s=>getBundle(s)));
   else if (activeCat!=='ทั้งหมด') list=list.filter(p=>p.cat===activeCat);
-  if (q) list=list.filter(p=>p.name.toLowerCase().includes(q)||p.cat.toLowerCase().includes(q)||(p.desc||'').toLowerCase().includes(q));
+  if (q) list=list.filter(p=>String(p.name||'').toLowerCase().includes(q)||String(p.cat||'').toLowerCase().includes(q)||(p.desc||'').toLowerCase().includes(q));
   // sort
   if (srt==='name_th') list.sort((a,b)=>a.name.localeCompare(b.name,'th'));
   else if (srt==='name_en') list.sort((a,b)=>a.name.localeCompare(b.name,'en'));
@@ -4374,22 +4424,22 @@ function renderSearchDrop(q, list) {
   if (!q) { box.classList.remove('show'); box.innerHTML = ''; return; }
   const top = list.slice(0, 8);
   if (!top.length) {
-    box.innerHTML = '<div class="search-drop-empty">ไม่พบสินค้าที่ตรงกับ "' + q + '"</div>';
+    box.innerHTML = '<div class="search-drop-empty">ไม่พบสินค้าที่ตรงกับ "' + _mnEsc(q) + '"</div>';
     box.classList.add('show');
     return;
   }
   box.innerHTML = top.map(p => {
-    const price = Math.min(...p.sizes.map(s => s.p));
+    const price = _mnMinPrice(p);
     const thumb = p.img
-      ? `<img src="${p.img}" alt="${p.name}" loading="lazy">`
+      ? `<img src="${_mnEsc(p.img)}" alt="${_mnEsc(p.name)}" loading="lazy">`
       : (p.emoji || '📦');
     return `<div class="search-drop-row" onclick="searchDropPick(${p.id})">
       <div class="search-drop-thumb">${thumb}</div>
       <div class="search-drop-info">
-        <div class="search-drop-name">${p.name}</div>
-        <div class="search-drop-meta">${p.cat}</div>
+        <div class="search-drop-name">${_mnEsc(p.name)}</div>
+        <div class="search-drop-meta">${_mnEsc(p.cat)}</div>
       </div>
-      <div class="search-drop-price">฿${price.toLocaleString()}</div>
+      <div class="search-drop-price">${_mnPriceTxt(price)}</div>
     </div>`;
   }).join('') + (list.length > top.length ? `<div class="search-drop-more" onclick="searchDropSeeAll()">ดูทั้งหมด ${list.length} รายการ</div>` : '');
   box.classList.add('show');
@@ -4438,11 +4488,25 @@ function msToggleFav(productId) {
   applyFilter();
 }
 
+// 🐛 BUG FIX: ชื่อสินค้า/หมวด/ขนาด ถูกใส่ลง HTML ตรงๆ — ชื่อที่มีเครื่องหมายนิ้ว (เช่น ถุง 9"x18")
+// ทำให้ alt="..." ของรูปขาดกลางคัน และชื่อที่มี < > ทำให้การ์ดสินค้า/ตะกร้าเพี้ยน — escape ก่อนแสดงผล
+// 🐛 BUG FIX: สินค้าที่ยังไม่มีขนาด/ราคา ทำให้ Math.min() ได้ Infinity → แสดง "฿∞" — คืน null แทน
+function _mnMinPrice(p) {
+  const ps = (Array.isArray(p && p.sizes) ? p.sizes : []).map(s => Number(s && s.p)).filter(v => Number.isFinite(v));
+  return ps.length ? Math.min(...ps) : null;
+}
+function _mnPriceTxt(v) { return v === null || v === undefined ? 'ยังไม่ตั้งราคา' : '฿' + Number(v).toLocaleString(); }
+function _mnEscJs(s) {  // สำหรับค่าที่อยู่ใน onclick="fn('...')" — escape ทั้ง JS string และ HTML attribute
+  return _mnEsc(String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
+}
+function _mnEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
 function renderGrid(list) {
   if (!list) { applyFilter(); return; }
   const g = document.getElementById('prodGrid');
   if (!list.length) { g.innerHTML=`<div class="empty-grid"><div class="ei">🔍</div><p>ไม่พบสินค้า</p></div>`; return; }
-  const minP = p => Math.min(...p.sizes.map(s=>s.p));
+  const minP = p => _mnMinPrice(p);
   const totalStock = p => p.sizes.reduce((s, sz) => {
     if (sz.stock === undefined || sz.stock === null) return null; // ไม่มี stock tracking
     return s === null ? null : s + sz.stock;
@@ -4472,7 +4536,7 @@ function renderGrid(list) {
     // ที่เหลือ lazy แต่ trigger เร็ว (scroll ใกล้ก็โหลดแล้ว)
     const loadAttr = idx < 12 ? 'loading="eager" fetchpriority="high"' : 'loading="lazy" fetchpriority="low"';
     const imgH = p.img
-      ? `<img src="${p.img}" alt="${p.name}" ${loadAttr} decoding="async" onload="this.parentElement.classList.add('loaded')" onerror="this.style.display='none';this.nextElementSibling&&(this.nextElementSibling.style.display='inline');this.parentElement.classList.add('loaded')" /><span style="display:none">${p.emoji||'📦'}</span>`
+      ? `<img src="${_mnEsc(p.img)}" alt="${_mnEsc(p.name)}" ${loadAttr} decoding="async" onload="this.parentElement.classList.add('loaded')" onerror="this.style.display='none';this.nextElementSibling&&(this.nextElementSibling.style.display='inline');this.parentElement.classList.add('loaded')" /><span style="display:none">${p.emoji||'📦'}</span>`
       : `<span>${p.emoji||'📦'}</span>`;
     const stock = totalStock(p);
     let stockBadge = '';
@@ -4519,9 +4583,9 @@ function renderGrid(list) {
         ${imgH}${newVisible?'<div class="bnew">NEW</div>':''}${(p.isBestseller||_autoBestsellerIds.has(String(p.id)))?'<div class="bbest">🔥 ขายดี</div>':''}${stockBadge}${promoStrip}
       </div>
       <div class="pcard-body">
-        <div class="pcard-cat">${p.cat}${wholesaleBadge}${promoBadge}</div>
-        <div class="pcard-name">${p.name}</div>
-        <div class="pcard-price">฿${minP(p).toLocaleString()}${p.sizes.length>1?`<span> ขึ้นไป</span>`:''}</div>
+        <div class="pcard-cat">${_mnEsc(p.cat)}${wholesaleBadge}${promoBadge}</div>
+        <div class="pcard-name">${_mnEsc(p.name)}</div>
+        <div class="pcard-price">${_mnPriceTxt(minP(p))}${p.sizes.length>1?`<span> ขึ้นไป</span>`:''}</div>
         ${tierLine}
         <button class="pcard-add" ${addBtnDisabled?'disabled style="opacity:0.5;cursor:not-allowed;background:#999;"':''} onclick="event.stopPropagation();${addBtnDisabled?`toast('สินค้าหมด — รอร้านอัปเดตสต๊อก','error')`:'quickAdd('+p.id+')'}">${addBtnDisabled?'❌ สินค้าหมด':(p.sizes.length>1?'🔍 เลือกขนาด':'+ ใส่ตะกร้า')}</button>
       </div>
@@ -4818,6 +4882,8 @@ function buyNow(){
 function quickAdd(id){
   const p = products.find(x => x.id === id);
   if(!p) return;
+  // 🐛 BUG FIX: สินค้าที่ยังไม่มีขนาด/ราคา (เช่น นำเข้าจาก Excel ไม่ครบ) กดเพิ่มแล้ว error เงียบ
+  if (!Array.isArray(p.sizes) || !p.sizes.length) { toast('สินค้านี้ยังไม่มีขนาด/ราคา'); return; }
 
   // ✨ ถ้ามีหลายขนาด → เปิด modal ให้ลูกค้าเลือกขนาดเอง
   if (p.sizes.length > 1) {
@@ -4853,7 +4919,7 @@ function renderCart(){
   const el=document.getElementById('cartList');
   if(!cart.length){el.innerHTML='<div class="cart-empty">🛒<br>ยังไม่มีสินค้า</div>';}
   else el.innerHTML=cart.map((item,i)=>{
-    const imgH=item.prod.img?`<img src="${item.prod.img}" alt="" loading="lazy" decoding="async">`:item.prod.emoji||'📦';
+    const imgH=item.prod.img?`<img src="${_mnEsc(item.prod.img)}" alt="" loading="lazy" decoding="async">`:item.prod.emoji||'📦';
     const bl = calcBundleLine(item.size, item.qty);
     const unitPrice = getCartLinePrice(i); // ใช้ราคาที่รวม qty ของทุกขนาดราคาเดียวกันแล้ว
     const lineTotal = bl ? bl.total : unitPrice * item.qty;
@@ -4875,12 +4941,12 @@ function renderCart(){
     }
     // ถ้ามีหลายขนาด → แสดงเป็นปุ่มกดเปลี่ยน
     const sizeDisplay = item.prod.sizes.length > 1
-      ? `<button onclick="openCartSizeChange(${i})" style="background:#e3f2fd;border:1px solid #90caf9;color:#1565c0;padding:3px 10px;border-radius:14px;font-size:11px;font-family:'Sarabun',sans-serif;font-weight:600;cursor:pointer;margin-right:4px;">📐 ${item.size.n} ▼</button>`
-      : `<span>${item.size.n}</span>`;
+      ? `<button onclick="openCartSizeChange(${i})" style="background:#e3f2fd;border:1px solid #90caf9;color:#1565c0;padding:3px 10px;border-radius:14px;font-size:11px;font-family:'Sarabun',sans-serif;font-weight:600;cursor:pointer;margin-right:4px;">📐 ${_mnEsc(item.size.n)} ▼</button>`
+      : `<span>${_mnEsc(item.size.n)}</span>`;
     return `<div class="ci">
       <div class="ci-img">${imgH}</div>
       <div class="ci-info">
-        <div class="ci-name">${item.prod.name}${wholesaleBadge}</div>
+        <div class="ci-name">${_mnEsc(item.prod.name)}${wholesaleBadge}</div>
         <div class="ci-meta">${sizeDisplay} ${unitTxt}</div>
         <div class="ci-qty-row">
           <button class="ci-qbtn" onclick="chgCartQty(${i},-1)">−</button>
@@ -5153,10 +5219,29 @@ function editShopCoupon(c) {
   document.getElementById('sc_is_secret').checked = c.is_secret === true;
   document.getElementById('sc_secret_code').value = c.secret_code || '';
   document.getElementById('sc_secret_code_wrap').style.display = c.is_secret ? 'block' : 'none';
-  if (c.start_date) document.getElementById('sc_start').value = c.start_date.slice(0,16);
-  if (c.end_date)   document.getElementById('sc_end').value   = c.end_date.slice(0,16);
+  // 🐛 BUG FIX: เดิม .slice(0,16) เอาเวลา UTC มาใส่ช่อง (เวลาไทยเพี้ยน -7 ชม. และเลื่อนไปทุกครั้งที่กดอัปเดต)
+  // (ล้างค่าเมื่อคูปองไม่มีวันที่ — เดิมค่าของคูปองที่เปิดแก้ก่อนหน้าค้างอยู่ แล้วถูกบันทึกทับคูปองนี้)
+  document.getElementById('sc_start').value = c.start_date ? _cpIsoToLocalInput(c.start_date) : '';
+  document.getElementById('sc_end').value   = c.end_date   ? _cpIsoToLocalInput(c.end_date)   : '';
   updateShopCpnForm();
   document.getElementById('shopCpnForm').scrollIntoView({ behavior:'smooth' });
+}
+
+// 🐛 BUG FIX (คูปองหาไม่เจอ): กรอกปี พ.ศ. (2569) ในช่องวันที่ → ถูกเก็บเป็น ค.ศ. 2569 → คูปองยังไม่เริ่ม
+// แปลงปี > 2400 กลับเป็น ค.ศ. อัตโนมัติ ทั้งตอนบันทึกและตอนโหลดมาแก้ไข
+function _cpFixYear(d) { if (d.getFullYear() > 2400) d.setFullYear(d.getFullYear() - 543); return d; }
+function _cpLocalInputToIso(v) {
+  if (!v) return null;
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return null;
+  return _cpFixYear(d).toISOString();
+}
+function _cpIsoToLocalInput(iso) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  _cpFixYear(d);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 async function saveShopCoupon() {
@@ -5175,6 +5260,9 @@ async function saveShopCoupon() {
   const atype   = document.getElementById('sc_atype').value;
   const cfstart = document.getElementById('sc_start').value;
   const cfend   = document.getElementById('sc_end').value;
+  const startIso = _cpLocalInputToIso(cfstart);
+  const endIso   = _cpLocalInputToIso(cfend);
+  if (startIso && endIso && startIso >= endIso) { toast('วันที่เริ่มต้องก่อนวันที่สิ้นสุด'); return; }
   const body = {
     name,
     description:    document.getElementById('sc_desc').value.trim() || null,
@@ -5186,8 +5274,8 @@ async function saveShopCoupon() {
     code:           atype === 'manual' ? (document.getElementById('sc_code').value.trim().toUpperCase() || null) : null,
     condition_type: atype === 'auto' ? document.getElementById('sc_cond').value : null,
     usage_limit:    document.getElementById('sc_limit').value ? Number(document.getElementById('sc_limit').value) : null,
-    start_date:     cfstart ? new Date(cfstart).toISOString() : null,
-    end_date:       cfend   ? new Date(cfend).toISOString()   : null,
+    start_date:     startIso,
+    end_date:       endIso,
     is_active:      document.getElementById('sc_active').checked,
     is_secret:      isSecret,
     secret_code:    isSecret ? secretCode.toUpperCase() : null
@@ -5853,9 +5941,19 @@ async function sendOrder() {
     if (!addrProv) { toast('⚠️ กรุณากรอกจังหวัด'); return; }
   }
   if (cartOT==='pickup') {
-    const pickTVal = document.getElementById('cPickTime').value.trim();
+    const pickEl = document.getElementById('cPickTime');
+    const pickTVal = pickEl.value.trim();
     if (!pickTVal) { toast('⚠️ กรุณาเลือกวัน/เวลารับสินค้า'); return; }
-  }
+    // 🐛 BUG FIX: เดิมรับค่าอะไรก็ได้ — พิมพ์ปี พ.ศ. (2569) กลายเป็นนัดรับอีก 543 ปีข้างหน้า
+    // หรือเลือกวันที่ผ่านไปแล้วก็ส่งออเดอร์ได้ ทำให้ร้านไม่รู้ว่าลูกค้าจะมารับเมื่อไหร่
+    const pickD = new Date(pickTVal);
+    if (isNaN(pickD.getTime())) { toast('⚠️ วัน/เวลารับสินค้าไม่ถูกต้อง'); return; }
+    if (pickD.getFullYear() > 2400) {
+      pickD.setFullYear(pickD.getFullYear() - 543);
+      const _p = n => String(n).padStart(2, '0');
+      pickEl.value = `${pickD.getFullYear()}-${_p(pickD.getMonth()+1)}-${_p(pickD.getDate())}T${_p(pickD.getHours())}:${_p(pickD.getMinutes())}`;
+    }
+    if (pickD.getTime() < Date.now() - 10 * 60000) { toast('⚠️ วัน/เวลารับสินค้าผ่านไปแล้ว กรุณาเลือกใหม่'); return; }  }
   if (!paymentMethod) {
     const errEl = document.getElementById('pay-error');
     if (errEl) errEl.style.display = 'block';
@@ -5962,7 +6060,10 @@ async function sendOrder() {
       let errBody = '';
       try { errBody = await res.text(); } catch(_) {}
       console.error('❌ server error:', res.status, errBody);
-      throw new Error(`HTTP ${res.status}${errBody ? ': '+errBody.slice(0,120) : ''}`);
+      // แสดงข้อความ error ที่อ่านรู้เรื่อง (เช่น "สินค้าหมดแล้ว") แทน JSON ดิบ
+      let _msg = '';
+      try { _msg = JSON.parse(errBody).error || ''; } catch(_) {}
+      throw new Error(_msg || `HTTP ${res.status}${errBody ? ': '+errBody.slice(0,120) : ''}`);
     }
 
     const result = await res.json().catch(() => ({}));
@@ -8177,7 +8278,7 @@ function renderPMList() {
   if (!list.length) { el.innerHTML='<div style="text-align:center;padding:30px;color:var(--sub)">ไม่มีสินค้า</div>'; return; }
   el.innerHTML=list.map(p=>{
     const imgH=p.img?`<img src="${p.img}" alt="" loading="lazy" decoding="async">`:p.emoji||'📦';
-    const minP=Math.min(...p.sizes.map(s=>s.p));
+    const minP=_mnMinPrice(p);
     // คำนวณ total stock
     const stockSizes = p.sizes.filter(s => s.stock !== undefined && s.stock !== null);
     const totalStock = stockSizes.reduce((sum, s) => sum + (s.stock || 0), 0);
@@ -8198,8 +8299,8 @@ function renderPMList() {
     return `<div class="pm-item" id="pmitem-${p.id}">
       <div class="pm-img">${imgH}</div>
       <div class="pm-info">
-        <div class="pm-name">${p.name}</div>
-        <div class="pm-meta">${p.cat} · ฿${minP.toLocaleString()} · ${p.sizes.length} ขนาด · 📦 ${stockTxt}${wholesaleBadge}${msIsNewVisible(p)?' · 🆕':''}${p.isBestseller?' · 🔥ขายดี':''}</div>
+        <div class="pm-name">${_mnEsc(p.name)}</div>
+        <div class="pm-meta">${_mnEsc(p.cat)} · ${_mnPriceTxt(minP)} · ${p.sizes.length} ขนาด · 📦 ${stockTxt}${wholesaleBadge}${msIsNewVisible(p)?' · 🆕':''}${p.isBestseller?' · 🔥ขายดี':''}</div>
         <div class="pm-meta" style="font-size:11px;color:#999;margin-top:2px;">id: ${p.id} &nbsp;·&nbsp; 🔗 ${posLine}</div>
       </div>
       <div class="pm-acts">
@@ -8212,8 +8313,17 @@ function renderPMList() {
 
 window._del = async function(id) {
   if (!confirm('ลบสินค้านี้?')) return;
+  const _before = products;
   products = products.filter(p => p.id !== id);
-  await deleteOne(id);
+  try { await deleteOne(id); }
+  catch (e) {
+    // 🐛 BUG FIX: ลบใน DB ไม่สำเร็จ → คืนสินค้ากลับในหน้าเว็บ และแจ้งให้รู้ (เดิมขึ้น "ลบแล้ว" เสมอ)
+    products = _before;
+    try { localStorage.setItem('ms_products', JSON.stringify(products)); } catch(_) {}
+    renderGrid(); renderPMList();
+    toast('❌ ลบสินค้าไม่สำเร็จ: ' + e.message);
+    return;
+  }
   renderGrid(); renderPMList();
   toast('ลบสินค้าแล้ว 🗑️');
 };
@@ -8223,8 +8333,17 @@ window._edit = function(id) { openEdit(id); };
 async function deleteAllProducts() {
   if (!products.length) { toast('ไม่มีสินค้าให้ลบ'); return; }
   if (!confirm('ลบสินค้าทั้งหมด ' + products.length + ' รายการ?\nไม่สามารถย้อนกลับได้!')) return;
-  const sb = getSB();
-  if (sb) await sb.from('products').delete().neq('id', -1);
+  // 🐛 BUG FIX: เดิมลบตรงด้วย anon key อย่างเดียวและไม่เช็ค error — หลังล็อก RLS จะลบไม่ได้จริง
+  // แต่หน้าเว็บขึ้นว่าลบหมดแล้ว (รีโหลดสินค้ากลับมาครบ) ตอนนี้ลบผ่าน backend (มี admin key) ก่อน
+  const _ids = products.map(p => p.id);
+  try {
+    await _adminApi('/admin/products/delete', { ids: _ids });
+  } catch (e) {
+    console.warn('ลบทั้งหมดผ่าน backend ไม่สำเร็จ → ลองลบตรง:', e.message);
+    const sb = getSB();
+    const r = sb ? await sb.from('products').delete().in('id', _ids) : { error: { message: 'เชื่อมต่อฐานข้อมูลไม่ได้' } };
+    if (r.error) { toast('❌ ลบสินค้าไม่สำเร็จ: ' + (r.error.message || e.message)); return; }
+  }
   products = [];
   try { localStorage.removeItem('ms_products'); } catch(e) {}
   renderGrid(); renderPMList();
@@ -9702,7 +9821,7 @@ function openQE(mode) {
       }).join('');
       if (!sizeRows) return;
       rows += `<div class="qe-row">
-        <div class="qe-name">${p.name}<div class="qe-sub">${p.cat}</div></div>
+        <div class="qe-name">${_mnEsc(p.name)}<div class="qe-sub">${_mnEsc(p.cat)}</div></div>
         <div class="qe-sizes">${sizeRows}</div>
       </div>`;
     } else {
@@ -9719,7 +9838,7 @@ function openQE(mode) {
         </div>`;
       }).join('');
       rows += `<div class="qe-row">
-        <div class="qe-name">${p.name}<div class="qe-sub">${p.cat}</div></div>
+        <div class="qe-name">${_mnEsc(p.name)}<div class="qe-sub">${_mnEsc(p.cat)}</div></div>
         <div class="qe-sizes">${sizeRows}</div>
       </div>`;
     }
@@ -9835,7 +9954,7 @@ function renderPromoTab() {
       }).join('');
       const hasPromo = p.sizes.some(s => s.bundle && s.bundle.q);
       return `<div class="promo-prod-card">
-        <div class="promo-prod-hdr">${p.name}${hasPromo ? '<span class="promo-has-badge">มีโปรแล้ว</span>' : ''}</div>
+        <div class="promo-prod-hdr">${_mnEsc(p.name)}${hasPromo ? '<span class="promo-has-badge">มีโปรแล้ว</span>' : ''}</div>
         ${sizeRows}
       </div>`;
     }).join('');
