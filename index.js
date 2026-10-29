@@ -4793,16 +4793,61 @@ app.post('/orders/:orderId/notify-status', requirePerm('orders'), async (req, re
 });
 
 // ── PATCH /orders/:orderId/status ─────────────────────────
+// 🐛 BUG FIX: ตอนสั่งซื้อระบบตัดสต็อกทันที แต่ตอนยกเลิกออเดอร์ไม่เคยคืนสต็อกเลย — สินค้าจึงค่อยๆ
+// "หมด" ทั้งที่ของยังอยู่ (ยิ่งตอนนี้ backend เช็คสต็อกก่อนรับออเดอร์ ลูกค้าจะสั่งไม่ได้จริง)
+// sign = +1 คืนสต็อก, -1 ตัดสต็อกอีกครั้ง (กรณีเปลี่ยนจากยกเลิกกลับมาเป็นสถานะปกติ)
+// แก้เฉพาะไซซ์ที่ตั้งสต็อกไว้ (ไซซ์ที่ไม่จำกัดสต็อกไม่แตะ) ไม่ให้ติดลบ
+async function adjustStockForOrderItems(items, sign) {
+  const byProduct = new Map();
+  for (const it of (Array.isArray(items) ? items : [])) {
+    const qty = Number(it && it.qty);
+    if (!it || it.productId === undefined || it.productId === null || !it.sizeName || !Number.isFinite(qty) || qty <= 0) continue;
+    const k = String(it.productId);
+    if (!byProduct.has(k)) byProduct.set(k, { id: it.productId, changes: [] });
+    byProduct.get(k).changes.push({ sizeName: it.sizeName, qty });
+  }
+  for (const { id, changes } of byProduct.values()) {
+    try {
+      const { data: prod, error } = await supabase.from('products').select('id, sizes').eq('id', id).maybeSingle();
+      if (error || !prod || !Array.isArray(prod.sizes)) continue;
+      let touched = false;
+      const sizes = prod.sizes.map(s => {
+        const ch = changes.filter(c => c.sizeName === s.n);
+        if (!ch.length || s.stock === undefined || s.stock === null || s.stock === '' || !Number.isFinite(Number(s.stock))) return s;
+        const delta = ch.reduce((a, c) => a + c.qty, 0) * sign;
+        touched = true;
+        return { ...s, stock: Math.max(0, Number(s.stock) + delta) };
+      });
+      if (touched) {
+        const { error: upErr } = await supabase.from('products').update({ sizes }).eq('id', id);
+        if (upErr) console.warn(`adjustStockForOrderItems ${id}:`, upErr.message);
+      }
+    } catch (e) { console.warn('adjustStockForOrderItems:', e.message); }
+  }
+}
+const _CANCELLED_STATUSES = ['cancelled', 'failed'];
+
 app.patch('/orders/:orderId/status', requirePerm('orders'), async (req, res) => {
   const { status } = req.body;
   const allowed = ['pending', 'sent', 'confirmed', 'shipped', 'done', 'cancelled', 'failed'];
   if (!allowed.includes(status))
     return res.status(400).json({ error: `status must be: ${allowed.join(', ')}` });
 
+  const { data: before } = await supabase
+    .from('orders').select('status, items').eq('order_id', req.params.orderId).maybeSingle();
+
   const { data, error } = await supabase
     .from('orders').update({ status }).eq('order_id', req.params.orderId)
     .select().single();
   if (error) return res.status(500).json({ error: error.message });
+
+  // คืน/ตัดสต็อกตามการเปลี่ยนสถานะ (เฉพาะตอนข้ามระหว่าง "ยกเลิก" ↔ "ปกติ" เท่านั้น)
+  if (before && data) {
+    const wasCancelled = _CANCELLED_STATUSES.includes(before.status);
+    const isCancelled  = _CANCELLED_STATUSES.includes(status);
+    if (!wasCancelled && isCancelled) await adjustStockForOrderItems(data.items, +1);
+    else if (wasCancelled && !isCancelled) await adjustStockForOrderItems(data.items, -1);
+  }
 
   if (data) {
     // 1) บันทึก system message ในแชทเว็บ
@@ -4888,9 +4933,18 @@ app.patch('/admin/orders/:orderId/fields', requirePerm('orders'), async (req, re
 });
 
 app.delete('/admin/orders/:orderId', requirePerm('orders'), async (req, res) => {
+  // 🐛 BUG FIX: ลบออเดอร์ที่ของยังไม่ออกจากร้าน (รอดำเนินการ/ยืนยันแล้ว) สต็อกที่ถูกตัดไว้ตอนสั่งไม่เคยถูกคืน
+  // → คืนสต็อกให้ก่อนลบ (ออเดอร์ที่กำลังจัดส่ง/เสร็จแล้ว = ของออกไปแล้ว, ที่ยกเลิกแล้ว = คืนไปแล้ว → ไม่คืนซ้ำ)
+  const { data: before } = await supabase
+    .from('orders').select('status, items').eq('order_id', req.params.orderId).maybeSingle();
   const { error } = await supabase.from('orders').delete().eq('order_id', req.params.orderId);
   if (error) return res.status(500).json({ error: error.message });
-  res.json({ success: true });
+  let stockRestored = false;
+  if (before && ['pending', 'sent', 'confirmed'].includes(before.status)) {
+    await adjustStockForOrderItems(before.items, +1);
+    stockRestored = true;
+  }
+  res.json({ success: true, stockRestored });
 });
 
 // Same story as the orders endpoints above, for `products` — RLS audit found
